@@ -1,0 +1,23 @@
+name: EVVMobile
+options:
+  bundleIdPrefix: net.fbhi
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.7"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGNING_ALLOWED: "NO"
+targets:
+  EVVMobile:
+    type: application
+    platform: iOS
+    sources:
+      - EVVMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.fbhi.evvmobile
+        INFOPLIST_FILE: EVVMobile/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGNING_ALLOWED: "YES"
+        CODE_SIGN_IDENTITY: "-"
