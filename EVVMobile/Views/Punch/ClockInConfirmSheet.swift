@@ -7,6 +7,22 @@ struct ClockInConfirmSheet: View {
     @State private var selectedClients: Set<UUID>
     @State private var showSuccess = false
 
+    // Manual address entry (GPS-unavailable fallback)
+    @State private var manualStreet = ""
+    @State private var manualCity = ""
+    @State private var manualState = ""
+    @State private var manualZip = ""
+
+    private var gpsUnavailable: Bool { appState.simulateGPSUnavailable }
+
+    private var manualAddressValid: Bool {
+        !manualCity.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !manualState.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !manualZip.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var canConfirm: Bool { !gpsUnavailable || manualAddressValid }
+
     init(visit: Visit) {
         self.visit = visit
         _selectedClients = State(initialValue: Set(visit.clients.map { $0.id }))
@@ -20,6 +36,7 @@ struct ClockInConfirmSheet: View {
 
     var body: some View {
         NavigationView {
+            ScrollView {
             VStack(spacing: 20) {
                 VStack(spacing: 10) {
                     AvatarView(name: visit.client.name, size: 64)
@@ -53,25 +70,34 @@ struct ClockInConfirmSheet: View {
                     }
                     Divider()
                     HStack {
-                        Label("GPS", systemImage: "location.fill")
+                        Label("GPS", systemImage: gpsUnavailable ? "location.slash.fill" : "location.fill")
                         Spacer()
                         HStack(spacing: 6) {
-                            Circle().fill(Theme.success).frame(width: 8, height: 8)
-                            Text("Location acquired").font(.subheadline)
+                            Circle().fill(gpsUnavailable ? Theme.danger : Theme.success)
+                                .frame(width: 8, height: 8)
+                            Text(gpsUnavailable ? "GPS unavailable" : "Location acquired")
+                                .font(.subheadline)
+                                .foregroundColor(gpsUnavailable ? Theme.danger : .primary)
                         }
                     }
                 }
                 .cardStyle()
                 .padding(.horizontal)
 
-                Spacer()
+                if gpsUnavailable {
+                    manualAddressCard
+                }
+
+                Spacer(minLength: 12)
 
                 Button(action: confirm) {
                     Label("Confirm Clock In", systemImage: "checkmark.circle.fill")
                 }
-                .buttonStyle(PrimaryButtonStyle(color: Theme.success))
+                .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: canConfirm))
+                .disabled(!canConfirm)
                 .padding(.horizontal)
                 .padding(.bottom, 16)
+            }
             }
             .background(Theme.screenBackground.ignoresSafeArea())
             .navigationTitle("Clock In")
@@ -85,6 +111,35 @@ struct ClockInConfirmSheet: View {
                 ClockInSuccessView()
             }
         }
+    }
+
+    private var manualAddressCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Enter Service Address", systemImage: "mappin.and.ellipse")
+                .font(.headline)
+            Text("GPS couldn't be captured. Enter the address where this service is being provided.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            TextField("Street address (optional)", text: $manualStreet)
+                .textFieldStyle(.roundedBorder)
+            TextField("City *", text: $manualCity)
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 10) {
+                TextField("State *", text: $manualState)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 100)
+                TextField("Zip code *", text: $manualZip)
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.numberPad)
+            }
+
+            Label("This visit will be flagged for manager review.", systemImage: "flag.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(Theme.warning)
+        }
+        .cardStyle()
+        .padding(.horizontal)
     }
 
     private var groupClientPicker: some View {
@@ -116,7 +171,15 @@ struct ClockInConfirmSheet: View {
     }
 
     private func confirm() {
-        appState.clockIn(visitId: visit.id)
+        var location: ManualLocation?
+        if gpsUnavailable {
+            guard manualAddressValid else { return }
+            location = ManualLocation(street: manualStreet.trimmingCharacters(in: .whitespaces),
+                                      city: manualCity.trimmingCharacters(in: .whitespaces),
+                                      state: manualState.trimmingCharacters(in: .whitespaces),
+                                      zip: manualZip.trimmingCharacters(in: .whitespaces))
+        }
+        appState.clockIn(visitId: visit.id, manualLocation: location)
         showSuccess = true
     }
 }

@@ -5,6 +5,9 @@ struct Client: Identifiable, Hashable {
     let name: String
     let address: String
     let city: String
+    var allergies: [String] = []
+    var safetyAlerts: [String] = []
+    var protocols: [String] = []
 
     var fullAddress: String { "\(address), \(city)" }
 }
@@ -44,6 +47,24 @@ enum TimeFixStatus: String {
     case denied = "Denied"
 }
 
+enum DeleteRequestStatus: String {
+    case none
+    case pending = "Pending"
+    case approved = "Approved"
+    case denied = "Denied"
+}
+
+struct ManualLocation: Hashable {
+    var street: String = ""
+    var city: String
+    var state: String
+    var zip: String
+
+    var display: String {
+        street.isEmpty ? "\(city), \(state) \(zip)" : "\(street), \(city), \(state) \(zip)"
+    }
+}
+
 struct Visit: Identifiable {
     let id: UUID
     var clients: [Client]
@@ -59,6 +80,9 @@ struct Visit: Identifiable {
     var isGroup: Bool = false      // 1:2 group visit
     var notes: String = ""
     var timeFixStatus: TimeFixStatus = .none
+    var deleteRequestStatus: DeleteRequestStatus = .none
+    var manualLocation: ManualLocation?
+    var manualLocationFlagged: Bool = false
 
     var client: Client { clients[0] }
 
@@ -97,6 +121,29 @@ struct Outcome: Identifiable {
     let clientId: UUID
     let title: String
     let goal: String
+}
+
+// MARK: - Visit note (per-goal data + narrative)
+
+struct OutcomeEntry {
+    var promptLevel: PromptLevel?
+    var frequency: Int = 0
+    var goalOpportunity = false
+    var behaviorObserved = false
+    var narrative: String = ""
+
+    var isComplete: Bool {
+        promptLevel != nil && !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+struct VisitNote {
+    var outcomeEntries: [UUID: OutcomeEntry] = [:]   // keyed by Outcome.id
+    var additionalComments: String = ""
+
+    func isComplete(for outcomes: [Outcome]) -> Bool {
+        outcomes.allSatisfy { outcomeEntries[$0.id]?.isComplete == true }
+    }
 }
 
 struct Credential: Identifiable {

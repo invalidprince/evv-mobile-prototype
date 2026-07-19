@@ -3,12 +3,30 @@ import Foundation
 enum MockData {
     // MARK: - Clients (PA addresses)
     static let clients: [Client] = [
-        Client(id: UUID(), name: "James Whitaker", address: "412 Maple St", city: "Harrisburg, PA 17101"),
-        Client(id: UUID(), name: "Dorothy Kline", address: "88 Chestnut Ave", city: "Lancaster, PA 17602"),
-        Client(id: UUID(), name: "Marcus Bell", address: "2301 Walnut St", city: "Allentown, PA 18104"),
-        Client(id: UUID(), name: "Sophia Reyes", address: "17 Birch Ln", city: "York, PA 17403"),
-        Client(id: UUID(), name: "Henry Osei", address: "540 Spruce Rd", city: "Reading, PA 19601"),
-        Client(id: UUID(), name: "Linda Cho", address: "9 Willow Ct", city: "Hershey, PA 17033")
+        Client(id: UUID(), name: "James Whitaker", address: "412 Maple St", city: "Harrisburg, PA 17101",
+               allergies: ["Penicillin", "Peanuts (severe — EpiPen in kitchen drawer)"],
+               safetyAlerts: ["Elopement risk in crowded settings", "Do not leave unattended near water"],
+               protocols: ["Seizure protocol on file — time seizures over 2 min, call 911 over 5 min", "2-person transfer for stairs"]),
+        Client(id: UUID(), name: "Dorothy Kline", address: "88 Chestnut Ave", city: "Lancaster, PA 17602",
+               allergies: ["Sulfa drugs", "Shellfish"],
+               safetyAlerts: ["Fall risk — uses walker at all times"],
+               protocols: ["Diabetic — check glucose before meals, log readings", "Soft-food diet, cut food to dime size"]),
+        Client(id: UUID(), name: "Marcus Bell", address: "2301 Walnut St", city: "Allentown, PA 18104",
+               allergies: ["Latex"],
+               safetyAlerts: ["May exit vehicle when stopped — child locks required"],
+               protocols: ["Behavior support plan on file — use low, calm voice during escalation"]),
+        Client(id: UUID(), name: "Sophia Reyes", address: "17 Birch Ln", city: "York, PA 17403",
+               allergies: ["No known allergies"],
+               safetyAlerts: ["Pica risk — keep small objects out of reach"],
+               protocols: ["1:1 line-of-sight supervision in community"]),
+        Client(id: UUID(), name: "Henry Osei", address: "540 Spruce Rd", city: "Reading, PA 19601",
+               allergies: ["Bee stings (carries EpiPen)"],
+               safetyAlerts: ["Wanders at night — door alarm in use"],
+               protocols: ["Medication administration requires two-staff verification"]),
+        Client(id: UUID(), name: "Linda Cho", address: "9 Willow Ct", city: "Hershey, PA 17033",
+               allergies: ["Gluten (celiac)"],
+               safetyAlerts: ["Aspiration risk — thickened liquids only"],
+               protocols: ["Choking protocol on file", "Positioning: upright 30 min after meals"])
     ]
 
     // MARK: - Staff
@@ -33,7 +51,7 @@ enum MockData {
             Visit(id: UUID(), clients: [clients[0]], service: .inHomeSupport,
                   scheduledStart: date(daysAgo: 0, hour: 7), scheduledEnd: date(daysAgo: 0, hour: 9),
                   actualStart: date(daysAgo: 0, hour: 7, minute: 2), actualEnd: date(daysAgo: 0, hour: 9, minute: 1),
-                  status: .completed, docComplete: true),
+                  status: .completed, docComplete: false),   // incomplete note — demo "Finish note" card on Today
             Visit(id: UUID(), clients: [clients[1]], service: .communityParticipation,
                   scheduledStart: now.addingTimeInterval(-47 * 60), scheduledEnd: now.addingTimeInterval(73 * 60),
                   actualStart: now.addingTimeInterval(-47 * 60), actualEnd: nil,
@@ -87,6 +105,10 @@ enum MockData {
         }
         visits[3].timeFixStatus = .pending
         visits[8].timeFixStatus = .approved
+        visits[10].deleteRequestStatus = .pending
+        // Demo: GPS was unavailable at punch — location entered manually, flagged for manager review
+        visits[1].manualLocation = ManualLocation(street: "88 Chestnut Ave", city: "Lancaster", state: "PA", zip: "17602")
+        visits[1].manualLocationFlagged = true
         return visits
     }
 

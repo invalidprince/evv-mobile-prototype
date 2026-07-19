@@ -27,6 +27,17 @@ struct ActiveVisitCard: View {
                     }
                 }
 
+                if visit.manualLocationFlagged {
+                    Label("Manual location — pending manager review", systemImage: "mappin.and.ellipse")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.warning)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.warning.opacity(0.14))
+                        .cornerRadius(8)
+                }
+
                 HStack(spacing: 12) {
                     AvatarView(name: visit.client.name, size: 52)
                     VStack(alignment: .leading, spacing: 2) {

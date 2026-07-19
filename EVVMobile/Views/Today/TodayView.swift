@@ -5,6 +5,7 @@ struct TodayView: View {
     @State private var clockInTarget: Visit?
     @State private var showUnscheduled = false
     @State private var showNonBillable = false
+    @State private var noteVisit: Visit?
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -37,6 +38,12 @@ struct TodayView: View {
                         ActiveVisitCard()
                     }
 
+                    ForEach(appState.incompleteNoteVisits) { visit in
+                        IncompleteNoteCard(visit: visit) {
+                            noteVisit = visit
+                        }
+                    }
+
                     if !upcoming.isEmpty {
                         Text("Up Next")
                             .font(.title3.bold())
@@ -62,6 +69,11 @@ struct TodayView: View {
             }
             .sheet(isPresented: $showNonBillable) {
                 NonBillableSheet()
+            }
+            .sheet(item: $noteVisit) { visit in
+                NavigationView {
+                    DocumentationView(visit: visit)
+                }
             }
         }
         .navigationViewStyle(.stack)
@@ -101,5 +113,45 @@ struct TodayView: View {
             .buttonStyle(SecondaryButtonStyle())
         }
         .padding(.top, 8)
+    }
+}
+
+struct IncompleteNoteCard: View {
+    let visit: Visit
+    let onFinish: () -> Void
+
+    private var whenText: String {
+        let day = DateFormatter()
+        day.dateFormat = "EEE, MMM d"
+        let time = DateFormatter()
+        time.dateFormat = "h:mm a"
+        let start = visit.actualStart ?? visit.scheduledStart
+        if Calendar.current.isDateInToday(start) {
+            return "today, \(time.string(from: start))"
+        }
+        return "\(day.string(from: start)), \(time.string(from: start))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(Theme.warning)
+                Text("Incomplete note — \(visit.client.name), \(whenText)")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            Button(action: onFinish) {
+                Label("Finish Note", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(PrimaryButtonStyle(color: Theme.warning))
+        }
+        .padding(14)
+        .background(Theme.warning.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Theme.warning.opacity(0.5), lineWidth: 1)
+        )
+        .cornerRadius(14)
     }
 }

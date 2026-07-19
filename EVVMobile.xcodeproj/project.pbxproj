@@ -31,6 +31,7 @@
 		D8023CDFE17E0B42DD5FBA9D /* ClockOutFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 837D6C9277FF607206D6D2E7 /* ClockOutFlow.swift */; };
 		E93360C920CECA38863C913C /* ActiveVisitCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15BE09C32C84B4CB482C21E2 /* ActiveVisitCard.swift */; };
 		EA98B92D1FDC0EC5F434A675 /* ShiftRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EF2CC23C27AE5D8936E2623 /* ShiftRow.swift */; };
+		ED6C4A56E32AC020351F1AB7 /* DeleteRequestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 675AD19AC65A993CD6C7C0A2 /* DeleteRequestSheet.swift */; };
 		EE1E5B614A13991388147ADD /* UnscheduledVisitSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E901FDBCC170EE39F601A79 /* UnscheduledVisitSheet.swift */; };
 /* End PBXBuildFile section */
 
@@ -45,6 +46,7 @@
 		42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeEntryView.swift; sourceTree = "<group>"; };
 		59D85001A0AB1FEC33B1F24F /* ClockInSuccessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockInSuccessView.swift; sourceTree = "<group>"; };
 		61B6FB73632F6CB7629FBADD /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		675AD19AC65A993CD6C7C0A2 /* DeleteRequestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteRequestSheet.swift; sourceTree = "<group>"; };
 		75A592BA84612CB09A2A4F61 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		7D2AC643B9056A47B1FAF52E /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		7D3E24BD9E02EC479B9857CB /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
@@ -165,6 +167,7 @@
 		99044287971595887EC58A61 /* History */ = {
 			isa = PBXGroup;
 			children = (
+				675AD19AC65A993CD6C7C0A2 /* DeleteRequestSheet.swift */,
 				40799C6376F8F4D66B813AA7 /* HistoryRow.swift */,
 				7D3E24BD9E02EC479B9857CB /* HistoryView.swift */,
 				F1FA0D83CA7654E736EAEA3A /* TimeFixSheet.swift */,
@@ -265,6 +268,7 @@
 				37826622B822F5A4B6567920 /* ClockInConfirmSheet.swift in Sources */,
 				2E9C36BFFEAD27BE27C513B8 /* ClockInSuccessView.swift in Sources */,
 				D8023CDFE17E0B42DD5FBA9D /* ClockOutFlow.swift in Sources */,
+				ED6C4A56E32AC020351F1AB7 /* DeleteRequestSheet.swift in Sources */,
 				8405CF635B64E963DCDAB439 /* DocumentationView.swift in Sources */,
 				C2B795D7F0DC9FF417F17D9D /* EVVMobileApp.swift in Sources */,
 				87CC7A1829076198FBA32C88 /* HistoryRow.swift in Sources */,

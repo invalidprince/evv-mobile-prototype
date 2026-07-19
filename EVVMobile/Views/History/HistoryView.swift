@@ -4,6 +4,8 @@ struct HistoryView: View {
     @EnvironmentObject var appState: AppState
     @State private var payPeriod = 0 // 0 = this, 1 = last
     @State private var timeFixVisit: Visit?
+    @State private var deleteVisit: Visit?
+    @State private var noteVisit: Visit?
 
     private var filteredVisits: [Visit] {
         let cal = Calendar.current
@@ -32,9 +34,10 @@ struct HistoryView: View {
                     summaryCard
 
                     ForEach(filteredVisits) { visit in
-                        HistoryRow(visit: visit) {
-                            timeFixVisit = visit
-                        }
+                        HistoryRow(visit: visit,
+                                   onTimeFix: { timeFixVisit = visit },
+                                   onRequestDelete: { deleteVisit = visit },
+                                   onFinishNote: { noteVisit = visit })
                     }
                 }
                 .padding(16)
@@ -43,6 +46,14 @@ struct HistoryView: View {
             .navigationTitle("History")
             .sheet(item: $timeFixVisit) { visit in
                 TimeFixSheet(visit: visit)
+            }
+            .sheet(item: $deleteVisit) { visit in
+                DeleteRequestSheet(visit: visit)
+            }
+            .sheet(item: $noteVisit) { visit in
+                NavigationView {
+                    DocumentationView(visit: visit)
+                }
             }
         }
         .navigationViewStyle(.stack)

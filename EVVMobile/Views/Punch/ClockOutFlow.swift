@@ -14,6 +14,10 @@ struct ClockOutFlow: View {
     @State private var showDocumentation = false
     @State private var completedVisit: Visit?
 
+    private var docAlreadyComplete: Bool {
+        appState.isDocComplete(visitId: visit.id)
+    }
+
     var body: some View {
         NavigationView {
             Group {
@@ -37,6 +41,9 @@ struct ClockOutFlow: View {
                 NavigationView {
                     DocumentationView(visit: visit)
                 }
+            }
+            .onAppear {
+                if step == .docGate && docAlreadyComplete { step = .signature }
             }
         }
     }
@@ -79,9 +86,21 @@ struct ClockOutFlow: View {
             Text(visit.service.rawValue)
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            HStack(spacing: 6) {
-                Circle().fill(Theme.success).frame(width: 8, height: 8)
-                Text("GPS location acquired").font(.subheadline)
+            if appState.simulateGPSUnavailable {
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        Circle().fill(Theme.danger).frame(width: 8, height: 8)
+                        Text("GPS unavailable").font(.subheadline).foregroundColor(Theme.danger)
+                    }
+                    Text("Manual location on file — flagged for manager review")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Circle().fill(Theme.success).frame(width: 8, height: 8)
+                    Text("GPS location acquired").font(.subheadline)
+                }
             }
             Spacer()
             Button(action: doClockOut) {

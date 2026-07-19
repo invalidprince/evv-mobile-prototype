@@ -11,6 +11,12 @@ final class AppState: ObservableObject {
     @Published var pastVisits: [Visit] = MockData.pastVisits()
     @Published var openShifts: [OpenShift] = MockData.openShifts()
 
+    // MARK: - Notes (drafts keyed by visit id)
+    @Published var noteDrafts: [UUID: VisitNote] = [:]
+
+    // MARK: - Demo settings
+    @Published var simulateGPSUnavailable = false
+
     // MARK: - Sync
     @Published var pendingSyncCount = 2
     @Published var lastSync = Date().addingTimeInterval(-14 * 60)
@@ -22,6 +28,13 @@ final class AppState: ObservableObject {
 
     var activeVisit: Visit? {
         todayVisits.first { $0.status == .inProgress }
+    }
+
+    /// Completed visits (today or past) whose note still needs finishing.
+    var incompleteNoteVisits: [Visit] {
+        let today = todayVisits.filter { $0.status == .completed && !$0.docComplete }
+        let past = pastVisits.filter { $0.status == .completed && !$0.docComplete }
+        return (today + past).sorted { $0.scheduledStart > $1.scheduledStart }
     }
 
     init() {
@@ -48,11 +61,15 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Punch actions
-    func clockIn(visitId: UUID) {
+    func clockIn(visitId: UUID, manualLocation: ManualLocation? = nil) {
         guard activeVisit == nil else { return }
         guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else { return }
         todayVisits[idx].actualStart = Date()
         todayVisits[idx].status = .inProgress
+        if let loc = manualLocation {
+            todayVisits[idx].manualLocation = loc
+            todayVisits[idx].manualLocationFlagged = true
+        }
         startTimerIfNeeded()
         haptic(.success)
     }
@@ -107,6 +124,35 @@ final class AppState: ObservableObject {
         if let idx = pastVisits.firstIndex(where: { $0.id == visitId }) {
             pastVisits[idx].timeFixStatus = .pending
         }
+    }
+
+    func requestDelete(visitId: UUID) {
+        if let idx = pastVisits.firstIndex(where: { $0.id == visitId }) {
+            pastVisits[idx].deleteRequestStatus = .pending
+        }
+        if let idx = todayVisits.firstIndex(where: { $0.id == visitId }) {
+            todayVisits[idx].deleteRequestStatus = .pending
+        }
+    }
+
+    // MARK: - Notes
+    func noteDraft(for visitId: UUID) -> VisitNote {
+        noteDrafts[visitId] ?? VisitNote()
+    }
+
+    func saveNoteDraft(visitId: UUID, note: VisitNote) {
+        noteDrafts[visitId] = note
+    }
+
+    func submitNote(visitId: UUID, note: VisitNote) {
+        noteDrafts[visitId] = note
+        markDocComplete(visitId: visitId)
+    }
+
+    func isDocComplete(visitId: UUID) -> Bool {
+        if let v = todayVisits.first(where: { $0.id == visitId }) { return v.docComplete }
+        if let v = pastVisits.first(where: { $0.id == visitId }) { return v.docComplete }
+        return false
     }
 
     func syncNow() {

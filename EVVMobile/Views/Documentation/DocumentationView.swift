@@ -5,16 +5,17 @@ struct DocumentationView: View {
     @Environment(\.dismiss) private var dismiss
     let visit: Visit
 
-    @State private var expanded: Set<String> = ["Activities"]
-    @State private var activities = ""
-    @State private var clientResponse = ""
-    @State private var communityIntegration = ""
-    @State private var healthSafety = ""
-    @State private var narrative = ""
+    @State private var expanded: Set<String> = ["Health & Safety", "Outcomes & Goals"]
+    @State private var note = VisitNote()
+    @State private var loaded = false
     @State private var showSubmitted = false
 
     private var clientOutcomes: [Outcome] {
         MockData.outcomes.filter { $0.clientId == visit.client.id }
+    }
+
+    private var noteComplete: Bool {
+        note.isComplete(for: clientOutcomes)
     }
 
     var body: some View {
@@ -22,32 +23,27 @@ struct DocumentationView: View {
             VStack(spacing: 12) {
                 header
 
-                DocSection(title: "Activities", icon: "list.bullet.clipboard", expanded: $expanded) {
-                    DocTextEditor(text: $activities, placeholder: "What activities were completed during this visit?")
-                }
-                DocSection(title: "Client Response", icon: "person.wave.2", expanded: $expanded) {
-                    DocTextEditor(text: $clientResponse, placeholder: "How did the client respond and engage?")
-                }
-                DocSection(title: "Community Integration", icon: "building.2", expanded: $expanded) {
-                    DocTextEditor(text: $communityIntegration, placeholder: "Community locations visited, interactions with others…")
-                }
-                DocSection(title: "Health / Safety", icon: "cross.case", expanded: $expanded) {
-                    DocTextEditor(text: $healthSafety, placeholder: "Any health or safety concerns, medications, incidents…")
+                // Read-only health & safety info about the individual
+                DocSection(title: "Health & Safety", icon: "cross.case", expanded: $expanded) {
+                    HealthSafetyInfoView(client: visit.client)
                 }
 
                 if !clientOutcomes.isEmpty {
                     DocSection(title: "Outcomes & Goals", icon: "target", expanded: $expanded) {
                         VStack(spacing: 16) {
                             ForEach(clientOutcomes) { outcome in
-                                OutcomeEntryView(outcome: outcome)
+                                OutcomeEntryView(outcome: outcome, entry: entryBinding(for: outcome))
                             }
                         }
                     }
                 }
 
-                DocSection(title: "Narrative", icon: "text.alignleft", expanded: $expanded) {
+                DocSection(title: "Additional Comments", icon: "text.alignleft", expanded: $expanded) {
                     VStack(alignment: .leading, spacing: 10) {
-                        DocTextEditor(text: $narrative, placeholder: "Free-text visit narrative…", minHeight: 120)
+                        Text("Optional")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                        DocTextEditor(text: $note.additionalComments, placeholder: "Anything else worth noting about this visit…", minHeight: 100)
                         Button(action: {}) {
                             Label("Dictate Note", systemImage: "mic.fill")
                                 .font(.subheadline.weight(.semibold))
@@ -56,19 +52,25 @@ struct DocumentationView: View {
                     }
                 }
 
-                Button(action: {}) {
-                    Label("Attach Photo", systemImage: "camera.fill")
+                if !noteComplete {
+                    Label("To submit, each goal needs a data point and a narrative.", systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(SecondaryButtonStyle())
 
                 HStack(spacing: 12) {
-                    Button("Save Draft") { dismiss() }
-                        .buttonStyle(SecondaryButtonStyle())
+                    Button("Save Draft") {
+                        appState.saveNoteDraft(visitId: visit.id, note: note)
+                        dismiss()
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
                     Button("Submit") {
-                        appState.markDocComplete(visitId: visit.id)
+                        appState.submitNote(visitId: visit.id, note: note)
                         showSubmitted = true
                     }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(PrimaryButtonStyle(enabled: noteComplete))
+                    .disabled(!noteComplete)
                 }
                 .padding(.bottom, 16)
             }
@@ -79,7 +81,16 @@ struct DocumentationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Close") { dismiss() }
+                Button("Close") {
+                    appState.saveNoteDraft(visitId: visit.id, note: note)
+                    dismiss()
+                }
+            }
+        }
+        .onAppear {
+            if !loaded {
+                note = appState.noteDraft(for: visit.id)
+                loaded = true
             }
         }
         .alert("Documentation submitted", isPresented: $showSubmitted) {
@@ -87,6 +98,13 @@ struct DocumentationView: View {
         } message: {
             Text("Your visit note has been saved and queued to sync.")
         }
+    }
+
+    private func entryBinding(for outcome: Outcome) -> Binding<OutcomeEntry> {
+        Binding(
+            get: { note.outcomeEntries[outcome.id] ?? OutcomeEntry() },
+            set: { note.outcomeEntries[outcome.id] = $0 }
+        )
     }
 
     private var header: some View {
@@ -102,6 +120,45 @@ struct DocumentationView: View {
             Spacer()
         }
         .cardStyle()
+    }
+}
+
+// MARK: - Read-only health & safety information
+
+struct HealthSafetyInfoView: View {
+    let client: Client
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("For your reference — not part of the note", systemImage: "info.circle")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            infoBlock(title: "Allergies", icon: "allergens", color: Theme.danger, items: client.allergies)
+            infoBlock(title: "Safety Alerts", icon: "exclamationmark.triangle.fill", color: Theme.warning, items: client.safetyAlerts)
+            infoBlock(title: "Protocols", icon: "list.clipboard.fill", color: Theme.primary, items: client.protocols)
+        }
+    }
+
+    @ViewBuilder
+    private func infoBlock(title: String, icon: String, color: Color, items: [String]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(title, systemImage: icon)
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(color)
+                ForEach(items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•").font(.subheadline).foregroundColor(.secondary)
+                        Text(item).font(.subheadline)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(color.opacity(0.08))
+            .cornerRadius(10)
+        }
     }
 }
 

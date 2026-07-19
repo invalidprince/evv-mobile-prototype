@@ -3,6 +3,8 @@ import SwiftUI
 struct HistoryRow: View {
     let visit: Visit
     let onTimeFix: () -> Void
+    let onRequestDelete: () -> Void
+    let onFinishNote: () -> Void
 
     private var dateText: String {
         let f = DateFormatter()
@@ -20,6 +22,19 @@ struct HistoryRow: View {
                 if visit.timeFixStatus != .none {
                     timeFixChip
                 }
+                if visit.deleteRequestStatus != .none {
+                    deleteChip
+                }
+            }
+            if visit.manualLocationFlagged {
+                Label("Manual location — pending manager review", systemImage: "mappin.and.ellipse")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Theme.warning)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.warning.opacity(0.14))
+                    .cornerRadius(8)
             }
             HStack(spacing: 12) {
                 AvatarView(name: visit.client.name, size: 40)
@@ -45,10 +60,25 @@ struct HistoryRow: View {
                     }
                 }
             }
-            if visit.timeFixStatus == .none {
-                Button("Request Time Fix", action: onTimeFix)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(Theme.primary)
+            if !visit.docComplete {
+                Button(action: onFinishNote) {
+                    Label("Finish Note", systemImage: "square.and.pencil")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Theme.warning)
+                }
+            }
+            HStack(spacing: 20) {
+                if visit.timeFixStatus == .none {
+                    Button("Request Time Fix", action: onTimeFix)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(Theme.primary)
+                }
+                if visit.deleteRequestStatus == .none {
+                    Button("Request Delete", action: onRequestDelete)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(Theme.danger)
+                }
+                Spacer()
             }
         }
         .cardStyle()
@@ -60,6 +90,18 @@ struct HistoryRow: View {
             case .pending: return ("FIX PENDING", Theme.warning)
             case .approved: return ("FIX APPROVED", Theme.success)
             case .denied: return ("FIX DENIED", Theme.danger)
+            case .none: return ("", .clear)
+            }
+        }()
+        return StatusBadge(text: text, color: color)
+    }
+
+    private var deleteChip: some View {
+        let (text, color): (String, Color) = {
+            switch visit.deleteRequestStatus {
+            case .pending: return ("DELETE PENDING", Theme.warning)
+            case .approved: return ("DELETE APPROVED", Theme.success)
+            case .denied: return ("DELETE DENIED", Theme.danger)
             case .none: return ("", .clear)
             }
         }()

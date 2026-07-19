@@ -92,6 +92,11 @@ struct MoreView: View {
                     }
                 }
 
+                // Demo controls
+                Section(header: Text("Demo"), footer: Text("When on, the next clock-in can't capture GPS and asks for a manually entered service address, flagging the visit for manager review.")) {
+                    Toggle("Simulate GPS unavailable", isOn: $appState.simulateGPSUnavailable)
+                }
+
                 // Sign out
                 Section {
                     Button(role: .destructive, action: { appState.signOut() }) {
