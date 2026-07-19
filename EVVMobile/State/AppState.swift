@@ -39,6 +39,24 @@ final class AppState: ObservableObject {
 
     init() {
         startTimerIfNeeded()
+        refreshLateDocumentationFlags()
+        // Notifications: ask permission at app start and make sure every
+        // incomplete note has its end-of-day + midnight-late reminders queued.
+        NoteReminderCenter.shared.activate()
+        for visit in incompleteNoteVisits {
+            NoteReminderCenter.shared.scheduleReminders(for: visit)
+        }
+    }
+
+    /// Same-day note rule: an incomplete note that crosses midnight becomes
+    /// late. Stamp the manager-visible flag on anything already past due.
+    func refreshLateDocumentationFlags() {
+        for i in todayVisits.indices where todayVisits[i].noteIsLate {
+            todayVisits[i].lateDocumentation = true
+        }
+        for i in pastVisits.indices where pastVisits[i].noteIsLate {
+            pastVisits[i].lateDocumentation = true
+        }
     }
 
     var elapsedText: String {
@@ -84,6 +102,8 @@ final class AppState: ObservableObject {
         let finished = todayVisits[idx]
         startTimerIfNeeded()
         haptic(.success)
+        // Note is now owed for this visit — queue the same-day reminders.
+        NoteReminderCenter.shared.scheduleReminders(for: finished)
         return finished
     }
 
@@ -112,12 +132,27 @@ final class AppState: ObservableObject {
     }
 
     func markDocComplete(visitId: UUID) {
+        let now = Date()
         if let idx = todayVisits.firstIndex(where: { $0.id == visitId }) {
+            if now >= todayVisits[idx].noteDeadline {
+                todayVisits[idx].lateDocumentation = true   // completed late — permanent
+            }
             todayVisits[idx].docComplete = true
         }
         if let idx = pastVisits.firstIndex(where: { $0.id == visitId }) {
+            if now >= pastVisits[idx].noteDeadline {
+                pastVisits[idx].lateDocumentation = true    // completed late — permanent
+            }
             pastVisits[idx].docComplete = true
         }
+        // Note is done — no more reminders needed.
+        NoteReminderCenter.shared.cancelReminders(for: visitId)
+    }
+
+    /// Demo affordance (More tab): fire a note reminder notification now.
+    func sendTestNoteReminder(late: Bool) {
+        let clientName = incompleteNoteVisits.first?.client.name ?? MockData.clients[0].name
+        NoteReminderCenter.shared.sendTestReminder(clientName: clientName, late: late)
     }
 
     func requestTimeFix(visitId: UUID) {

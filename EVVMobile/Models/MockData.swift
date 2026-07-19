@@ -75,12 +75,12 @@ enum MockData {
         let plan: [(Int, Int, Int, Int, ServiceType, Bool, SyncState)] = [
             (1, 8, 10, 0, .inHomeSupport, true, .synced),
             (1, 13, 15, 1, .companion, true, .synced),
-            (1, 16, 18, 2, .communityParticipation, false, .pending),
+            (1, 16, 18, 2, .communityParticipation, false, .pending),   // incomplete from yesterday → LATE
             (2, 7, 9, 3, .inHomeSupport, true, .synced),
             (2, 10, 13, 4, .respite, true, .synced),
             (3, 9, 11, 5, .companion, true, .synced),
             (3, 14, 16, 0, .communityParticipation, true, .synced),
-            (4, 8, 10, 1, .inHomeSupport, false, .synced),
+            (4, 8, 10, 1, .inHomeSupport, true, .synced),                // completed, but late (see below)
             (5, 9, 12, 2, .respite, true, .synced),
             (5, 13, 15, 3, .companion, true, .synced),
             (6, 7, 9, 4, .inHomeSupport, true, .synced),
@@ -106,6 +106,12 @@ enum MockData {
         visits[3].timeFixStatus = .pending
         visits[8].timeFixStatus = .approved
         visits[10].deleteRequestStatus = .pending
+        // Demo: yesterday's community visit note never got finished — it crossed
+        // midnight, so it's LATE (red card on Today + red badge in History).
+        visits[2].lateDocumentation = true
+        // Demo: this note was finished, but two days after the visit — it keeps
+        // a permanent "Completed late" badge. Late is a fact, not a temporary state.
+        visits[7].lateDocumentation = true
         // Demo: GPS was unavailable at punch — location entered manually, flagged for manager review
         visits[1].manualLocation = ManualLocation(street: "88 Chestnut Ave", city: "Lancaster", state: "PA", zip: "17602")
         visits[1].manualLocationFlagged = true

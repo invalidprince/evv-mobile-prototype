@@ -83,8 +83,36 @@ struct Visit: Identifiable {
     var deleteRequestStatus: DeleteRequestStatus = .none
     var manualLocation: ManualLocation?
     var manualLocationFlagged: Bool = false
+    /// Set when documentation was (or is) late — i.e. the note was still
+    /// incomplete after the service day ended, or was completed after it.
+    /// Visible to managers. Once set by a late completion it never clears:
+    /// late is a fact, not a temporary state.
+    var lateDocumentation: Bool = false
 
     var client: Client { clients[0] }
+
+    // MARK: - Same-day note rule
+
+    /// The agency-local service day (start of day) the visit occurred on.
+    var serviceDay: Date {
+        Calendar.current.startOfDay(for: actualStart ?? scheduledStart)
+    }
+
+    /// Notes are due the same day as the visit; the deadline is midnight
+    /// (start of the following day, agency-local).
+    var noteDeadline: Date {
+        Calendar.current.date(byAdding: .day, value: 1, to: serviceDay) ?? serviceDay
+    }
+
+    /// True while the note is still incomplete and the service day has passed.
+    var noteIsLate: Bool {
+        status == .completed && !docComplete && Date() >= noteDeadline
+    }
+
+    /// True when the note was finished, but only after its service day ended.
+    var noteCompletedLate: Bool {
+        docComplete && lateDocumentation
+    }
 
     var durationText: String {
         guard let start = actualStart, let end = actualEnd else { return "—" }

@@ -120,6 +120,12 @@ struct IncompleteNoteCard: View {
     let visit: Visit
     let onFinish: () -> Void
 
+    /// Notes are due the same day as the visit — once midnight passes, the
+    /// card escalates from the yellow "Incomplete" state to a red LATE state.
+    private var isLate: Bool { visit.noteIsLate }
+
+    private var accent: Color { isLate ? Theme.danger : Theme.warning }
+
     private var whenText: String {
         let day = DateFormatter()
         day.dateFormat = "EEE, MMM d"
@@ -129,28 +135,42 @@ struct IncompleteNoteCard: View {
         if Calendar.current.isDateInToday(start) {
             return "today, \(time.string(from: start))"
         }
-        return "\(day.string(from: start)), \(time.string(from: start))"
+        if Calendar.current.isDateInYesterday(start) {
+            return "yesterday"
+        }
+        return day.string(from: start)
+    }
+
+    private var titleText: String {
+        isLate
+            ? "LATE — note for \(visit.client.name), \(whenText)"
+            : "Incomplete note — \(visit.client.name), \(whenText)"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(Theme.warning)
-                Text("Incomplete note — \(visit.client.name), \(whenText)")
+                Image(systemName: isLate ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .foregroundColor(accent)
+                Text(titleText)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
+            }
+            if isLate {
+                Text("Notes are due the same day as the visit. This one is past due and flagged for your manager.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             Button(action: onFinish) {
                 Label("Finish Note", systemImage: "square.and.pencil")
             }
-            .buttonStyle(PrimaryButtonStyle(color: Theme.warning))
+            .buttonStyle(PrimaryButtonStyle(color: accent))
         }
         .padding(14)
-        .background(Theme.warning.opacity(0.12))
+        .background(accent.opacity(0.12))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Theme.warning.opacity(0.5), lineWidth: 1)
+                .stroke(accent.opacity(0.5), lineWidth: 1)
         )
         .cornerRadius(14)
     }

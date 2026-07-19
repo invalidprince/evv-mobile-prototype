@@ -97,6 +97,17 @@ struct MoreView: View {
                     Toggle("Simulate GPS unavailable", isOn: $appState.simulateGPSUnavailable)
                 }
 
+                Section(header: Text("Demo — Note Reminders"),
+                        footer: Text("Notes are due the same day as the visit. In real use, a reminder fires at 7:00 PM if a note is still open, and again at midnight when it becomes late. These buttons fire the same notifications instantly.")) {
+                    Button(action: { appState.sendTestNoteReminder(late: false) }) {
+                        Label("Send end-of-day reminder now", systemImage: "bell.badge")
+                    }
+                    Button(action: { appState.sendTestNoteReminder(late: true) }) {
+                        Label("Send “note is late” alert now", systemImage: "bell.badge.waveform")
+                            .foregroundColor(Theme.danger)
+                    }
+                }
+
                 // Sign out
                 Section {
                     Button(role: .destructive, action: { appState.signOut() }) {

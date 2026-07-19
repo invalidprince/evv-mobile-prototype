@@ -19,12 +19,29 @@ struct HistoryRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Theme.primary)
                 Spacer()
+                // Same-day note rule: red "LATE" while incomplete past the
+                // service day; permanent "COMPLETED LATE" once finished late.
+                if visit.noteIsLate {
+                    StatusBadge(text: "LATE", color: Theme.danger)
+                } else if visit.noteCompletedLate {
+                    StatusBadge(text: "COMPLETED LATE", color: Theme.danger)
+                }
                 if visit.timeFixStatus != .none {
                     timeFixChip
                 }
                 if visit.deleteRequestStatus != .none {
                     deleteChip
                 }
+            }
+            if visit.lateDocumentation {
+                Label("Late documentation — visible to manager", systemImage: "clock.badge.exclamationmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Theme.danger)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.danger.opacity(0.12))
+                    .cornerRadius(8)
             }
             if visit.manualLocationFlagged {
                 Label("Manual location — pending manager review", systemImage: "mappin.and.ellipse")
@@ -51,7 +68,7 @@ struct HistoryRow: View {
                     HStack(spacing: 8) {
                         // Documentation status
                         Image(systemName: visit.docComplete ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                            .foregroundColor(visit.docComplete ? Theme.success : Theme.warning)
+                            .foregroundColor(visit.docComplete ? Theme.success : (visit.noteIsLate ? Theme.danger : Theme.warning))
                             .font(.subheadline)
                         // Sync status
                         Image(systemName: visit.syncState == .synced ? "icloud.fill" : "icloud.slash")
@@ -64,7 +81,7 @@ struct HistoryRow: View {
                 Button(action: onFinishNote) {
                     Label("Finish Note", systemImage: "square.and.pencil")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundColor(Theme.warning)
+                        .foregroundColor(visit.noteIsLate ? Theme.danger : Theme.warning)
                 }
             }
             HStack(spacing: 20) {
