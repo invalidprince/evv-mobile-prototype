@@ -8,12 +8,6 @@ struct MoreView: View {
     @State private var biometric = true
     @State private var language = "English"
 
-    private var lastSyncText: String {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f.string(from: appState.lastSync)
-    }
-
     var body: some View {
         NavigationView {
             List {
@@ -50,8 +44,18 @@ struct MoreView: View {
                     }
                 }
 
-                // Sync Center
-                Section(header: Text("Sync Center")) {
+                // Sync Status (passive — auto-sync handles everything)
+                Section(header: Text("Sync Status"),
+                        footer: Text("Data syncs automatically when you're online. Items created offline will sync as soon as connectivity is restored.")) {
+                    // Connection status
+                    HStack {
+                        Label("Connection", systemImage: appState.effectivelyOnline ? "wifi" : "wifi.slash")
+                        Spacer()
+                        Text(appState.effectivelyOnline ? "Online" : "Offline")
+                            .foregroundColor(appState.effectivelyOnline ? Theme.success : Theme.danger)
+                            .font(.subheadline.weight(.medium))
+                    }
+                    // Pending items
                     HStack {
                         Label("Pending items", systemImage: "tray.full")
                         Spacer()
@@ -59,18 +63,21 @@ struct MoreView: View {
                             .foregroundColor(appState.pendingSyncCount > 0 ? Theme.warning : Theme.success)
                             .font(.headline)
                     }
+                    // Last sync
                     HStack {
                         Label("Last sync", systemImage: "clock")
                         Spacer()
-                        Text(lastSyncText).foregroundColor(.secondary)
+                        Text(appState.lastSyncRelativeText)
+                            .foregroundColor(.secondary)
                     }
-                    Button(action: { appState.syncNow() }) {
-                        if appState.isSyncing {
-                            HStack {
-                                ProgressView().scaleEffect(0.8)
-                                Text("Syncing…")
-                            }
-                        } else {
+                    // Sync status / manual fallback
+                    if appState.isSyncing {
+                        HStack {
+                            ProgressView().scaleEffect(0.8)
+                            Text("Syncing…")
+                        }
+                    } else if appState.pendingSyncCount > 0 && appState.effectivelyOnline {
+                        Button(action: { appState.syncNow() }) {
                             Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
                         }
                     }
@@ -93,8 +100,9 @@ struct MoreView: View {
                 }
 
                 // Demo controls
-                Section(header: Text("Demo"), footer: Text("When on, the next clock-in can't capture GPS and asks for a manually entered service address, flagging the visit for manager review.")) {
+                Section(header: Text("Demo"), footer: Text("GPS: when on, the next clock-in can't capture GPS and asks for a manually entered service address, flagging the visit for manager review.\n\nOffline: simulates loss of connectivity. Pending items queue up and auto-sync when toggled back off.")) {
                     Toggle("Simulate GPS unavailable", isOn: $appState.simulateGPSUnavailable)
+                    Toggle("Simulate offline", isOn: $appState.simulateOffline)
                 }
 
                 Section(header: Text("Demo — Note Reminders"),
@@ -103,7 +111,7 @@ struct MoreView: View {
                         Label("Send end-of-day reminder now", systemImage: "bell.badge")
                     }
                     Button(action: { appState.sendTestNoteReminder(late: true) }) {
-                        Label("Send “note is late” alert now", systemImage: "bell.badge.waveform")
+                        Label("Send \"note is late\" alert now", systemImage: "bell.badge.waveform")
                             .foregroundColor(Theme.danger)
                     }
                 }

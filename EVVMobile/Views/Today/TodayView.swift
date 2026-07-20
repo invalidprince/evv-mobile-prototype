@@ -89,11 +89,43 @@ struct TodayView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
-            HStack(spacing: 6) {
+            syncChip
+        }
+    }
+
+    @ViewBuilder
+    private var syncChip: some View {
+        if appState.isSyncing {
+            HStack(spacing: 5) {
+                ProgressView().scaleEffect(0.6)
+                Text("Syncing")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        } else if !appState.effectivelyOnline {
+            HStack(spacing: 5) {
+                Image(systemName: "wifi.slash")
+                    .font(.caption2)
+                    .foregroundColor(Theme.danger)
+                Text("Offline")
+                    .font(.caption)
+                    .foregroundColor(Theme.danger)
+            }
+        } else if appState.pendingSyncCount > 0 {
+            HStack(spacing: 5) {
                 Circle()
-                    .fill(appState.pendingSyncCount == 0 ? Theme.success : Theme.warning)
-                    .frame(width: 10, height: 10)
-                Text(appState.pendingSyncCount == 0 ? "Synced" : "Pending")
+                    .fill(Theme.warning)
+                    .frame(width: 8, height: 8)
+                Text("\(appState.pendingSyncCount) pending")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        } else {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption2)
+                    .foregroundColor(Theme.success)
+                Text("Synced")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

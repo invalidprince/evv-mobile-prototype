@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import Network
 
 final class AppState: ObservableObject {
     // MARK: - Auth
@@ -16,11 +17,28 @@ final class AppState: ObservableObject {
 
     // MARK: - Demo settings
     @Published var simulateGPSUnavailable = false
+    /// When on, the app pretends it has no network regardless of the real
+    /// NWPathMonitor status.  Flipping it off counts as an offline→online
+    /// transition and will auto-sync any pending items.
+    @Published var simulateOffline = false
+
+    // MARK: - Connectivity
+    @Published var isOnline = true
+    private let pathMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "connectivity-monitor")
+
+    /// Effective connectivity: hardware online AND not in simulated-offline mode.
+    var effectivelyOnline: Bool { isOnline && !simulateOffline }
 
     // MARK: - Sync
     @Published var pendingSyncCount = 2
     @Published var lastSync = Date().addingTimeInterval(-14 * 60)
     @Published var isSyncing = false
+
+    /// Fires whenever a new pending item is created; debounced into a single
+    /// syncNow() call so rapid clock-out / note / request bursts coalesce.
+    private let syncTrigger = PassthroughSubject<Void, Never>()
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Timer
     @Published var elapsed: TimeInterval = 0
@@ -46,7 +64,69 @@ final class AppState: ObservableObject {
         for visit in incompleteNoteVisits {
             NoteReminderCenter.shared.scheduleReminders(for: visit)
         }
+        setupConnectivityMonitor()
+        setupAutoSyncPipeline()
     }
+
+    // MARK: - Connectivity monitor
+
+    private func setupConnectivityMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                let wasEffectivelyOnline = self.effectivelyOnline
+                self.isOnline = (path.status == .satisfied)
+                let nowEffectivelyOnline = self.effectivelyOnline
+                // offline → online transition: auto-sync if items are pending
+                if !wasEffectivelyOnline && nowEffectivelyOnline && self.pendingSyncCount > 0 {
+                    self.syncNow()
+                }
+            }
+        }
+        pathMonitor.start(queue: monitorQueue)
+    }
+
+    // MARK: - Auto-sync pipeline (debounced)
+
+    private func setupAutoSyncPipeline() {
+        syncTrigger
+            .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self = self else { return }
+                guard self.effectivelyOnline, self.pendingSyncCount > 0, !self.isSyncing else { return }
+                self.syncNow()
+            }
+            .store(in: &cancellables)
+
+        // Watch the simulateOffline toggle: flipping from true → false
+        // is equivalent to an offline → online transition.
+        $simulateOffline
+            .removeDuplicates()
+            .dropFirst()          // skip the initial value
+            .sink { [weak self] nowSimulated in
+                guard let self = self else { return }
+                if !nowSimulated && self.isOnline && self.pendingSyncCount > 0 {
+                    self.syncNow()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Call when a new pending item is created; if online, schedules a
+    /// debounced auto-sync (~2 s).  If offline the item stays queued and
+    /// will sync on the next connectivity or foreground event.
+    private func scheduleAutoSync() {
+        syncTrigger.send()
+    }
+
+    /// Call from the app's scenePhase handler when the app comes to the
+    /// foreground.
+    func handleSceneActive() {
+        guard effectivelyOnline, pendingSyncCount > 0, !isSyncing else { return }
+        syncNow()
+    }
+
+    // MARK: - Late-documentation rule
 
     /// Same-day note rule: an incomplete note that crosses midnight becomes
     /// late. Stamp the manager-visible flag on anything already past due.
@@ -104,6 +184,8 @@ final class AppState: ObservableObject {
         haptic(.success)
         // Note is now owed for this visit — queue the same-day reminders.
         NoteReminderCenter.shared.scheduleReminders(for: finished)
+        // Trigger auto-sync (debounced)
+        scheduleAutoSync()
         return finished
     }
 
@@ -158,15 +240,24 @@ final class AppState: ObservableObject {
     func requestTimeFix(visitId: UUID) {
         if let idx = pastVisits.firstIndex(where: { $0.id == visitId }) {
             pastVisits[idx].timeFixStatus = .pending
+            pendingSyncCount += 1
+            scheduleAutoSync()
         }
     }
 
     func requestDelete(visitId: UUID) {
         if let idx = pastVisits.firstIndex(where: { $0.id == visitId }) {
             pastVisits[idx].deleteRequestStatus = .pending
+            pendingSyncCount += 1
+            scheduleAutoSync()
         }
         if let idx = todayVisits.firstIndex(where: { $0.id == visitId }) {
             todayVisits[idx].deleteRequestStatus = .pending
+            // Only bump pending once even though both arrays may match
+            if pastVisits.first(where: { $0.id == visitId }) == nil {
+                pendingSyncCount += 1
+                scheduleAutoSync()
+            }
         }
     }
 
@@ -182,6 +273,8 @@ final class AppState: ObservableObject {
     func submitNote(visitId: UUID, note: VisitNote) {
         noteDrafts[visitId] = note
         markDocComplete(visitId: visitId)
+        pendingSyncCount += 1
+        scheduleAutoSync()
     }
 
     func isDocComplete(visitId: UUID) -> Bool {
@@ -191,6 +284,7 @@ final class AppState: ObservableObject {
     }
 
     func syncNow() {
+        guard !isSyncing else { return }
         isSyncing = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self = self else { return }
@@ -212,5 +306,22 @@ final class AppState: ObservableObject {
 
     func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
         UINotificationFeedbackGenerator().notificationOccurred(type)
+    }
+
+    // MARK: - Formatted sync status
+
+    /// Human-readable relative text for the last sync time, e.g. "just now",
+    /// "2m ago", "1h ago".
+    var lastSyncRelativeText: String {
+        let seconds = Int(Date().timeIntervalSince(lastSync))
+        if seconds < 15 { return "just now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, h:mm a"
+        return f.string(from: lastSync)
     }
 }
