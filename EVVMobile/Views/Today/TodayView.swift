@@ -23,7 +23,8 @@ struct TodayView: View {
     }
 
     private var upcoming: [Visit] {
-        appState.todayVisits
+        let base = appState.mode == .server ? appState.todayOnlyVisits : appState.todayVisits
+        return base
             .filter { $0.status == .scheduled }
             .sorted { $0.scheduledStart < $1.scheduledStart }
     }
@@ -71,8 +72,9 @@ struct TodayView: View {
                             Image(systemName: "calendar.badge.checkmark")
                                 .font(.largeTitle)
                                 .foregroundColor(.secondary)
-                            Text("No shifts scheduled")
+                            Text("No shifts today — check the Schedule tab for upcoming and open shifts.")
                                 .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 20)

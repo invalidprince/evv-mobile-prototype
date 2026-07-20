@@ -16,6 +16,10 @@ final class AppState: ObservableObject {
     @Published var isLoadingShifts = false
     @Published var serverError: String?
     @Published var showServerError = false
+    @Published var claimingShiftId: Int?  // tracks which open shift is being claimed
+
+    // MARK: - Server open shifts (7-day window unassigned shifts)
+    @Published var serverOpenShifts: [ServerShift] = []
 
     // MARK: - Visits
     @Published var todayVisits: [Visit] = MockData.todaysVisits()
@@ -59,6 +63,42 @@ final class AppState: ObservableObject {
 
     var activeVisit: Visit? {
         todayVisits.first { $0.status == .inProgress }
+    }
+
+    /// Shifts scheduled for today only (server mode: filters the 7-day window
+    /// to just today's date; mock mode: returns all todayVisits).
+    var todayOnlyVisits: [Visit] {
+        guard mode == .server else { return todayVisits }
+        return todayVisits.filter { Calendar.current.isDateInToday($0.scheduledStart) }
+    }
+
+    /// All scheduled visits grouped by date for the Schedule tab (server mode).
+    /// Returns an array of (date, label, visits) sorted by date.
+    var groupedScheduleVisits: [(date: Date, label: String, visits: [Visit])] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: today)!
+
+        var groups: [Date: [Visit]] = [:]
+        for visit in todayVisits {
+            let day = cal.startOfDay(for: visit.scheduledStart)
+            groups[day, default: []].append(visit)
+        }
+
+        return groups.keys.sorted().map { date in
+            let label: String
+            if cal.isDate(date, inSameDayAs: today) {
+                label = "Today"
+            } else if cal.isDate(date, inSameDayAs: tomorrow) {
+                label = "Tomorrow"
+            } else {
+                let f = DateFormatter()
+                f.dateFormat = "EEEE, MMM d"
+                label = f.string(from: date)
+            }
+            let sorted = groups[date]!.sorted { $0.scheduledStart < $1.scheduledStart }
+            return (date, label, sorted)
+        }
     }
 
     /// Completed visits (today or past) whose note still needs finishing.
@@ -200,6 +240,7 @@ final class AppState: ObservableObject {
                             self.todayVisits[i].actualStart = nil
                         }
                         self.startTimerIfNeeded()
+                        await self.refreshServerShifts()
                     }
                 } catch {
                     self.surfaceServerError(APIError.networkError(error))
@@ -411,6 +452,7 @@ final class AppState: ObservableObject {
         todayVisits = MockData.todaysVisits()
         pastVisits = MockData.pastVisits()
         openShifts = MockData.openShifts()
+        serverOpenShifts = []
     }
 
     // MARK: - Server login
@@ -429,6 +471,7 @@ final class AppState: ObservableObject {
             self.todayVisits = []
             self.pastVisits = []
             self.openShifts = []
+            self.serverOpenShifts = []
             self.pendingSyncCount = 0
             self.isLoggedIn = true
         }
@@ -444,8 +487,8 @@ final class AppState: ObservableObject {
         defer { isLoadingShifts = false }
 
         do {
-            let serverShifts = try await APIClient.shared.fetchShifts()
-            let mapped = serverShifts.compactMap { mapServerShift($0) }
+            let response = try await APIClient.shared.fetchShiftsResponse()
+            let mapped = response.shifts.compactMap { mapServerShift($0) }
 
             let cal = Calendar.current
             let today = cal.startOfDay(for: Date())
@@ -471,6 +514,7 @@ final class AppState: ObservableObject {
 
             todayVisits = newToday
             pastVisits = newPast
+            serverOpenShifts = response.openShifts ?? []
             lastSync = Date()
             startTimerIfNeeded()
         } catch {
@@ -562,6 +606,30 @@ final class AppState: ObservableObject {
         if let d = f.date(from: str) { return d }
         f.formatOptions = [.withInternetDateTime]
         return f.date(from: str)
+    }
+
+    // MARK: - Claim open shift (server mode)
+
+    @MainActor
+    func claimOpenShift(shiftId: Int) async {
+        claimingShiftId = shiftId
+        defer { claimingShiftId = nil }
+
+        do {
+            _ = try await APIClient.shared.claimShift(shiftId: shiftId)
+            await refreshServerShifts()
+        } catch let error as APIError {
+            if case .conflict = error {
+                serverError = "Shift no longer available"
+                showServerError = true
+            } else {
+                surfaceServerError(error)
+            }
+            await refreshServerShifts()
+        } catch {
+            surfaceServerError(.networkError(error))
+            await refreshServerShifts()
+        }
     }
 
     // MARK: - Offline queue

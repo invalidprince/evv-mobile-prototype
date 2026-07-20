@@ -52,6 +52,7 @@ struct ServerShift: Decodable {
 
 struct ShiftsResponse: Decodable {
     let shifts: [ServerShift]
+    let openShifts: [ServerShift]?
 }
 
 struct ClockInRequest: Encodable {
@@ -268,6 +269,67 @@ actor APIClient {
 
         do {
             return try JSONDecoder().decode(ClockOutResponse.self, from: data).visit
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Claim Shift
+
+    func claimShift(shiftId: Int) async throws -> ServerShift {
+        let url = URL(string: "\(baseURL)/shifts/\(shiftId)/claim")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Shift no longer available"
+            throw APIError.conflict(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to claim shift"
+            throw APIError.serverError(statusCode, errBody)
+        }
+
+        // Decode defensively: try {"shift": ...} wrapper first, then bare shift
+        struct WrappedClaimResponse: Decodable {
+            let shift: ServerShift
+        }
+        if let wrapped = try? JSONDecoder().decode(WrappedClaimResponse.self, from: data) {
+            return wrapped.shift
+        }
+        do {
+            return try JSONDecoder().decode(ServerShift.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Shifts (full response)
+
+    func fetchShiftsResponse() async throws -> ShiftsResponse {
+        let url = URL(string: "\(baseURL)/me/shifts")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch shifts"
+            throw APIError.serverError(statusCode, errBody)
+        }
+
+        do {
+            return try JSONDecoder().decode(ShiftsResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }
