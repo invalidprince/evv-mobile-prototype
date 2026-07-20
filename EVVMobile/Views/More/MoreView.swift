@@ -21,9 +21,24 @@ struct MoreView: View {
                             Text(appState.currentStaff.role)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
-                            Text("Programs: In-Home, Community, Respite")
+                            if appState.mode == .server {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "server.rack")
+                                        .font(.caption2)
+                                    Text("Server mode")
+                                }
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(Theme.success)
+                                if let staff = appState.serverStaff {
+                                    Text(staff.email)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            } else {
+                                Text("Demo mode \u{2022} Programs: In-Home, Community, Respite")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     .padding(.vertical, 4)
@@ -99,20 +114,34 @@ struct MoreView: View {
                     }
                 }
 
-                // Demo controls
-                Section(header: Text("Demo"), footer: Text("GPS: when on, the next clock-in can't capture GPS and asks for a manually entered service address, flagging the visit for manager review.\n\nOffline: simulates loss of connectivity. Pending items queue up and auto-sync when toggled back off.")) {
-                    Toggle("Simulate GPS unavailable", isOn: $appState.simulateGPSUnavailable)
-                    Toggle("Simulate offline", isOn: $appState.simulateOffline)
+                // Server mode controls
+                if appState.mode == .server {
+                    Section(header: Text("Server"),
+                            footer: Text("Offline queue: \(appState.offlineQueue.count) action(s) pending.")) {
+                        Button(action: {
+                            Task { await appState.refreshServerShifts() }
+                        }) {
+                            Label("Refresh Shifts", systemImage: "arrow.clockwise")
+                        }
+                    }
                 }
 
-                Section(header: Text("Demo — Note Reminders"),
-                        footer: Text("Notes are due the same day as the visit. In real use, a reminder fires at 7:00 PM if a note is still open, and again at midnight when it becomes late. These buttons fire the same notifications instantly.")) {
-                    Button(action: { appState.sendTestNoteReminder(late: false) }) {
-                        Label("Send end-of-day reminder now", systemImage: "bell.badge")
+                // Demo controls (only in mock mode)
+                if appState.mode == .mock {
+                    Section(header: Text("Demo"), footer: Text("GPS: when on, the next clock-in can’t capture GPS and asks for a manually entered service address, flagging the visit for manager review.\n\nOffline: simulates loss of connectivity. Pending items queue up and auto-sync when toggled back off.")) {
+                        Toggle("Simulate GPS unavailable", isOn: $appState.simulateGPSUnavailable)
+                        Toggle("Simulate offline", isOn: $appState.simulateOffline)
                     }
-                    Button(action: { appState.sendTestNoteReminder(late: true) }) {
-                        Label("Send \"note is late\" alert now", systemImage: "bell.badge.waveform")
-                            .foregroundColor(Theme.danger)
+
+                    Section(header: Text("Demo — Note Reminders"),
+                            footer: Text("Notes are due the same day as the visit. In real use, a reminder fires at 7:00 PM if a note is still open, and again at midnight when it becomes late. These buttons fire the same notifications instantly.")) {
+                        Button(action: { appState.sendTestNoteReminder(late: false) }) {
+                            Label("Send end-of-day reminder now", systemImage: "bell.badge")
+                        }
+                        Button(action: { appState.sendTestNoteReminder(late: true) }) {
+                            Label("Send \"note is late\" alert now", systemImage: "bell.badge.waveform")
+                                .foregroundColor(Theme.danger)
+                        }
                     }
                 }
 

@@ -25,6 +25,14 @@ struct ShiftRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Theme.primary)
                 Spacer()
+                if visit.ratio == "2:1" {
+                    StatusBadge(text: "2:1", color: Theme.primary)
+                }
+                if visit.isGroup {
+                    StatusBadge(text: "GROUP 1:2", color: Theme.primary)
+                } else if visit.teamStaff != nil && visit.ratio == nil {
+                    StatusBadge(text: "TEAM 2:1", color: Theme.primary)
+                }
                 StatusBadge(text: visit.status.rawValue.uppercased(), color: statusColor)
             }
             HStack(spacing: 12) {
@@ -35,13 +43,33 @@ struct ShiftRow: View {
                     Text(visit.service.rawValue)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    Label(visit.client.fullAddress, systemImage: "mappin.and.ellipse")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    if let loc = visit.serverLocation, !loc.isEmpty {
+                        Label(loc, systemImage: "mappin.and.ellipse")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Label(visit.client.fullAddress, systemImage: "mappin.and.ellipse")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Partner info for 2:1 shifts
+            if !visit.partners.isEmpty {
+                ForEach(visit.partners, id: \.staffId) { partner in
+                    Label("With: \(partner.name)", systemImage: "person.2.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if let partner = visit.teamStaff {
+                Label("With: \(partner.name)", systemImage: "person.2.fill")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

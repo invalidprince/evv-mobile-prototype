@@ -4,10 +4,17 @@ struct RootView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        if appState.isLoggedIn {
-            MainTabView()
-        } else {
-            LoginView()
+        Group {
+            if appState.isLoggedIn {
+                MainTabView()
+            } else {
+                LoginView()
+            }
+        }
+        .alert("Server Error", isPresented: $appState.showServerError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(appState.serverError ?? "An unknown error occurred")
         }
     }
 }

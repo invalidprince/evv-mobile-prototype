@@ -34,8 +34,13 @@ struct ShiftDetailView: View {
                     HStack(spacing: 12) {
                         AvatarView(name: visit.client.name, size: 52)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(visit.clients.map { $0.name }.joined(separator: " & "))
-                                .font(.title3.bold())
+                            HStack(spacing: 8) {
+                                Text(visit.clients.map { $0.name }.joined(separator: " & "))
+                                    .font(.title3.bold())
+                                if visit.ratio == "2:1" {
+                                    StatusBadge(text: "2:1", color: Theme.primary)
+                                }
+                            }
                             Text(visit.service.rawValue)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
@@ -44,9 +49,19 @@ struct ShiftDetailView: View {
                     Divider()
                     Label(timeWindow, systemImage: "clock.fill")
                         .font(.subheadline)
-                    Label(visit.client.fullAddress, systemImage: "mappin.and.ellipse")
-                        .font(.subheadline)
-                    if let partner = visit.teamStaff {
+                    if let loc = visit.serverLocation, !loc.isEmpty {
+                        Label(loc, systemImage: "mappin.and.ellipse")
+                            .font(.subheadline)
+                    } else {
+                        Label(visit.client.fullAddress, systemImage: "mappin.and.ellipse")
+                            .font(.subheadline)
+                    }
+                    if !visit.partners.isEmpty {
+                        ForEach(visit.partners, id: \.staffId) { partner in
+                            Label("With: \(partner.name)", systemImage: "person.2.fill")
+                                .font(.subheadline)
+                        }
+                    } else if let partner = visit.teamStaff {
                         Label("Team visit with \(partner.name)", systemImage: "person.2.fill")
                             .font(.subheadline)
                     }

@@ -7,6 +7,16 @@ final class AppState: ObservableObject {
     @Published var isLoggedIn = false
     @Published var currentStaff = MockData.currentStaff
 
+    // MARK: - Mode
+    @Published var mode: AppMode = .mock
+    @Published var serverStaff: ServerStaff?  // populated after server login
+    @Published var serverToken: String?
+
+    // MARK: - Server loading / errors
+    @Published var isLoadingShifts = false
+    @Published var serverError: String?
+    @Published var showServerError = false
+
     // MARK: - Visits
     @Published var todayVisits: [Visit] = MockData.todaysVisits()
     @Published var pastVisits: [Visit] = MockData.pastVisits()
@@ -14,6 +24,9 @@ final class AppState: ObservableObject {
 
     // MARK: - Notes (drafts keyed by visit id)
     @Published var noteDrafts: [UUID: VisitNote] = [:]
+
+    // MARK: - Offline queue (server mode)
+    @Published var offlineQueue: [QueuedAction] = []
 
     // MARK: - Demo settings
     @Published var simulateGPSUnavailable = false
@@ -162,31 +175,104 @@ final class AppState: ObservableObject {
     func clockIn(visitId: UUID, manualLocation: ManualLocation? = nil) {
         guard activeVisit == nil else { return }
         guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else { return }
-        todayVisits[idx].actualStart = Date()
-        todayVisits[idx].status = .inProgress
-        if let loc = manualLocation {
-            todayVisits[idx].manualLocation = loc
-            todayVisits[idx].manualLocationFlagged = true
+
+        if mode == .server, let shiftId = todayVisits[idx].serverShiftId {
+            // Server mode: optimistic update + API call
+            todayVisits[idx].status = .inProgress
+            todayVisits[idx].actualStart = Date()
+            startTimerIfNeeded()
+            haptic(.success)
+
+            Task { @MainActor in
+                do {
+                    let visitInfo = try await APIClient.shared.clockIn(shiftId: shiftId)
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                        self.todayVisits[i].serverVisitId = visitInfo.id
+                    }
+                    await self.refreshServerShifts()
+                } catch let error as APIError {
+                    if error.isNetworkError {
+                        self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil)
+                    } else {
+                        self.surfaceServerError(error)
+                        if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                            self.todayVisits[i].status = .scheduled
+                            self.todayVisits[i].actualStart = nil
+                        }
+                        self.startTimerIfNeeded()
+                    }
+                } catch {
+                    self.surfaceServerError(APIError.networkError(error))
+                }
+            }
+        } else {
+            // Mock mode
+            todayVisits[idx].actualStart = Date()
+            todayVisits[idx].status = .inProgress
+            if let loc = manualLocation {
+                todayVisits[idx].manualLocation = loc
+                todayVisits[idx].manualLocationFlagged = true
+            }
+            startTimerIfNeeded()
+            haptic(.success)
         }
-        startTimerIfNeeded()
-        haptic(.success)
     }
 
     @discardableResult
     func clockOut() -> Visit? {
         guard let idx = todayVisits.firstIndex(where: { $0.status == .inProgress }) else { return nil }
-        todayVisits[idx].actualEnd = Date()
-        todayVisits[idx].status = .completed
-        todayVisits[idx].syncState = .pending
-        pendingSyncCount += 1
-        let finished = todayVisits[idx]
-        startTimerIfNeeded()
-        haptic(.success)
-        // Note is now owed for this visit — queue the same-day reminders.
-        NoteReminderCenter.shared.scheduleReminders(for: finished)
-        // Trigger auto-sync (debounced)
-        scheduleAutoSync()
-        return finished
+        let visitId = todayVisits[idx].id
+
+        if mode == .server, let serverVisitId = todayVisits[idx].serverVisitId {
+            // Server mode: optimistic update + API call
+            todayVisits[idx].actualEnd = Date()
+            todayVisits[idx].status = .completed
+            todayVisits[idx].syncState = .pending
+            let finished = todayVisits[idx]
+            startTimerIfNeeded()
+            haptic(.success)
+            NoteReminderCenter.shared.scheduleReminders(for: finished)
+
+            Task { @MainActor in
+                do {
+                    _ = try await APIClient.shared.clockOut(visitId: serverVisitId)
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                        self.todayVisits[i].syncState = .synced
+                    }
+                    await self.refreshServerShifts()
+                } catch let error as APIError {
+                    if error.isNetworkError {
+                        self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: serverVisitId)
+                        self.pendingSyncCount += 1
+                        self.scheduleAutoSync()
+                    } else {
+                        self.surfaceServerError(error)
+                        if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                            self.todayVisits[i].actualEnd = nil
+                            self.todayVisits[i].status = .inProgress
+                            self.todayVisits[i].syncState = .synced
+                        }
+                        self.startTimerIfNeeded()
+                    }
+                } catch {
+                    self.surfaceServerError(APIError.networkError(error))
+                }
+            }
+
+            return finished
+        } else {
+            // Mock mode
+            todayVisits[idx].actualEnd = Date()
+            todayVisits[idx].status = .completed
+            todayVisits[idx].syncState = .pending
+            pendingSyncCount += 1
+            let finished = todayVisits[idx]
+            startTimerIfNeeded()
+            haptic(.success)
+            NoteReminderCenter.shared.scheduleReminders(for: finished)
+            scheduleAutoSync()
+            return finished
+        }
     }
 
     func startUnscheduledVisit(clients: [Client], service: ServiceType) {
@@ -286,22 +372,257 @@ final class AppState: ObservableObject {
     func syncNow() {
         guard !isSyncing else { return }
         isSyncing = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self = self else { return }
-            self.isSyncing = false
-            self.pendingSyncCount = 0
-            self.lastSync = Date()
-            for i in self.todayVisits.indices where self.todayVisits[i].syncState == .pending {
-                self.todayVisits[i].syncState = .synced
+
+        if mode == .server {
+            Task { @MainActor in
+                await self.replayOfflineQueue()
+                await self.refreshServerShifts()
+                self.isSyncing = false
+                self.pendingSyncCount = offlineQueue.count
+                self.lastSync = Date()
+                for i in self.todayVisits.indices where self.todayVisits[i].syncState == .pending {
+                    self.todayVisits[i].syncState = .synced
+                }
             }
-            for i in self.pastVisits.indices where self.pastVisits[i].syncState == .pending {
-                self.pastVisits[i].syncState = .synced
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self = self else { return }
+                self.isSyncing = false
+                self.pendingSyncCount = 0
+                self.lastSync = Date()
+                for i in self.todayVisits.indices where self.todayVisits[i].syncState == .pending {
+                    self.todayVisits[i].syncState = .synced
+                }
+                for i in self.pastVisits.indices where self.pastVisits[i].syncState == .pending {
+                    self.pastVisits[i].syncState = .synced
+                }
             }
         }
     }
 
     func signOut() {
         isLoggedIn = false
+        mode = .mock
+        serverStaff = nil
+        serverToken = nil
+        offlineQueue.removeAll()
+        Task { await APIClient.shared.setToken(nil) }
+        currentStaff = MockData.currentStaff
+        todayVisits = MockData.todaysVisits()
+        pastVisits = MockData.pastVisits()
+        openShifts = MockData.openShifts()
+    }
+
+    // MARK: - Server login
+
+    func loginWithServer(email: String) async throws {
+        let response = try await APIClient.shared.login(email: email)
+        await MainActor.run {
+            self.serverStaff = response.staff
+            self.serverToken = response.token
+            self.mode = .server
+            self.currentStaff = Staff(
+                id: UUID(),
+                name: response.staff.name,
+                role: response.staff.departmentName
+            )
+            self.todayVisits = []
+            self.pastVisits = []
+            self.openShifts = []
+            self.pendingSyncCount = 0
+            self.isLoggedIn = true
+        }
+        await refreshServerShifts()
+    }
+
+    // MARK: - Server shift fetch & mapping
+
+    @MainActor
+    func refreshServerShifts() async {
+        guard mode == .server else { return }
+        isLoadingShifts = true
+        defer { isLoadingShifts = false }
+
+        do {
+            let serverShifts = try await APIClient.shared.fetchShifts()
+            let mapped = serverShifts.compactMap { mapServerShift($0) }
+
+            let cal = Calendar.current
+            let today = cal.startOfDay(for: Date())
+            var newToday: [Visit] = []
+            var newPast: [Visit] = []
+
+            for visit in mapped {
+                if cal.isDate(visit.scheduledStart, inSameDayAs: today) ||
+                   visit.scheduledStart >= today {
+                    newToday.append(visit)
+                } else {
+                    newPast.append(visit)
+                }
+            }
+
+            // Preserve note-draft / doc-complete state
+            for i in newToday.indices {
+                if let existing = todayVisits.first(where: { $0.serverShiftId == newToday[i].serverShiftId }) {
+                    newToday[i].docComplete = existing.docComplete
+                    newToday[i].lateDocumentation = existing.lateDocumentation
+                }
+            }
+
+            todayVisits = newToday
+            pastVisits = newPast
+            lastSync = Date()
+            startTimerIfNeeded()
+        } catch {
+            surfaceServerError(error as? APIError ?? .networkError(error))
+        }
+    }
+
+    private func mapServerShift(_ s: ServerShift) -> Visit? {
+        guard let startDate = parseShiftDateTime(dateStr: s.date, timeStr: s.start),
+              let endDate = parseShiftDateTime(dateStr: s.date, timeStr: s.end) else {
+            return nil
+        }
+
+        let client = Client(
+            id: UUID(),
+            name: s.individual.name,
+            address: s.location ?? "",
+            city: ""
+        )
+
+        let serviceType = mapServiceType(s.service)
+
+        var status: VisitStatus = .scheduled
+        var actualStart: Date? = nil
+        var actualEnd: Date? = nil
+        var serverVisitId: String? = nil
+
+        if let myVisit = s.myVisit {
+            serverVisitId = myVisit.id
+            actualStart = parseISO8601(myVisit.clockIn)
+            if let co = myVisit.clockOut {
+                actualEnd = parseISO8601(co)
+                status = .completed
+            } else {
+                status = .inProgress
+            }
+        }
+
+        let partners = (s.partners ?? []).map { PartnerInfo(staffId: $0.staffId, name: $0.name) }
+        let is21 = s.ratio == "2:1"
+
+        var teamStaff: Staff? = nil
+        if is21, let first = partners.first {
+            teamStaff = Staff(id: UUID(), name: first.name, role: "Partner")
+        }
+
+        var visit = Visit(
+            id: UUID(),
+            clients: [client],
+            service: serviceType,
+            scheduledStart: startDate,
+            scheduledEnd: endDate,
+            actualStart: actualStart,
+            actualEnd: actualEnd,
+            status: status,
+            teamStaff: teamStaff
+        )
+        visit.serverShiftId = s.id
+        visit.serverVisitId = serverVisitId
+        visit.ratio = s.ratio
+        visit.partners = partners
+        visit.serverLocation = s.location
+
+        return visit
+    }
+
+    private func mapServiceType(_ service: String) -> ServiceType {
+        let lower = service.lowercased()
+        if lower.contains("home") || lower.contains("in-home") { return .inHomeSupport }
+        if lower.contains("community") { return .communityParticipation }
+        if lower.contains("companion") { return .companion }
+        if lower.contains("respite") { return .respite }
+        return .inHomeSupport
+    }
+
+    private func parseShiftDateTime(dateStr: String, timeStr: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd h:mm a"
+        if let d = formatter.date(from: "\(dateStr) \(timeStr)") { return d }
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        if let d = formatter.date(from: "\(dateStr) \(timeStr)") { return d }
+        return nil
+    }
+
+    private func parseISO8601(_ str: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: str) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: str)
+    }
+
+    // MARK: - Offline queue
+
+    private func enqueueOfflineAction(_ type: QueuedAction.ActionType, shiftId: Int?, visitId: String?) {
+        let action = QueuedAction(
+            id: UUID(),
+            type: type,
+            shiftId: shiftId,
+            visitId: visitId,
+            lat: nil,
+            lng: nil,
+            accuracy: nil,
+            createdAt: Date()
+        )
+        offlineQueue.append(action)
+        pendingSyncCount = offlineQueue.count
+    }
+
+    @MainActor
+    private func replayOfflineQueue() async {
+        guard !offlineQueue.isEmpty else { return }
+        var remaining: [QueuedAction] = []
+
+        for action in offlineQueue {
+            do {
+                switch action.type {
+                case .clockIn:
+                    if let shiftId = action.shiftId {
+                        _ = try await APIClient.shared.clockIn(shiftId: shiftId)
+                    }
+                case .clockOut:
+                    if let visitId = action.visitId {
+                        _ = try await APIClient.shared.clockOut(visitId: visitId)
+                    }
+                }
+            } catch let error as APIError {
+                if error.isNetworkError {
+                    remaining.append(action)
+                } else {
+                    surfaceServerError(error)
+                }
+            } catch {
+                remaining.append(action)
+            }
+        }
+
+        if !remaining.isEmpty && offlineQueue.count != remaining.count {
+            serverError = "\(offlineQueue.count - remaining.count) action(s) synced late"
+            showServerError = true
+        }
+
+        offlineQueue = remaining
+        pendingSyncCount = remaining.count
+    }
+
+    // MARK: - Error surfacing
+
+    func surfaceServerError(_ error: APIError) {
+        serverError = error.localizedDescription
+        showServerError = true
     }
 
     func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {

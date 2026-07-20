@@ -18,6 +18,18 @@ struct Staff: Identifiable, Hashable {
     let role: String
 }
 
+/// Lightweight partner info from server (for 2:1 display).
+struct PartnerInfo: Hashable {
+    let staffId: String
+    let name: String
+}
+
+/// App-wide running mode.
+enum AppMode: String {
+    case mock   // Existing demo data
+    case server // Connected to live backend
+}
+
 enum ServiceType: String, CaseIterable, Identifiable {
     case inHomeSupport = "In-Home Support"
     case communityParticipation = "Community Participation"
@@ -76,13 +88,25 @@ struct Visit: Identifiable {
     var status: VisitStatus
     var syncState: SyncState = .synced
     var docComplete: Bool = false
-    var teamStaff: Staff?          // 2:1 team visit partner
+    var teamStaff: Staff?          // 2:1 team visit partner (mock mode)
     var isGroup: Bool = false      // 1:2 group visit
     var notes: String = ""
     var timeFixStatus: TimeFixStatus = .none
     var deleteRequestStatus: DeleteRequestStatus = .none
     var manualLocation: ManualLocation?
     var manualLocationFlagged: Bool = false
+
+    // MARK: - Server-mode fields
+    /// Server shift ID (used for clock-in API call).
+    var serverShiftId: Int?
+    /// Server visit ID (used for clock-out API call).
+    var serverVisitId: String?
+    /// Ratio string from server, e.g. "2:1".
+    var ratio: String?
+    /// Partner info for 2:1 shifts from server.
+    var partners: [PartnerInfo] = []
+    /// Location string from server.
+    var serverLocation: String?
     /// Set when documentation was (or is) late — i.e. the note was still
     /// incomplete after the service day ended, or was completed after it.
     /// Visible to managers. Once set by a late completion it never clears:

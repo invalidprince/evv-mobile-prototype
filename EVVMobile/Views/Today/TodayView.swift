@@ -44,6 +44,17 @@ struct TodayView: View {
                         }
                     }
 
+                    if appState.isLoadingShifts {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading shifts…")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    }
+
                     if !upcoming.isEmpty {
                         Text("Up Next")
                             .font(.title3.bold())
@@ -53,6 +64,18 @@ struct TodayView: View {
                                 clockInTarget = visit
                             }
                         }
+                    }
+
+                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "calendar.badge.checkmark")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("No shifts scheduled")
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
                     }
 
                     otherActions

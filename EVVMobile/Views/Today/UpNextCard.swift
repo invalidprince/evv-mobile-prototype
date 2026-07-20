@@ -20,9 +20,12 @@ struct UpNextCard: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Theme.primary)
                 Spacer()
+                if visit.ratio == "2:1" {
+                    StatusBadge(text: "2:1", color: Theme.primary)
+                }
                 if visit.isGroup {
                     StatusBadge(text: "GROUP 1:2", color: Theme.primary)
-                } else if visit.teamStaff != nil {
+                } else if visit.teamStaff != nil && visit.ratio == nil {
                     StatusBadge(text: "TEAM 2:1", color: Theme.primary)
                 }
             }
@@ -43,8 +46,14 @@ struct UpNextCard: View {
                 Spacer()
             }
 
-            if let partner = visit.teamStaff {
-                Label("With \(partner.name)", systemImage: "person.2.fill")
+            if !visit.partners.isEmpty {
+                ForEach(visit.partners, id: \.staffId) { partner in
+                    Label("With: \(partner.name)", systemImage: "person.2.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else if let partner = visit.teamStaff {
+                Label("With: \(partner.name)", systemImage: "person.2.fill")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

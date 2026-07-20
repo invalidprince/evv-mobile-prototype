@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0376BEBCD3AF6049465FD4E6 /* TimeFixSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1FA0D83CA7654E736EAEA3A /* TimeFixSheet.swift */; };
 		03C9325CFE630FE48739DE85 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AD595B3CA807FD5007EE21A /* RootView.swift */; };
+		07D98E23146D0ED5C331080D /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4CD8D7E3B1AAC27D8DFC2A4 /* APIClient.swift */; };
 		1D94B822F26FBB332F79CC33 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B6FB73632F6CB7629FBADD /* AppState.swift */; };
 		226FC9328809187AC9040CFD /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BCE1E01E6B620AA8EA9DC45 /* LoginView.swift */; };
 		2E9C36BFFEAD27BE27C513B8 /* ClockInSuccessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59D85001A0AB1FEC33B1F24F /* ClockInSuccessView.swift */; };
@@ -65,6 +66,7 @@
 		E7F813C89D17059CDF3507FC /* SignaturePadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignaturePadView.swift; sourceTree = "<group>"; };
 		EB0A91BD032961677F97C2DA /* DocumentationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentationView.swift; sourceTree = "<group>"; };
 		F1FA0D83CA7654E736EAEA3A /* TimeFixSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeFixSheet.swift; sourceTree = "<group>"; };
+		F4CD8D7E3B1AAC27D8DFC2A4 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		FE6BC3B85F893A88BCBE38F1 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -131,6 +133,7 @@
 		3D1B9C6BC0C007CD4F8C92BA /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				F4CD8D7E3B1AAC27D8DFC2A4 /* APIClient.swift */,
 				8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */,
 			);
 			path = Services;
@@ -274,6 +277,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				07D98E23146D0ED5C331080D /* APIClient.swift in Sources */,
 				E93360C920CECA38863C913C /* ActiveVisitCard.swift in Sources */,
 				1D94B822F26FBB332F79CC33 /* AppState.swift in Sources */,
 				37826622B822F5A4B6567920 /* ClockInConfirmSheet.swift in Sources */,
