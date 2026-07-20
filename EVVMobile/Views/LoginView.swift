@@ -9,6 +9,9 @@ struct LoginView: View {
     @State private var serverEmail = ""
     @State private var isLoggingIn = false
     @State private var loginError = ""
+    @State private var isGoogleLoggingIn = false
+    @State private var googleLoginError = ""
+    @State private var showGoogleError = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -79,16 +82,47 @@ struct LoginView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                // MARK: - Demo mode (mock)
-                Button(action: { appState.isLoggedIn = true }) {
+                // MARK: - Google Sign-In (server mode)
+                Button(action: doGoogleLogin) {
                     HStack(spacing: 12) {
                         Text("G")
                             .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundColor(Theme.primary)
+                            .foregroundColor(Color(red: 0.26, green: 0.52, blue: 0.96))
                             .frame(width: 32, height: 32)
                             .background(Color.white)
                             .clipShape(Circle())
-                        Text("Demo Mode (Google)")
+                        if isGoogleLoggingIn {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Text("Sign in with Google")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 52)
+                    .background(Color(.systemGray5))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(.systemGray3), lineWidth: 1)
+                    )
+                }
+                .disabled(isGoogleLoggingIn)
+                .alert("Google Sign-In", isPresented: $showGoogleError) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(googleLoginError)
+                }
+
+                // MARK: - Demo mode (mock)
+                Button(action: { appState.isLoggedIn = true }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text("Demo Mode")
                             .font(.headline)
                             .foregroundColor(.white)
                     }
@@ -132,6 +166,43 @@ struct LoginView: View {
                 .padding(.bottom, 8)
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+    }
+
+    private func doGoogleLogin() {
+        guard GoogleAuthConfig.isConfigured else {
+            googleLoginError = "Google Sign-In isn't configured yet"
+            showGoogleError = true
+            return
+        }
+        isGoogleLoggingIn = true
+
+        Task {
+            do {
+                let idToken = try await GoogleAuthService.shared.authenticate()
+                try await appState.loginWithGoogle(idToken: idToken)
+            } catch let error as GoogleAuthError {
+                await MainActor.run {
+                    if let desc = error.errorDescription {
+                        googleLoginError = desc
+                        showGoogleError = true
+                    }
+                    // userCancelled has nil description → silent no-op
+                }
+            } catch let error as APIError {
+                await MainActor.run {
+                    googleLoginError = error.errorDescription ?? "Login failed"
+                    showGoogleError = true
+                }
+            } catch {
+                await MainActor.run {
+                    googleLoginError = error.localizedDescription
+                    showGoogleError = true
+                }
+            }
+            await MainActor.run {
+                isGoogleLoggingIn = false
+            }
+        }
     }
 
     private func doServerLogin() {

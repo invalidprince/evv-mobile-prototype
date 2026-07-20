@@ -6,6 +6,10 @@ struct LoginRequest: Encodable {
     let email: String
 }
 
+struct GoogleLoginRequest: Encodable {
+    let idToken: String
+}
+
 struct LoginResponse: Decodable {
     let token: String
     let staff: ServerStaff
@@ -258,6 +262,41 @@ actor APIClient {
         }
         guard statusCode == 200 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Login failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+
+        do {
+            let loginResponse = try JSONDecoder().decode(LoginResponse.self, from: data)
+            self.token = loginResponse.token
+            return loginResponse
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Google Login
+
+    func loginWithGoogle(idToken: String) async throws -> LoginResponse {
+        let url = URL(string: "\(baseURL)/login/google")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(GoogleLoginRequest(idToken: idToken))
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        if statusCode == 401 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Invalid credentials"
+            throw APIError.unauthorized(errBody)
+        }
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Google login failed"
             throw APIError.serverError(statusCode, errBody)
         }
 

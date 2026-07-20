@@ -462,6 +462,27 @@ final class AppState: ObservableObject {
 
     // MARK: - Server login
 
+    func loginWithGoogle(idToken: String) async throws {
+        let response = try await APIClient.shared.loginWithGoogle(idToken: idToken)
+        await MainActor.run {
+            self.serverStaff = response.staff
+            self.serverToken = response.token
+            self.mode = .server
+            self.currentStaff = Staff(
+                id: UUID(),
+                name: response.staff.name,
+                role: response.staff.departmentName
+            )
+            self.todayVisits = []
+            self.pastVisits = []
+            self.openShifts = []
+            self.serverOpenShifts = []
+            self.pendingSyncCount = 0
+            self.isLoggedIn = true
+        }
+        await refreshServerShifts()
+    }
+
     func loginWithServer(email: String) async throws {
         let response = try await APIClient.shared.login(email: email)
         await MainActor.run {
