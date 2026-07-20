@@ -8,7 +8,7 @@ import Foundation
 enum GoogleAuthConfig {
     /// iOS OAuth client ID from Google Cloud Console.
     /// Must be an **iOS** type client (no client secret required for PKCE).
-    static let iosClientID = "REPLACE_ME.apps.googleusercontent.com"
+    static let iosClientID = "965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n.apps.googleusercontent.com"
 
     /// Reversed client ID used as the custom URL scheme for the OAuth redirect.
     /// e.g. `com.googleusercontent.apps.123456789` for client ID `123456789.apps.googleusercontent.com`
