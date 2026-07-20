@@ -25,6 +25,7 @@
 		76E6D9568491F1450FAD8A8F /* MockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC841528113A66996FC21FF1 /* MockData.swift */; };
 		8405CF635B64E963DCDAB439 /* DocumentationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB0A91BD032961677F97C2DA /* DocumentationView.swift */; };
 		87CC7A1829076198FBA32C88 /* HistoryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40799C6376F8F4D66B813AA7 /* HistoryRow.swift */; };
+		A04AAFC880D0004E16536566 /* ServerModeE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD1CDAA6FDDA5B4B2A2C455 /* ServerModeE2ETests.swift */; };
 		A4CAEA872281BED8E53FDAEF /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A592BA84612CB09A2A4F61 /* Models.swift */; };
 		C2B795D7F0DC9FF417F17D9D /* EVVMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */; };
 		C47A7068FCEA6C8B0F3B62B6 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CABA5A108F36DC92A278BCD /* Theme.swift */; };
@@ -37,11 +38,22 @@
 		EE1E5B614A13991388147ADD /* UnscheduledVisitSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E901FDBCC170EE39F601A79 /* UnscheduledVisitSheet.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		6A1D8D39EFB536D4578480A4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0709E99061B8B7C5FB0C0293 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8BE210C930D1DC4BBCD4DB37;
+			remoteInfo = EVVMobile;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		0BB38EF84FCABD2F0387E43A /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
 		0CABA5A108F36DC92A278BCD /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EVVMobileApp.swift; sourceTree = "<group>"; };
 		15BE09C32C84B4CB482C21E2 /* ActiveVisitCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveVisitCard.swift; sourceTree = "<group>"; };
+		1CD1CDAA6FDDA5B4B2A2C455 /* ServerModeE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeE2ETests.swift; sourceTree = "<group>"; };
 		1DC5F0D5661B4B523FCCFD64 /* ClockInConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockInConfirmSheet.swift; sourceTree = "<group>"; };
 		40799C6376F8F4D66B813AA7 /* HistoryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRow.swift; sourceTree = "<group>"; };
 		423A0C42C98BB37FAF17E3F7 /* NonBillableSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NonBillableSheet.swift; sourceTree = "<group>"; };
@@ -59,6 +71,7 @@
 		8BCE1E01E6B620AA8EA9DC45 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteReminderCenter.swift; sourceTree = "<group>"; };
 		AEE6D26CF44F431431C7AEB9 /* UpNextCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpNextCard.swift; sourceTree = "<group>"; };
+		B3225BEC89B0945E9D42208E /* EVVMobileUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = EVVMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CC841528113A66996FC21FF1 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		D800630BC97251255B955C6A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		DB7F8A3BA2F6608BCA11131E /* ShiftDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShiftDetailView.swift; sourceTree = "<group>"; };
@@ -126,6 +139,7 @@
 			isa = PBXGroup;
 			children = (
 				DFD57A6F6C4A703E6A799FB6 /* EVVMobile.app */,
+				B3225BEC89B0945E9D42208E /* EVVMobileUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -143,6 +157,7 @@
 			isa = PBXGroup;
 			children = (
 				320F767FEC3E009968EFA2CF /* EVVMobile */,
+				6658CF1EF76BD01EE22779CA /* EVVMobileUITests */,
 				3824E1040FD34FD932E706DC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -166,6 +181,14 @@
 				75A592BA84612CB09A2A4F61 /* Models.swift */,
 			);
 			path = Models;
+			sourceTree = "<group>";
+		};
+		6658CF1EF76BD01EE22779CA /* EVVMobileUITests */ = {
+			isa = PBXGroup;
+			children = (
+				1CD1CDAA6FDDA5B4B2A2C455 /* ServerModeE2ETests.swift */,
+			);
+			path = EVVMobileUITests;
 			sourceTree = "<group>";
 		};
 		7E44BC4A4AF447592EB2E844 /* Schedule */ = {
@@ -222,6 +245,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3F2C5494D3769770251DA0B1 /* EVVMobileUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DABA9F3BBB316E800D491938 /* Build configuration list for PBXNativeTarget "EVVMobileUITests" */;
+			buildPhases = (
+				1274F2D5BB74E5EE5D5590FC /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F7F39E430746239B99E27596 /* PBXTargetDependency */,
+			);
+			name = EVVMobileUITests;
+			packageProductDependencies = (
+			);
+			productName = EVVMobileUITests;
+			productReference = B3225BEC89B0945E9D42208E /* EVVMobileUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		8BE210C930D1DC4BBCD4DB37 /* EVVMobile */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9F338E8E4D5B745EF0D9FFF9 /* Build configuration list for PBXNativeTarget "EVVMobile" */;
@@ -248,6 +289,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					3F2C5494D3769770251DA0B1 = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = 8BE210C930D1DC4BBCD4DB37;
+					};
 					8BE210C930D1DC4BBCD4DB37 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -268,11 +313,20 @@
 			projectRoot = "";
 			targets = (
 				8BE210C930D1DC4BBCD4DB37 /* EVVMobile */,
+				3F2C5494D3769770251DA0B1 /* EVVMobileUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		1274F2D5BB74E5EE5D5590FC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A04AAFC880D0004E16536566 /* ServerModeE2ETests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		4578F53D64FFC7290AE38361 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -309,6 +363,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F7F39E430746239B99E27596 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8BE210C930D1DC4BBCD4DB37 /* EVVMobile */;
+			targetProxy = 6A1D8D39EFB536D4578480A4 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		2459FBC65D265CF5350F74B6 /* Debug */ = {
@@ -410,6 +472,44 @@
 			};
 			name = Release;
 		};
+		A05C78AFAE728A147CA562DE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.fbhi.evvmobile.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = EVVMobile;
+			};
+			name = Release;
+		};
+		EC42B872E94CF6F2A3ABD8DD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.fbhi.evvmobile.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = EVVMobile;
+			};
+			name = Debug;
+		};
 		EEA6A0492F7E7001DFC496CA /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -485,6 +585,15 @@
 			buildConfigurations = (
 				2459FBC65D265CF5350F74B6 /* Debug */,
 				6CDF500A5669645B160E4833 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DABA9F3BBB316E800D491938 /* Build configuration list for PBXNativeTarget "EVVMobileUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EC42B872E94CF6F2A3ABD8DD /* Debug */,
+				A05C78AFAE728A147CA562DE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

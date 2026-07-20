@@ -21,3 +21,26 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGNING_ALLOWED: "YES"
         CODE_SIGN_IDENTITY: "-"
+  EVVMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - EVVMobileUITests
+    dependencies:
+      - target: EVVMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.fbhi.evvmobile.uitests
+        TEST_TARGET_NAME: EVVMobile
+        GENERATE_INFOPLIST_FILE: "YES"
+        CODE_SIGNING_ALLOWED: "YES"
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  EVVMobile:
+    build:
+      targets:
+        EVVMobile: all
+        EVVMobileUITests: [test]
+    test:
+      targets:
+        - EVVMobileUITests
