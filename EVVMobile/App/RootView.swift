@@ -24,6 +24,9 @@ struct MainTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if appState.mode == .mock {
+                DemoModeBanner()
+            }
             SyncStatusBanner()
             TabView {
                 TodayView()
@@ -36,6 +39,24 @@ struct MainTabView: View {
                     .tabItem { Label("More", systemImage: "ellipsis.circle.fill") }
             }
         }
+    }
+}
+
+// MARK: - Demo Mode Banner
+
+struct DemoModeBanner: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "theatermasks.fill")
+                .font(.caption2)
+            Text("DEMO — sample data, nothing syncs")
+                .font(.caption.weight(.semibold))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
+        .background(Color.orange)
     }
 }
 

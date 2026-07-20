@@ -83,6 +83,83 @@ struct VisitsResponse: Decodable {
     let visits: [ServerVisitRecord]
 }
 
+// MARK: - History Visit (GET /me/visits)
+
+struct ServerHistoryVisit: Decodable, Identifiable {
+    let id: String
+    let shiftId: Int?
+    let individual: ServerIndividual?
+    let service: String?
+    let clockIn: String?
+    let clockOut: String?
+    let status: String?
+    let date: String?
+    let duration: Int?
+    let docStatus: String?
+    let hasNote: Bool?
+}
+
+struct HistoryVisitsResponse: Decodable {
+    let visits: [ServerHistoryVisit]
+}
+
+// MARK: - Requests (GET /me/requests)
+
+struct ServerException: Decodable, Identifiable {
+    let id: Int?
+    let visitId: String?
+    let type: String?        // "time-fix" or "delete"
+    let status: String?      // "new", "in progress", "resolved"
+    let resolution: String?  // "approved", "denied", etc.
+    let reason: String?
+    let newIn: String?
+    let newOut: String?
+    let createdAt: String?
+}
+
+struct RequestsResponse: Decodable {
+    let requests: [ServerException]?
+    let exceptions: [ServerException]?
+
+    var items: [ServerException] {
+        requests ?? exceptions ?? []
+    }
+}
+
+// MARK: - Note response
+
+struct NoteResponse: Decodable {
+    let ok: Bool?
+    let docStatus: String?
+}
+
+// MARK: - Non-billable
+
+struct NonBillableEntry: Decodable, Identifiable {
+    let id: Int?
+    let date: String?
+    let category: String?
+    let minutes: Int?
+    let note: String?
+    let createdAt: String?
+}
+
+struct NonBillableListResponse: Decodable {
+    let entries: [NonBillableEntry]?
+}
+
+struct NonBillableCreateResponse: Decodable {
+    let id: Int?
+    let ok: Bool?
+}
+
+// MARK: - Time fix / delete request responses
+
+struct ExceptionResponse: Decodable {
+    let ok: Bool?
+    let exceptionId: Int?
+}
+
 struct APIErrorResponse: Decodable {
     let error: String
 }
@@ -125,10 +202,19 @@ struct QueuedAction: Identifiable, Codable {
     let lng: Double?
     let accuracy: Double?
     let createdAt: Date
+    // Note fields (for offline note queuing)
+    let noteText: String?
+    // Non-billable fields (for offline queuing)
+    let nbCategory: String?
+    let nbMinutes: Int?
+    let nbNote: String?
+    let nbDate: String?
 
     enum ActionType: String, Codable {
         case clockIn
         case clockOut
+        case addNote
+        case nonBillable
     }
 }
 
@@ -306,6 +392,199 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(ServerShift.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - History Visits
+
+    func fetchHistoryVisits(days: Int = 14) async throws -> [ServerHistoryVisit] {
+        let url = URL(string: "\(baseURL)/me/visits?days=\(days)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch history"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(HistoryVisitsResponse.self, from: data).visits
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Requests (exceptions)
+
+    func fetchRequests() async throws -> [ServerException] {
+        let url = URL(string: "\(baseURL)/me/requests")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch requests"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(RequestsResponse.self, from: data).items
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Add Note
+
+    func addNote(visitId: String, text: String) async throws -> NoteResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/note")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(["text": text])
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to add note"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(NoteResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Non-Billable
+
+    func createNonBillable(date: String?, category: String, minutes: Int, note: String) async throws -> NonBillableCreateResponse {
+        let url = URL(string: "\(baseURL)/nonbillable")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        var body: [String: Any] = ["category": category, "minutes": minutes, "note": note]
+        if let d = date { body["date"] = d }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to create non-billable entry"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(NonBillableCreateResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    func fetchNonBillable() async throws -> [NonBillableEntry] {
+        let url = URL(string: "\(baseURL)/me/nonbillable")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch non-billable entries"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(NonBillableListResponse.self, from: data).entries ?? []
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Time Fix Request
+
+    func requestTimeFix(visitId: String, newIn: String?, newOut: String?, reason: String) async throws -> ExceptionResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/time-fix")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        var body: [String: Any] = ["reason": reason]
+        if let ni = newIn { body["newIn"] = ni }
+        if let no = newOut { body["newOut"] = no }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "A request is already pending for this visit."
+            throw APIError.conflict(errBody)
+        }
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to submit time fix"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(ExceptionResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Delete Request
+
+    func requestDelete(visitId: String, reason: String) async throws -> ExceptionResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/delete-request")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        let body: [String: Any] = ["reason": reason]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "A request is already pending for this visit."
+            throw APIError.conflict(errBody)
+        }
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to submit delete request"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(ExceptionResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

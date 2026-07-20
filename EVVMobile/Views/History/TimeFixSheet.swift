@@ -9,6 +9,9 @@ struct TimeFixSheet: View {
     @State private var newEnd: Date
     @State private var reason = "Forgot to clock in"
     @State private var comment = ""
+    @State private var isSubmitting = false
+    @State private var showSuccess = false
+    @State private var errorMessage: String?
 
     private let reasons = [
         "Forgot to clock in",
@@ -57,12 +60,30 @@ struct TimeFixSheet: View {
                     TextField("Add details for your supervisor…", text: $comment)
                 }
 
+                if let error = errorMessage {
+                    Section {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(Theme.danger)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
+                }
+
                 Section {
                     Button(action: submit) {
-                        Text("Submit Request")
-                            .frame(maxWidth: .infinity)
-                            .font(.headline)
+                        if isSubmitting {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Submit Request")
+                                .frame(maxWidth: .infinity)
+                                .font(.headline)
+                        }
                     }
+                    .disabled(isSubmitting)
                 }
             }
             .navigationTitle("Request Time Fix")
@@ -72,11 +93,46 @@ struct TimeFixSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .alert("Time fix request submitted", isPresented: $showSuccess) {
+                Button("OK") { dismiss() }
+            } message: {
+                Text("Your supervisor will review and respond.")
+            }
         }
     }
 
     private func submit() {
-        appState.requestTimeFix(visitId: visit.id)
-        dismiss()
+        if appState.mode == .server, let svid = visit.serverVisitId {
+            isSubmitting = true
+            errorMessage = nil
+
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            let newInStr = formatter.string(from: newStart)
+            let newOutStr = formatter.string(from: newEnd)
+            let fullReason = comment.isEmpty ? reason : "\(reason): \(comment)"
+
+            Task {
+                let err = await appState.submitServerTimeFix(
+                    visitId: visit.id,
+                    serverVisitId: svid,
+                    newIn: newInStr,
+                    newOut: newOutStr,
+                    reason: fullReason
+                )
+                await MainActor.run {
+                    isSubmitting = false
+                    if let err = err {
+                        errorMessage = err
+                    } else {
+                        showSuccess = true
+                    }
+                }
+            }
+        } else {
+            // Mock mode
+            appState.requestTimeFix(visitId: visit.id)
+            dismiss()
+        }
     }
 }

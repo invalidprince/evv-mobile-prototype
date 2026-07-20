@@ -21,6 +21,11 @@ final class AppState: ObservableObject {
     // MARK: - Server open shifts (7-day window unassigned shifts)
     @Published var serverOpenShifts: [ServerShift] = []
 
+    // MARK: - History (server mode)
+    @Published var historyVisits: [Visit] = []           // from GET /me/visits
+    @Published var serverExceptions: [ServerException] = [] // from GET /me/requests
+    @Published var isLoadingHistory = false
+
     // MARK: - Visits
     @Published var todayVisits: [Visit] = MockData.todaysVisits()
     @Published var pastVisits: [Visit] = MockData.pastVisits()
@@ -634,7 +639,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Offline queue
 
-    private func enqueueOfflineAction(_ type: QueuedAction.ActionType, shiftId: Int?, visitId: String?) {
+    private func enqueueOfflineAction(_ type: QueuedAction.ActionType, shiftId: Int?, visitId: String?,
+                                        noteText: String? = nil,
+                                        nbCategory: String? = nil, nbMinutes: Int? = nil,
+                                        nbNote: String? = nil, nbDate: String? = nil) {
         let action = QueuedAction(
             id: UUID(),
             type: type,
@@ -643,7 +651,12 @@ final class AppState: ObservableObject {
             lat: nil,
             lng: nil,
             accuracy: nil,
-            createdAt: Date()
+            createdAt: Date(),
+            noteText: noteText,
+            nbCategory: nbCategory,
+            nbMinutes: nbMinutes,
+            nbNote: nbNote,
+            nbDate: nbDate
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
@@ -665,6 +678,15 @@ final class AppState: ObservableObject {
                     if let visitId = action.visitId {
                         _ = try await APIClient.shared.clockOut(visitId: visitId)
                     }
+                case .addNote:
+                    if let visitId = action.visitId, let text = action.noteText {
+                        _ = try await APIClient.shared.addNote(visitId: visitId, text: text)
+                    }
+                case .nonBillable:
+                    if let cat = action.nbCategory, let mins = action.nbMinutes {
+                        _ = try await APIClient.shared.createNonBillable(
+                            date: action.nbDate, category: cat, minutes: mins, note: action.nbNote ?? "")
+                    }
                 }
             } catch let error as APIError {
                 if error.isNetworkError {
@@ -684,6 +706,208 @@ final class AppState: ObservableObject {
 
         offlineQueue = remaining
         pendingSyncCount = remaining.count
+    }
+
+    // MARK: - Server History Fetch
+
+    @MainActor
+    func refreshHistory() async {
+        guard mode == .server else { return }
+        isLoadingHistory = true
+        defer { isLoadingHistory = false }
+
+        do {
+            async let visitsTask = APIClient.shared.fetchHistoryVisits(days: 14)
+            async let requestsTask = APIClient.shared.fetchRequests()
+            let (serverVisits, exceptions) = try await (visitsTask, requestsTask)
+
+            serverExceptions = exceptions
+            historyVisits = serverVisits.compactMap { mapHistoryVisit($0, exceptions: exceptions) }
+        } catch {
+            surfaceServerError(error as? APIError ?? .networkError(error))
+        }
+    }
+
+    private func mapHistoryVisit(_ sv: ServerHistoryVisit, exceptions: [ServerException]) -> Visit? {
+        let client = Client(
+            id: UUID(),
+            name: sv.individual?.name ?? "Unknown",
+            address: "",
+            city: ""
+        )
+        let serviceType = mapServiceType(sv.service ?? "")
+
+        var actualStart: Date? = nil
+        var actualEnd: Date? = nil
+        if let ci = sv.clockIn { actualStart = parseISO8601(ci) }
+        if let co = sv.clockOut { actualEnd = parseISO8601(co) }
+
+        let visitStatus: VisitStatus
+        switch sv.status?.lowercased() {
+        case "completed": visitStatus = .completed
+        case "in_progress", "in-progress", "active": visitStatus = .inProgress
+        case "missed": visitStatus = .missed
+        default: visitStatus = actualEnd != nil ? .completed : (actualStart != nil ? .inProgress : .scheduled)
+        }
+
+        // Map pending exceptions for this visit
+        let visitExceptions = exceptions.filter { $0.visitId == sv.id }
+        var tfStatus: TimeFixStatus = .none
+        var drStatus: DeleteRequestStatus = .none
+        for exc in visitExceptions {
+            let resolved = exc.status?.lowercased() == "resolved"
+            let resolution = exc.resolution?.lowercased()
+            if exc.type == "time-fix" || exc.type == "time_fix" {
+                if resolved {
+                    tfStatus = resolution == "approved" ? .approved : .denied
+                } else {
+                    tfStatus = .pending
+                }
+            }
+            if exc.type == "delete" || exc.type == "delete-request" || exc.type == "delete_request" {
+                if resolved {
+                    drStatus = resolution == "approved" ? .approved : .denied
+                } else {
+                    drStatus = .pending
+                }
+            }
+        }
+
+        var visit = Visit(
+            id: UUID(),
+            clients: [client],
+            service: serviceType,
+            scheduledStart: actualStart ?? Date(),
+            scheduledEnd: actualEnd ?? (actualStart ?? Date()).addingTimeInterval(3600),
+            actualStart: actualStart,
+            actualEnd: actualEnd,
+            status: visitStatus
+        )
+        visit.serverVisitId = sv.id
+        visit.serverShiftId = sv.shiftId
+        visit.timeFixStatus = tfStatus
+        visit.deleteRequestStatus = drStatus
+        visit.hasNote = sv.hasNote ?? false
+        visit.serverDocStatus = sv.docStatus
+        if let dur = sv.duration {
+            // Use duration from server (minutes) to compute end if missing
+            if actualEnd == nil, let start = actualStart {
+                visit.actualEnd = start.addingTimeInterval(Double(dur) * 60)
+                visit.scheduledEnd = visit.actualEnd!
+            }
+        }
+
+        return visit
+    }
+
+    // MARK: - Server Note Submission
+
+    func submitServerNote(visitId: UUID, serverVisitId: String, text: String) async {
+        if !effectivelyOnline {
+            // Queue for offline replay
+            enqueueOfflineAction(.addNote, shiftId: nil, visitId: serverVisitId, noteText: text)
+            pendingSyncCount = offlineQueue.count
+            scheduleAutoSync()
+            return
+        }
+
+        do {
+            _ = try await APIClient.shared.addNote(visitId: serverVisitId, text: text)
+            await MainActor.run {
+                // Update hasNote on matching visits
+                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    historyVisits[i].hasNote = true
+                }
+                if let i = todayVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    todayVisits[i].hasNote = true
+                }
+            }
+        } catch let error as APIError {
+            if error.isNetworkError {
+                enqueueOfflineAction(.addNote, shiftId: nil, visitId: serverVisitId, noteText: text)
+                await MainActor.run {
+                    pendingSyncCount = offlineQueue.count
+                    scheduleAutoSync()
+                }
+            } else {
+                await MainActor.run { surfaceServerError(error) }
+            }
+        } catch {
+            await MainActor.run { surfaceServerError(.networkError(error)) }
+        }
+    }
+
+    // MARK: - Server Non-Billable
+
+    func submitServerNonBillable(category: String, minutes: Int, note: String, date: String?) async -> Bool {
+        if !effectivelyOnline {
+            enqueueOfflineAction(.nonBillable, shiftId: nil, visitId: nil,
+                                 nbCategory: category, nbMinutes: minutes, nbNote: note, nbDate: date)
+            await MainActor.run {
+                pendingSyncCount = offlineQueue.count
+                scheduleAutoSync()
+            }
+            return true
+        }
+
+        do {
+            _ = try await APIClient.shared.createNonBillable(date: date, category: category, minutes: minutes, note: note)
+            return true
+        } catch let error as APIError {
+            if error.isNetworkError {
+                enqueueOfflineAction(.nonBillable, shiftId: nil, visitId: nil,
+                                     nbCategory: category, nbMinutes: minutes, nbNote: note, nbDate: date)
+                await MainActor.run {
+                    pendingSyncCount = offlineQueue.count
+                    scheduleAutoSync()
+                }
+                return true
+            } else {
+                await MainActor.run { surfaceServerError(error) }
+                return false
+            }
+        } catch {
+            await MainActor.run { surfaceServerError(.networkError(error)) }
+            return false
+        }
+    }
+
+    // MARK: - Server Time Fix
+
+    /// Returns nil on success, or an error message on failure.
+    func submitServerTimeFix(visitId: UUID, serverVisitId: String, newIn: String?, newOut: String?, reason: String) async -> String? {
+        do {
+            _ = try await APIClient.shared.requestTimeFix(visitId: serverVisitId, newIn: newIn, newOut: newOut, reason: reason)
+            await MainActor.run {
+                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    historyVisits[i].timeFixStatus = .pending
+                }
+            }
+            return nil
+        } catch let error as APIError {
+            return error.localizedDescription
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    // MARK: - Server Delete Request
+
+    /// Returns nil on success, or an error message on failure.
+    func submitServerDeleteRequest(visitId: UUID, serverVisitId: String, reason: String) async -> String? {
+        do {
+            _ = try await APIClient.shared.requestDelete(visitId: serverVisitId, reason: reason)
+            await MainActor.run {
+                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    historyVisits[i].deleteRequestStatus = .pending
+                }
+            }
+            return nil
+        } catch let error as APIError {
+            return error.localizedDescription
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     // MARK: - Error surfacing

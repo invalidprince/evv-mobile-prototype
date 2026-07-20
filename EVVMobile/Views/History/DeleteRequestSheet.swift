@@ -7,6 +7,9 @@ struct DeleteRequestSheet: View {
 
     @State private var reason = "Duplicate entry"
     @State private var comment = ""
+    @State private var isSubmitting = false
+    @State private var showSuccess = false
+    @State private var errorMessage: String?
 
     private let reasons = [
         "Duplicate entry",
@@ -50,12 +53,30 @@ struct DeleteRequestSheet: View {
                     TextField("Add details for your supervisor…", text: $comment)
                 }
 
+                if let error = errorMessage {
+                    Section {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(Theme.danger)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
+                }
+
                 Section(footer: Text("This sends a delete request to your supervisor for review. The visit stays on your record until it's approved.")) {
                     Button(role: .destructive, action: submit) {
-                        Text("Submit Delete Request")
-                            .frame(maxWidth: .infinity)
-                            .font(.headline)
+                        if isSubmitting {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("Submit Delete Request")
+                                .frame(maxWidth: .infinity)
+                                .font(.headline)
+                        }
                     }
+                    .disabled(isSubmitting)
                 }
             }
             .navigationTitle("Request Delete")
@@ -65,11 +86,40 @@ struct DeleteRequestSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .alert("Delete request submitted", isPresented: $showSuccess) {
+                Button("OK") { dismiss() }
+            } message: {
+                Text("Your supervisor will review and respond.")
+            }
         }
     }
 
     private func submit() {
-        appState.requestDelete(visitId: visit.id)
-        dismiss()
+        if appState.mode == .server, let svid = visit.serverVisitId {
+            isSubmitting = true
+            errorMessage = nil
+
+            let fullReason = comment.isEmpty ? reason : "\(reason): \(comment)"
+
+            Task {
+                let err = await appState.submitServerDeleteRequest(
+                    visitId: visit.id,
+                    serverVisitId: svid,
+                    reason: fullReason
+                )
+                await MainActor.run {
+                    isSubmitting = false
+                    if let err = err {
+                        errorMessage = err
+                    } else {
+                        showSuccess = true
+                    }
+                }
+            }
+        } else {
+            // Mock mode
+            appState.requestDelete(visitId: visit.id)
+            dismiss()
+        }
     }
 }

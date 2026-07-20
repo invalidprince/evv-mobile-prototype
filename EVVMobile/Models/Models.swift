@@ -96,6 +96,11 @@ struct Visit: Identifiable {
     var manualLocation: ManualLocation?
     var manualLocationFlagged: Bool = false
 
+    /// Whether the visit has a note attached (server mode).
+    var hasNote: Bool = false
+    /// Documentation status string from server (e.g. "complete", "pending").
+    var serverDocStatus: String?
+
     // MARK: - Server-mode fields
     /// Server shift ID (used for clock-in API call).
     var serverShiftId: Int?
