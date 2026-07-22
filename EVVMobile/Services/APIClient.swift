@@ -54,7 +54,7 @@ struct ServerShift: Decodable {
     let date: String
     let start: String
     let end: String
-    let service: String
+    let service: String?
     let ratio: String?
     let individual: ServerIndividual
     let location: String?

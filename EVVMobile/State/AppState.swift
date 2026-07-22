@@ -690,7 +690,7 @@ final class AppState: ObservableObject {
             city: ""
         )
 
-        let serviceType = mapServiceType(s.service)
+        let serviceType = mapServiceType(s.service ?? "")
 
         var status: VisitStatus = .scheduled
         var actualStart: Date? = nil
@@ -699,9 +699,12 @@ final class AppState: ObservableObject {
 
         if let myVisit = s.myVisit {
             serverVisitId = myVisit.id
-            actualStart = parseISO8601(myVisit.clockIn)
+            // Clock times from the API are "H:MM AM/PM" format, not ISO 8601
+            actualStart = parseShiftDateTime(dateStr: s.date, timeStr: myVisit.clockIn)
+                ?? parseISO8601(myVisit.clockIn)  // fallback for ISO format
             if let co = myVisit.clockOut {
-                actualEnd = parseISO8601(co)
+                actualEnd = parseShiftDateTime(dateStr: s.date, timeStr: co)
+                    ?? parseISO8601(co)
                 status = .completed
             } else {
                 status = .inProgress
@@ -750,6 +753,15 @@ final class AppState: ObservableObject {
         if lower.contains("companion") { return .companion }
         if lower.contains("respite") { return .respite }
         return .inHomeSupport
+    }
+
+    /// Today's date string in "yyyy-MM-dd" format (ET timezone)
+    private func todayET() -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
     }
 
     private func parseShiftDateTime(dateStr: String, timeStr: String) -> Date? {
@@ -896,13 +908,20 @@ final class AppState: ObservableObject {
 
         var actualStart: Date? = nil
         var actualEnd: Date? = nil
-        if let ci = sv.clockIn { actualStart = parseISO8601(ci) }
-        if let co = sv.clockOut { actualEnd = parseISO8601(co) }
+        let histDate = sv.date ?? todayET()
+        if let ci = sv.clockIn {
+            actualStart = parseShiftDateTime(dateStr: histDate, timeStr: ci)
+                ?? parseISO8601(ci)
+        }
+        if let co = sv.clockOut {
+            actualEnd = parseShiftDateTime(dateStr: histDate, timeStr: co)
+                ?? parseISO8601(co)
+        }
 
         let visitStatus: VisitStatus
         switch sv.status?.lowercased() {
         case "completed": visitStatus = .completed
-        case "in_progress", "in-progress", "active": visitStatus = .inProgress
+        case "in_progress", "in-progress", "in progress", "active": visitStatus = .inProgress
         case "missed": visitStatus = .missed
         default: visitStatus = actualEnd != nil ? .completed : (actualStart != nil ? .inProgress : .scheduled)
         }
