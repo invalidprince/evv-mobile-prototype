@@ -920,9 +920,9 @@ final class AppState: ObservableObject {
 
         let visitStatus: VisitStatus
         switch sv.status?.lowercased() {
-        case "completed": visitStatus = .completed
+        case "completed", "verified", "edited": visitStatus = .completed
         case "in_progress", "in-progress", "in progress", "active": visitStatus = .inProgress
-        case "missed": visitStatus = .missed
+        case "missed", "voided": visitStatus = .missed
         default: visitStatus = actualEnd != nil ? .completed : (actualStart != nil ? .inProgress : .scheduled)
         }
 
