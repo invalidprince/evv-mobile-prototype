@@ -13,6 +13,8 @@ struct ClockOutFlow: View {
     @State private var step: Step = .docGate
     @State private var showDocumentation = false
     @State private var completedVisit: Visit?
+    @State private var signatureSkipReason: String?
+    @State private var showTimeFix = false
 
     private var docAlreadyComplete: Bool {
         appState.isDocComplete(visitId: visit.id)
@@ -23,7 +25,11 @@ struct ClockOutFlow: View {
             Group {
                 switch step {
                 case .docGate: docGateView
-                case .signature: SignatureStepView(onDone: { step = .confirm }, onSkip: { step = .confirm })
+                case .signature:
+                    SignatureStepView(
+                        onDone: { signatureSkipReason = nil; step = .confirm },
+                        onSkip: { reason in signatureSkipReason = reason; step = .confirm }
+                    )
                 case .confirm: confirmView
                 case .complete: completeView
                 }
@@ -41,6 +47,9 @@ struct ClockOutFlow: View {
                 NavigationView {
                     DocumentationView(visit: visit)
                 }
+            }
+            .sheet(isPresented: $showTimeFix) {
+                TimeFixSheet(visit: visit)
             }
             .onAppear {
                 if step == .docGate && docAlreadyComplete { step = .signature }
@@ -76,41 +85,128 @@ struct ClockOutFlow: View {
         .background(Theme.screenBackground.ignoresSafeArea())
     }
 
-    // MARK: - Confirm
+    // MARK: - Confirm (full summary)
     private var confirmView: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            AvatarView(name: visit.client.name, size: 64)
-            Text(visit.clients.map { $0.name }.joined(separator: " & "))
-                .font(.title3.bold())
-            Text(visit.service.rawValue)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            if appState.simulateGPSUnavailable {
-                VStack(spacing: 6) {
-                    HStack(spacing: 6) {
-                        Circle().fill(Theme.danger).frame(width: 8, height: 8)
-                        Text("GPS unavailable").font(.subheadline).foregroundColor(Theme.danger)
+        ScrollView {
+            VStack(spacing: 20) {
+                // Header
+                AvatarView(name: visit.client.name, size: 64)
+                    .padding(.top, 24)
+                Text(visit.clients.map { $0.name }.joined(separator: " & "))
+                    .font(.title3.bold())
+
+                // Summary card
+                VStack(spacing: 0) {
+                    summaryRow(icon: "calendar", label: "Date", value: formattedDate)
+                    Divider().padding(.horizontal)
+                    summaryRow(icon: "clock.fill", label: "Clock In", value: formattedClockIn)
+                    Divider().padding(.horizontal)
+                    summaryRow(icon: "clock.badge.checkmark.fill", label: "Clock Out", value: formattedNow)
+                    Divider().padding(.horizontal)
+                    summaryRow(icon: "person.fill", label: "Client(s)", value: visit.clients.map { $0.name }.joined(separator: ", "))
+                    Divider().padding(.horizontal)
+                    summaryRow(icon: "briefcase.fill", label: "Service", value: visit.service.rawValue)
+                    if let loc = locationText {
+                        Divider().padding(.horizontal)
+                        summaryRow(icon: "mappin.and.ellipse", label: "Location", value: loc)
                     }
-                    Text("Manual location on file — flagged for manager review")
-                        .font(.caption)
+                    if let skipReason = signatureSkipReason {
+                        Divider().padding(.horizontal)
+                        summaryRow(icon: "signature", label: "Signature", value: "Skipped: \(skipReason)")
+                    }
+                }
+                .background(Theme.cardBackground)
+                .cornerRadius(12)
+                .padding(.horizontal)
+
+                // GPS status
+                if appState.simulateGPSUnavailable {
+                    VStack(spacing: 6) {
+                        HStack(spacing: 6) {
+                            Circle().fill(Theme.danger).frame(width: 8, height: 8)
+                            Text("GPS unavailable").font(.subheadline).foregroundColor(Theme.danger)
+                        }
+                        Text("Manual location on file — flagged for manager review")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Circle().fill(Theme.success).frame(width: 8, height: 8)
+                        Text("GPS location acquired").font(.subheadline)
+                    }
+                }
+
+                // Duration
+                if let start = visit.actualStart {
+                    let mins = Int(Date().timeIntervalSince(start) / 60)
+                    Text("Duration: \(mins / 60)h \(mins % 60)m")
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-            } else {
-                HStack(spacing: 6) {
-                    Circle().fill(Theme.success).frame(width: 8, height: 8)
-                    Text("GPS location acquired").font(.subheadline)
+
+                Spacer(minLength: 12)
+
+                VStack(spacing: 12) {
+                    Button(action: doClockOut) {
+                        Label("Confirm Clock Out", systemImage: "stop.circle.fill")
+                    }
+                    .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
+
+                    Button(action: { showTimeFix = true }) {
+                        Label("Request a Change", systemImage: "pencil.circle")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
                 }
+                .padding(.horizontal)
+                .padding(.bottom, 16)
             }
-            Spacer()
-            Button(action: doClockOut) {
-                Label("Confirm Clock Out", systemImage: "stop.circle.fill")
-            }
-            .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
-            .padding(.horizontal)
-            .padding(.bottom, 16)
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+    }
+
+    // MARK: - Summary row helper
+    private func summaryRow(icon: String, label: String, value: String) -> some View {
+        HStack {
+            Label(label, systemImage: icon)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .frame(width: 120, alignment: .leading)
+            Spacer()
+            Text(value)
+                .font(.subheadline.weight(.medium))
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Formatting helpers
+    private var formattedDate: String {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMM d, yyyy"
+        return f.string(from: visit.actualStart ?? Date())
+    }
+
+    private var formattedClockIn: String {
+        guard let start = visit.actualStart else { return "—" }
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: start)
+    }
+
+    private var formattedNow: String {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: Date())
+    }
+
+    private var locationText: String? {
+        if let loc = visit.serverLocation, !loc.isEmpty { return loc }
+        if let addr = visit.manualLocation { return addr.display }
+        let addr = visit.client.address
+        if !addr.isEmpty { return addr }
+        return nil
     }
 
     // MARK: - Complete
@@ -145,7 +241,7 @@ struct ClockOutFlow: View {
     }
 
     private func doClockOut() {
-        completedVisit = appState.clockOut()
+        completedVisit = appState.clockOut(signatureSkipReason: signatureSkipReason)
         step = .complete
     }
 }

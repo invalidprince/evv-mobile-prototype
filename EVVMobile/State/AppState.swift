@@ -269,7 +269,7 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
-    func clockOut() -> Visit? {
+    func clockOut(signatureSkipReason: String? = nil) -> Visit? {
         guard let idx = todayVisits.firstIndex(where: { $0.status == .inProgress }) else { return nil }
         let visitId = todayVisits[idx].id
 
@@ -285,7 +285,7 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
-                    _ = try await APIClient.shared.clockOut(visitId: serverVisitId)
+                    _ = try await APIClient.shared.clockOut(visitId: serverVisitId, signatureSkipReason: signatureSkipReason)
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].syncState = .synced
                     }

@@ -2,9 +2,10 @@ import SwiftUI
 
 struct SignatureStepView: View {
     let onDone: () -> Void
-    let onSkip: () -> Void
+    let onSkip: (String) -> Void  // skip reason passed back
     @State private var lines: [[CGPoint]] = []
     @State private var currentLine: [CGPoint] = []
+    @State private var showSkipReason = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -38,13 +39,95 @@ struct SignatureStepView: View {
                 Button("Accept Signature") { onDone() }
                     .buttonStyle(PrimaryButtonStyle(enabled: !lines.isEmpty))
                     .disabled(lines.isEmpty)
-                Button("Skip Signature") { onSkip() }
+                Button("Skip Signature") { showSkipReason = true }
                     .buttonStyle(SecondaryButtonStyle())
             }
             .padding(.horizontal)
             .padding(.bottom, 16)
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+        .sheet(isPresented: $showSkipReason) {
+            SignatureSkipReasonSheet(onSubmit: { reason in
+                showSkipReason = false
+                onSkip(reason)
+            })
+        }
+    }
+}
+
+// MARK: - Skip Reason Sheet
+
+struct SignatureSkipReasonSheet: View {
+    let onSubmit: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedReason = ""
+    @State private var customReason = ""
+
+    private let reasons = [
+        "Client unable to sign",
+        "Client refused to sign",
+        "Guardian not present",
+        "Client nonverbal / physical limitation",
+        "Emergency situation",
+        "Other"
+    ]
+
+    private var finalReason: String {
+        if selectedReason == "Other" {
+            return customReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return selectedReason
+    }
+
+    private var canSubmit: Bool {
+        if selectedReason.isEmpty { return false }
+        if selectedReason == "Other" {
+            return !customReason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return true
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Why is the signature being skipped?")) {
+                    ForEach(reasons, id: \.self) { reason in
+                        Button(action: { selectedReason = reason }) {
+                            HStack {
+                                Text(reason).foregroundColor(.primary)
+                                Spacer()
+                                if selectedReason == reason {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(Theme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if selectedReason == "Other" {
+                    Section(header: Text("Please describe")) {
+                        TextField("Reason for skipping signature…", text: $customReason)
+                    }
+                }
+
+                Section {
+                    Button(action: { onSubmit(finalReason) }) {
+                        Text("Continue")
+                            .frame(maxWidth: .infinity)
+                            .font(.headline)
+                    }
+                    .disabled(!canSubmit)
+                }
+            }
+            .navigationTitle("Skip Reason")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
     }
 }
 

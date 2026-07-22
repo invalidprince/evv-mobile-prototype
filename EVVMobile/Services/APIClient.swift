@@ -65,6 +65,13 @@ struct ClockInRequest: Encodable {
     let accuracy: Double?
 }
 
+struct ClockOutRequest: Encodable {
+    let lat: Double?
+    let lng: Double?
+    let accuracy: Double?
+    let signatureSkipReason: String?
+}
+
 struct ClockInResponse: Decodable {
     let visit: ServerVisitInfo
 }
@@ -393,13 +400,13 @@ actor APIClient {
 
     // MARK: - Clock Out
 
-    func clockOut(visitId: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> ServerVisitInfo {
+    func clockOut(visitId: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, signatureSkipReason: String? = nil) async throws -> ServerVisitInfo {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/clock-out")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(ClockInRequest(lat: lat, lng: lng, accuracy: accuracy))
+        request.httpBody = try JSONEncoder().encode(ClockOutRequest(lat: lat, lng: lng, accuracy: accuracy, signatureSkipReason: signatureSkipReason))
         request.timeoutInterval = 15
 
         let (data, response) = try await performRequest(request)

@@ -26,6 +26,18 @@ struct ServerUnscheduledContent: View {
     @State private var service: ServiceType = .inHomeSupport
     @State private var searchText = ""
 
+    /// The selected individual's authorized services
+    private var authorizedServices: [ServiceType] {
+        guard let id = selectedIndividualId,
+              let individual = appState.serverIndividuals.first(where: { $0.id == id }),
+              let services = individual.services, !services.isEmpty else {
+            return ServiceType.allCases
+        }
+        return ServiceType.allCases.filter { st in
+            services.contains(st.rawValue)
+        }
+    }
+
     private var filteredIndividuals: [ServerIndividualOption] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if trimmed.isEmpty { return appState.serverIndividuals }
@@ -51,7 +63,14 @@ struct ServerUnscheduledContent: View {
                             .textFieldStyle(.roundedBorder)
 
                         ForEach(filteredIndividuals) { individual in
-                            Button(action: { selectedIndividualId = individual.id }) {
+                            Button(action: {
+                                selectedIndividualId = individual.id
+                                // Auto-select first authorized service when individual changes
+                                let auths = authorizedServicesFor(individual)
+                                if !auths.isEmpty && !auths.contains(service) {
+                                    service = auths[0]
+                                }
+                            }) {
                                 HStack {
                                     AvatarView(name: individual.name, size: 36)
                                     VStack(alignment: .leading) {
@@ -74,14 +93,19 @@ struct ServerUnscheduledContent: View {
                     }
                 }
 
-                Section(header: Text("Service")) {
-                    Picker("Service", selection: $service) {
-                        ForEach(ServiceType.allCases) { s in
-                            Text(s.rawValue).tag(s)
+                Section(header: Text("Service"), footer: selectedIndividualId != nil && authorizedServices.isEmpty ? Text("This individual has no authorized services.").foregroundColor(Theme.danger) : nil) {
+                    if authorizedServices.isEmpty && selectedIndividualId != nil {
+                        Text("No authorized services")
+                            .foregroundColor(.secondary)
+                    } else {
+                        Picker("Service", selection: $service) {
+                            ForEach(authorizedServices) { s in
+                                Text(s.rawValue).tag(s)
+                            }
                         }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
                 }
 
                 Section {
@@ -89,7 +113,7 @@ struct ServerUnscheduledContent: View {
                         Label("Clock In Now", systemImage: "play.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .disabled(selectedIndividualId == nil)
+                    .disabled(selectedIndividualId == nil || authorizedServices.isEmpty)
                 }
             }
             .navigationTitle("Unscheduled Visit")
@@ -107,6 +131,16 @@ struct ServerUnscheduledContent: View {
                     Task { await appState.refreshIndividuals() }
                 }
             }
+        }
+    }
+
+    /// Compute authorized services for a specific individual
+    private func authorizedServicesFor(_ individual: ServerIndividualOption) -> [ServiceType] {
+        guard let services = individual.services, !services.isEmpty else {
+            return ServiceType.allCases
+        }
+        return ServiceType.allCases.filter { st in
+            services.contains(st.rawValue)
         }
     }
 
@@ -134,16 +168,28 @@ struct MockUnscheduledContent: View {
     let onDismiss: () -> Void
     @State private var selectedClients: Set<UUID> = []
     @State private var service: ServiceType = .inHomeSupport
+    @State private var searchText = ""
+
+    private let maxIndividuals = 2  // 2:1 shifts are the max
 
     private var chosenClients: [Client] {
         MockData.clients.filter { selectedClients.contains($0.id) }
     }
 
+    private var filteredClients: [Client] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.isEmpty { return MockData.clients }
+        return MockData.clients.filter { $0.name.lowercased().contains(trimmed) }
+    }
+
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Client(s)"), footer: Text("Select more than one for a group (1:2) visit.")) {
-                    ForEach(MockData.clients) { client in
+                Section(header: Text("Client(s)"), footer: Text("Select up to \(maxIndividuals) for a group (1:2) visit.")) {
+                    TextField("Search…", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+
+                    ForEach(filteredClients) { client in
                         Button(action: { toggle(client) }) {
                             HStack {
                                 AvatarView(name: client.name, size: 36)
@@ -155,9 +201,14 @@ struct MockUnscheduledContent: View {
                                 if selectedClients.contains(client.id) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundColor(Theme.success)
+                                } else if selectedClients.count >= maxIndividuals {
+                                    // Show disabled state when at cap
+                                    Image(systemName: "circle")
+                                        .foregroundColor(.secondary.opacity(0.3))
                                 }
                             }
                         }
+                        .disabled(!selectedClients.contains(client.id) && selectedClients.count >= maxIndividuals)
                     }
                 }
 
@@ -200,9 +251,10 @@ struct MockUnscheduledContent: View {
     private func toggle(_ client: Client) {
         if selectedClients.contains(client.id) {
             selectedClients.remove(client.id)
-        } else {
+        } else if selectedClients.count < maxIndividuals {
             selectedClients.insert(client.id)
         }
+        // If at max, tapping an unselected client does nothing (button is disabled)
     }
 
     private func startVisit() {
