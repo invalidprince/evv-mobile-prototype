@@ -23,33 +23,34 @@ struct ServerUnscheduledContent: View {
     @Binding var showSuccess: Bool
     let onDismiss: () -> Void
     @State private var selectedIndividualIds: Set<String> = []
-    @State private var service: ServiceType = .inHomeSupport
+    @State private var selectedServiceName: String = ""
     @State private var searchText = ""
 
     private let maxIndividuals = 2  // 1:2 group visits are the max
 
-    /// Authorized services = intersection of all selected individuals' services.
-    /// If none selected, show all. If intersection is empty, show nothing.
-    private var authorizedServices: [ServiceType] {
-        guard !selectedIndividualIds.isEmpty else { return ServiceType.allCases }
+    /// Authorized services = intersection of all selected individuals' service descriptions.
+    /// If none selected, show empty (must select an individual first).
+    private var authorizedServices: [String] {
+        guard !selectedIndividualIds.isEmpty else { return [] }
 
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
-        guard !selectedIndividuals.isEmpty else { return ServiceType.allCases }
+        guard !selectedIndividuals.isEmpty else { return [] }
 
         // Start with first individual's services, intersect with each subsequent
         var intersection: Set<String>? = nil
         for individual in selectedIndividuals {
-            let services = (individual.services != nil && !individual.services!.isEmpty)
-                ? Set(individual.services!) : Set(ServiceType.allCases.map { $0.rawValue })
+            let services = individual.services ?? []
+            if services.isEmpty { continue }
+            let svcSet = Set(services)
             if intersection == nil {
-                intersection = services
+                intersection = svcSet
             } else {
-                intersection = intersection!.intersection(services)
+                intersection = intersection!.intersection(svcSet)
             }
         }
 
-        guard let final = intersection else { return ServiceType.allCases }
-        return ServiceType.allCases.filter { final.contains($0.rawValue) }
+        guard let final = intersection else { return [] }
+        return final.sorted()
     }
 
     private var filteredIndividuals: [ServerIndividualOption] {
@@ -86,31 +87,40 @@ struct ServerUnscheduledContent: View {
                         TextField("Search…", text: $searchText)
                             .textFieldStyle(.roundedBorder)
 
-                        ForEach(filteredIndividuals) { individual in
-                            Button(action: { toggleIndividual(individual) }) {
-                                HStack {
-                                    AvatarView(name: individual.name, size: 36)
-                                    VStack(alignment: .leading) {
-                                        Text(individual.name).foregroundColor(.primary)
-                                        if let services = individual.services, !services.isEmpty {
-                                            Text(services.joined(separator: ", "))
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                                .lineLimit(1)
+                        // Constrained list: max ~4 visible rows (each ~56pt)
+                        ScrollView {
+                            LazyVStack(spacing: 0) {
+                                ForEach(filteredIndividuals) { individual in
+                                    Button(action: { toggleIndividual(individual) }) {
+                                        HStack {
+                                            AvatarView(name: individual.name, size: 36)
+                                            VStack(alignment: .leading) {
+                                                Text(individual.name).foregroundColor(.primary)
+                                                if let services = individual.services, !services.isEmpty {
+                                                    Text(services.joined(separator: ", "))
+                                                        .font(.caption)
+                                                        .foregroundColor(.secondary)
+                                                        .lineLimit(1)
+                                                }
+                                            }
+                                            Spacer()
+                                            if selectedIndividualIds.contains(individual.id) {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .foregroundColor(Theme.success)
+                                            } else if selectedIndividualIds.count >= maxIndividuals {
+                                                Image(systemName: "circle")
+                                                    .foregroundColor(.secondary.opacity(0.3))
+                                            }
                                         }
+                                        .padding(.vertical, 10)
                                     }
-                                    Spacer()
-                                    if selectedIndividualIds.contains(individual.id) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(Theme.success)
-                                    } else if selectedIndividualIds.count >= maxIndividuals {
-                                        Image(systemName: "circle")
-                                            .foregroundColor(.secondary.opacity(0.3))
-                                    }
+                                    .disabled(!selectedIndividualIds.contains(individual.id) && selectedIndividualIds.count >= maxIndividuals)
+
+                                    Divider()
                                 }
                             }
-                            .disabled(!selectedIndividualIds.contains(individual.id) && selectedIndividualIds.count >= maxIndividuals)
                         }
+                        .frame(maxHeight: 224) // ~4 rows × 56pt each
                     }
                 }
 
@@ -118,13 +128,18 @@ struct ServerUnscheduledContent: View {
                     if noCommonServicesMessage != nil {
                         Text("No common authorized services")
                             .foregroundColor(.secondary)
-                    } else if authorizedServices.isEmpty && !selectedIndividualIds.isEmpty {
+                    } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
                         Text("No authorized services")
                             .foregroundColor(.secondary)
+                            .font(.subheadline)
+                    } else if selectedIndividualIds.isEmpty {
+                        Text("Select an individual first")
+                            .foregroundColor(.secondary)
+                            .font(.subheadline)
                     } else {
-                        Picker("Service", selection: $service) {
-                            ForEach(authorizedServices) { s in
-                                Text(s.rawValue).tag(s)
+                        Picker("Service", selection: $selectedServiceName) {
+                            ForEach(authorizedServices, id: \.self) { svcName in
+                                Text(svcName).tag(svcName)
                             }
                         }
                         .pickerStyle(.inline)
@@ -137,7 +152,16 @@ struct ServerUnscheduledContent: View {
                         Label("Clock In Now", systemImage: "play.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .disabled(selectedIndividualIds.isEmpty || authorizedServices.isEmpty)
+                    .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty)
+
+                    // "Clock In Without Service" fallback
+                    if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
+                        Button(action: startVisitWithoutService) {
+                            Label("Clock In Without Service", systemImage: "exclamationmark.triangle.fill")
+                                .frame(maxWidth: .infinity)
+                                .foregroundColor(.orange)
+                        }
+                    }
                 }
             }
             .navigationTitle("Unscheduled Visit")
@@ -164,25 +188,15 @@ struct ServerUnscheduledContent: View {
         } else if selectedIndividualIds.count < maxIndividuals {
             selectedIndividualIds.insert(individual.id)
         }
-        // Auto-select first authorized service if current selection isn't in intersection
-        if !authorizedServices.isEmpty && !authorizedServices.contains(service) {
-            service = authorizedServices[0]
-        }
-    }
-
-    /// Compute authorized services for a specific individual
-    private func authorizedServicesFor(_ individual: ServerIndividualOption) -> [ServiceType] {
-        guard let services = individual.services, !services.isEmpty else {
-            return ServiceType.allCases
-        }
-        return ServiceType.allCases.filter { st in
-            services.contains(st.rawValue)
+        // Auto-select first authorized service if current selection isn't in the list
+        if !authorizedServices.isEmpty && !authorizedServices.contains(selectedServiceName) {
+            selectedServiceName = authorizedServices[0]
         }
     }
 
     private func startVisit() {
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
-        guard !selectedIndividuals.isEmpty else { return }
+        guard !selectedIndividuals.isEmpty, !selectedServiceName.isEmpty else { return }
 
         // Build Clients from the server individuals; store server ID in address field
         let clients = selectedIndividuals.map { individual in
@@ -193,8 +207,35 @@ struct ServerUnscheduledContent: View {
                 city: ""
             )
         }
-        appState.startUnscheduledVisit(clients: clients, service: service)
+        // Map selected service description to a ServiceType for backward compat
+        let serviceType = mapServiceNameToType(selectedServiceName)
+        appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: selectedServiceName)
         showSuccess = true
+    }
+
+    private func startVisitWithoutService() {
+        let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
+        guard !selectedIndividuals.isEmpty else { return }
+
+        let clients = selectedIndividuals.map { individual in
+            Client(
+                id: UUID(),
+                name: individual.name,
+                address: individual.id,
+                city: ""
+            )
+        }
+        appState.startUnscheduledVisitWithoutService(clients: clients)
+        showSuccess = true
+    }
+
+    private func mapServiceNameToType(_ name: String) -> ServiceType {
+        let lower = name.lowercased()
+        if lower.contains("home") || lower.contains("in-home") { return .inHomeSupport }
+        if lower.contains("community") && lower.contains("participation") { return .communityParticipation }
+        if lower.contains("companion") { return .companion }
+        if lower.contains("respite") { return .respite }
+        return .inHomeSupport
     }
 }
 

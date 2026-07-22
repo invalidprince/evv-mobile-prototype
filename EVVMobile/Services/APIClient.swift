@@ -187,6 +187,7 @@ struct ServerIndividualOption: Decodable, Identifiable {
     let id: String
     let name: String
     let services: [String]?
+    let serviceCodes: [String]?
 }
 
 struct IndividualsResponse: Decodable {
@@ -197,7 +198,7 @@ struct IndividualsResponse: Decodable {
 
 struct UnscheduledVisitRequest: Encodable {
     let clientIds: [String]
-    let service: String
+    let service: String?
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
@@ -706,7 +707,7 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

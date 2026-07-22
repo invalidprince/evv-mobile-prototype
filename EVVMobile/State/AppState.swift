@@ -336,7 +336,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startUnscheduledVisit(clients: [Client], service: ServiceType) {
+    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil) {
         guard activeVisit == nil else { return }
 
         if mode == .server, !clients.isEmpty {
@@ -353,12 +353,14 @@ final class AppState: ObservableObject {
 
             // Collect all server individual IDs (stored in address field)
             let serverClientIds = clients.map { $0.address }
+            // Use the original service description if provided (matches what the API expects)
+            let apiServiceName = serviceName ?? service.rawValue
 
             Task { @MainActor in
                 do {
                     let response = try await APIClient.shared.createUnscheduledVisit(
                         clientIds: serverClientIds,
-                        service: service.rawValue
+                        service: apiServiceName
                     )
                     // Update the local visit with server IDs so clock-out works
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
@@ -384,6 +386,57 @@ final class AppState: ObservableObject {
             // Mock mode
             let now = Date()
             let visit = Visit(id: UUID(), clients: clients, service: service,
+                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
+                              actualStart: now, actualEnd: nil,
+                              status: .inProgress, isGroup: clients.count > 1)
+            todayVisits.append(visit)
+            startTimerIfNeeded()
+            haptic(.success)
+        }
+    }
+
+    func startUnscheduledVisitWithoutService(clients: [Client]) {
+        guard activeVisit == nil else { return }
+
+        if mode == .server, !clients.isEmpty {
+            let now = Date()
+            let localVisitId = UUID()
+            let visit = Visit(id: localVisitId, clients: clients, service: .inHomeSupport,
+                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
+                              actualStart: now, actualEnd: nil,
+                              status: .inProgress, isGroup: clients.count > 1)
+            todayVisits.append(visit)
+            startTimerIfNeeded()
+            haptic(.success)
+
+            let serverClientIds = clients.map { $0.address }
+
+            Task { @MainActor in
+                do {
+                    let response = try await APIClient.shared.createUnscheduledVisit(
+                        clientIds: serverClientIds,
+                        service: nil  // no service
+                    )
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                        self.todayVisits[i].serverVisitId = response.visit.id
+                        if let allVisits = response.visits, allVisits.count > 1 {
+                            self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                        } else {
+                            self.todayVisits[i].serverVisitIds = [response.visit.id]
+                        }
+                        if let shift = response.shift {
+                            self.todayVisits[i].serverShiftId = shift.id
+                        }
+                    }
+                } catch {
+                    self.surfaceServerError(error as? APIError ?? .networkError(error))
+                    self.todayVisits.removeAll { $0.id == localVisitId }
+                    self.startTimerIfNeeded()
+                }
+            }
+        } else {
+            let now = Date()
+            let visit = Visit(id: UUID(), clients: clients, service: .inHomeSupport,
                               scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
                               actualStart: now, actualEnd: nil,
                               status: .inProgress, isGroup: clients.count > 1)
