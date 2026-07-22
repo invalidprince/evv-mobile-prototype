@@ -162,10 +162,12 @@ struct ClockInConfirmSheet: View {
         .padding(.horizontal)
     }
 
+    private let maxClients = 2  // 1:2 group visits are the max
+
     private func toggle(_ client: Client) {
         if selectedClients.contains(client.id) {
             if selectedClients.count > 1 { selectedClients.remove(client.id) }
-        } else {
+        } else if selectedClients.count < maxClients {
             selectedClients.insert(client.id)
         }
     }

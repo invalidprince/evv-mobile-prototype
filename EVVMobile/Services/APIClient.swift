@@ -41,6 +41,14 @@ struct ServerVisitInfo: Decodable {
     let minutes: Int?
 }
 
+struct ServerShiftVisitInfo: Decodable {
+    let id: String
+    let clientId: String?
+    let clockIn: String?
+    let clockOut: String?
+    let status: String?
+}
+
 struct ServerShift: Decodable {
     let id: Int
     let date: String
@@ -52,6 +60,8 @@ struct ServerShift: Decodable {
     let location: String?
     let partners: [ServerPartner]?
     let myVisit: ServerVisitInfo?
+    /// All visits for this shift (populated for 1:2 shifts)
+    let myVisits: [ServerShiftVisitInfo]?
 }
 
 struct ShiftsResponse: Decodable {
@@ -186,16 +196,24 @@ struct IndividualsResponse: Decodable {
 // MARK: - Unscheduled visit creation
 
 struct UnscheduledVisitRequest: Encodable {
-    let clientId: String
+    let clientIds: [String]
     let service: String
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
 }
 
+struct UnscheduledVisitCreated: Decodable {
+    let id: String
+    let clientId: String?
+    let clockIn: String
+}
+
 struct UnscheduledVisitResponse: Decodable {
     let shift: ServerShift?
     let visit: ServerVisitInfo
+    /// All created visits (one per individual for 1:2 unscheduled)
+    let visits: [UnscheduledVisitCreated]?
 }
 
 struct APIErrorResponse: Decodable {
@@ -688,14 +706,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientId: String, service: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientId: clientId, service: service, lat: lat, lng: lng, accuracy: accuracy)
+            UnscheduledVisitRequest(clientIds: clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy)
         )
         request.timeoutInterval = 15
 

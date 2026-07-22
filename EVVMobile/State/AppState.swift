@@ -274,6 +274,11 @@ final class AppState: ObservableObject {
         let visitId = todayVisits[idx].id
 
         if mode == .server, let serverVisitId = todayVisits[idx].serverVisitId {
+            // Collect all visit IDs to clock out (1:2 has multiple)
+            let allVisitIds = todayVisits[idx].serverVisitIds.isEmpty
+                ? [serverVisitId]
+                : todayVisits[idx].serverVisitIds
+
             // Server mode: optimistic update + API call
             todayVisits[idx].actualEnd = Date()
             todayVisits[idx].status = .completed
@@ -285,15 +290,21 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
-                    _ = try await APIClient.shared.clockOut(visitId: serverVisitId, signatureSkipReason: signatureSkipReason)
+                    // Clock out all visits (1:2 creates one visit per individual)
+                    for vid in allVisitIds {
+                        _ = try await APIClient.shared.clockOut(visitId: vid, signatureSkipReason: signatureSkipReason)
+                    }
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].syncState = .synced
                     }
                     await self.refreshServerShifts()
                 } catch let error as APIError {
                     if error.isNetworkError {
-                        self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: serverVisitId)
-                        self.pendingSyncCount += 1
+                        // Enqueue each visit for offline sync
+                        for vid in allVisitIds {
+                            self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid)
+                        }
+                        self.pendingSyncCount += allVisitIds.count
                         self.scheduleAutoSync()
                     } else {
                         self.surfaceServerError(error)
@@ -328,7 +339,7 @@ final class AppState: ObservableObject {
     func startUnscheduledVisit(clients: [Client], service: ServiceType) {
         guard activeVisit == nil else { return }
 
-        if mode == .server, let client = clients.first {
+        if mode == .server, !clients.isEmpty {
             // Server mode: POST to server, then refresh
             let now = Date()
             let localVisitId = UUID()
@@ -340,15 +351,24 @@ final class AppState: ObservableObject {
             startTimerIfNeeded()
             haptic(.success)
 
+            // Collect all server individual IDs (stored in address field)
+            let serverClientIds = clients.map { $0.address }
+
             Task { @MainActor in
                 do {
                     let response = try await APIClient.shared.createUnscheduledVisit(
-                        clientId: client.address, // address field holds the server individual ID
+                        clientIds: serverClientIds,
                         service: service.rawValue
                     )
                     // Update the local visit with server IDs so clock-out works
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
                         self.todayVisits[i].serverVisitId = response.visit.id
+                        // Store all visit IDs for 1:2 clock-out
+                        if let allVisits = response.visits, allVisits.count > 1 {
+                            self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                        } else {
+                            self.todayVisits[i].serverVisitIds = [response.visit.id]
+                        }
                         if let shift = response.shift {
                             self.todayVisits[i].serverShiftId = shift.id
                         }
@@ -659,6 +679,13 @@ final class AppState: ObservableObject {
         visit.ratio = s.ratio
         visit.partners = partners
         visit.serverLocation = s.location
+
+        // Populate all visit IDs for 1:2 clock-out
+        if let myVisits = s.myVisits, myVisits.count > 1 {
+            visit.serverVisitIds = myVisits.map { $0.id }
+        } else if let vid = serverVisitId {
+            visit.serverVisitIds = [vid]
+        }
 
         return visit
     }
