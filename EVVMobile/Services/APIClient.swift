@@ -164,6 +164,33 @@ struct ExceptionResponse: Decodable {
     let exceptionId: Int?
 }
 
+// MARK: - Individuals (for unscheduled visit selection)
+
+struct ServerIndividualOption: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let services: [String]?
+}
+
+struct IndividualsResponse: Decodable {
+    let individuals: [ServerIndividualOption]
+}
+
+// MARK: - Unscheduled visit creation
+
+struct UnscheduledVisitRequest: Encodable {
+    let clientId: String
+    let service: String
+    let lat: Double?
+    let lng: Double?
+    let accuracy: Double?
+}
+
+struct UnscheduledVisitResponse: Decodable {
+    let shift: ServerShift?
+    let visit: ServerVisitInfo
+}
+
 struct APIErrorResponse: Decodable {
     let error: String
 }
@@ -624,6 +651,56 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(ExceptionResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Individuals (for unscheduled visit)
+
+    func fetchIndividuals() async throws -> [ServerIndividualOption] {
+        let url = URL(string: "\(baseURL)/individuals")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch individuals"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(IndividualsResponse.self, from: data).individuals
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Unscheduled Visit
+
+    func createUnscheduledVisit(clientId: String, service: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> UnscheduledVisitResponse {
+        let url = URL(string: "\(baseURL)/shifts/unscheduled")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(
+            UnscheduledVisitRequest(clientId: clientId, service: service, lat: lat, lng: lng, accuracy: accuracy)
+        )
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to create unscheduled visit"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(UnscheduledVisitResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

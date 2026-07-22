@@ -21,6 +21,10 @@ final class AppState: ObservableObject {
     // MARK: - Server open shifts (7-day window unassigned shifts)
     @Published var serverOpenShifts: [ServerShift] = []
 
+    // MARK: - Server individuals (for unscheduled visit selection)
+    @Published var serverIndividuals: [ServerIndividualOption] = []
+    @Published var isLoadingIndividuals = false
+
     // MARK: - History (server mode)
     @Published var historyVisits: [Visit] = []           // from GET /me/visits
     @Published var serverExceptions: [ServerException] = [] // from GET /me/requests
@@ -323,14 +327,50 @@ final class AppState: ObservableObject {
 
     func startUnscheduledVisit(clients: [Client], service: ServiceType) {
         guard activeVisit == nil else { return }
-        let now = Date()
-        let visit = Visit(id: UUID(), clients: clients, service: service,
-                          scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
-                          actualStart: now, actualEnd: nil,
-                          status: .inProgress, isGroup: clients.count > 1)
-        todayVisits.append(visit)
-        startTimerIfNeeded()
-        haptic(.success)
+
+        if mode == .server, let client = clients.first {
+            // Server mode: POST to server, then refresh
+            let now = Date()
+            let localVisitId = UUID()
+            let visit = Visit(id: localVisitId, clients: clients, service: service,
+                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
+                              actualStart: now, actualEnd: nil,
+                              status: .inProgress, isGroup: clients.count > 1)
+            todayVisits.append(visit)
+            startTimerIfNeeded()
+            haptic(.success)
+
+            Task { @MainActor in
+                do {
+                    let response = try await APIClient.shared.createUnscheduledVisit(
+                        clientId: client.address, // address field holds the server individual ID
+                        service: service.rawValue
+                    )
+                    // Update the local visit with server IDs so clock-out works
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                        self.todayVisits[i].serverVisitId = response.visit.id
+                        if let shift = response.shift {
+                            self.todayVisits[i].serverShiftId = shift.id
+                        }
+                    }
+                } catch {
+                    self.surfaceServerError(error as? APIError ?? .networkError(error))
+                    // Remove the local visit on failure
+                    self.todayVisits.removeAll { $0.id == localVisitId }
+                    self.startTimerIfNeeded()
+                }
+            }
+        } else {
+            // Mock mode
+            let now = Date()
+            let visit = Visit(id: UUID(), clients: clients, service: service,
+                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
+                              actualStart: now, actualEnd: nil,
+                              status: .inProgress, isGroup: clients.count > 1)
+            todayVisits.append(visit)
+            startTimerIfNeeded()
+            haptic(.success)
+        }
     }
 
     func acceptOpenShift(_ shift: OpenShift) {
@@ -454,9 +494,11 @@ final class AppState: ObservableObject {
         offlineQueue.removeAll()
         Task { await APIClient.shared.setToken(nil) }
         currentStaff = MockData.currentStaff
-        todayVisits = MockData.todaysVisits()
-        pastVisits = MockData.pastVisits()
-        openShifts = MockData.openShifts()
+        todayVisits = []
+        pastVisits = []
+        openShifts = []
+        historyVisits = []
+        serverExceptions = []
         serverOpenShifts = []
     }
 
@@ -502,6 +544,20 @@ final class AppState: ObservableObject {
             self.isLoggedIn = true
         }
         await refreshServerShifts()
+    }
+
+    // MARK: - Server individuals fetch
+
+    @MainActor
+    func refreshIndividuals() async {
+        guard mode == .server else { return }
+        isLoadingIndividuals = true
+        defer { isLoadingIndividuals = false }
+        do {
+            serverIndividuals = try await APIClient.shared.fetchIndividuals()
+        } catch {
+            surfaceServerError(error as? APIError ?? .networkError(error))
+        }
     }
 
     // MARK: - Server shift fetch & mapping

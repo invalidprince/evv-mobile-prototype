@@ -21,23 +21,14 @@ struct MoreView: View {
                             Text(appState.currentStaff.role)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
-                            if appState.mode == .server {
+                            if let staff = appState.serverStaff {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "server.rack")
+                                    Image(systemName: "checkmark.seal.fill")
                                         .font(.caption2)
-                                    Text("Server mode")
+                                    Text(staff.email)
                                 }
                                 .font(.caption)
                                 .foregroundColor(Theme.success)
-                                if let staff = appState.serverStaff {
-                                    Text(staff.email)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            } else {
-                                Text("Demo mode \u{2022} Programs: In-Home, Community, Respite")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
                             }
                         }
                     }
