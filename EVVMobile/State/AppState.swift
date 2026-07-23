@@ -28,6 +28,8 @@ final class AppState: ObservableObject {
     // MARK: - Server individuals (for unscheduled visit selection)
     @Published var serverIndividuals: [ServerIndividualOption] = []
     @Published var isLoadingIndividuals = false
+    /// Timestamp of the cached individuals data being displayed (nil = live data).
+    @Published var individualsFromCacheDate: Date?
 
     // MARK: - History (server mode)
     @Published var historyVisits: [Visit] = []           // from GET /me/visits
@@ -597,6 +599,8 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 await self.replayOfflineQueue()
                 await self.refreshServerShifts()
+                // Refresh individuals cache on sync (keeps offline data fresh)
+                await self.refreshIndividuals()
                 self.isSyncing = false
                 self.pendingSyncCount = offlineQueue.count
                 self.lastSync = Date()
@@ -635,6 +639,9 @@ final class AppState: ObservableObject {
         historyVisits = []
         serverExceptions = []
         serverOpenShifts = []
+        serverIndividuals = []
+        individualsFromCacheDate = nil
+        LocalCache.shared.clearAll()
     }
 
     // MARK: - Demo login (TestFlight review)
@@ -672,6 +679,10 @@ final class AppState: ObservableObject {
             self.isLoggedIn = true
         }
         await refreshServerShifts()
+        // Pre-load cached individuals so they're available immediately (even offline)
+        await MainActor.run { loadCachedIndividuals() }
+        // Then try a live refresh (updates cache if online)
+        await refreshIndividuals()
         LocationManager.shared.requestPermission()
     }
 
@@ -694,6 +705,10 @@ final class AppState: ObservableObject {
             self.isLoggedIn = true
         }
         await refreshServerShifts()
+        // Pre-load cached individuals so they're available immediately (even offline)
+        await MainActor.run { loadCachedIndividuals() }
+        // Then try a live refresh (updates cache if online)
+        await refreshIndividuals()
         LocationManager.shared.requestPermission()
     }
 
@@ -705,9 +720,32 @@ final class AppState: ObservableObject {
         isLoadingIndividuals = true
         defer { isLoadingIndividuals = false }
         do {
-            serverIndividuals = try await APIClient.shared.fetchIndividuals()
+            let fetched = try await APIClient.shared.fetchIndividuals()
+            serverIndividuals = fetched
+            individualsFromCacheDate = nil  // live data
+            // Persist to disk for offline use
+            LocalCache.shared.saveIndividuals(fetched)
         } catch {
-            surfaceServerError(error as? APIError ?? .networkError(error))
+            let apiErr = error as? APIError ?? .networkError(error)
+            // On network failure, fall back to cached data if we have nothing
+            if apiErr.isNetworkError && serverIndividuals.isEmpty {
+                loadCachedIndividuals()
+            }
+            // Only surface non-network errors (network errors are expected offline)
+            if !apiErr.isNetworkError {
+                surfaceServerError(apiErr)
+            }
+        }
+    }
+
+    /// Load individuals from persistent disk cache into memory.
+    /// Called on login and when live fetch fails while offline.
+    @MainActor
+    func loadCachedIndividuals() {
+        if let cached = LocalCache.shared.loadIndividuals() {
+            serverIndividuals = cached
+            individualsFromCacheDate = LocalCache.shared.individualsLastUpdated()
+            DiagnosticLogger.shared.logOffline("Loaded \(cached.count) cached individuals")
         }
     }
 

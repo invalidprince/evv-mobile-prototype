@@ -32,6 +32,21 @@ struct ServerUnscheduledContent: View {
 
     private let maxIndividuals = 2  // 1:2 group visits are the max
 
+    /// Footer for the Individual(s) section — shows cache date hint when offline.
+    private var cachedFooter: some View {
+        Group {
+            if isUnlisted {
+                Text("Enter the individual's name manually.")
+            } else if let cacheDate = appState.individualsFromCacheDate {
+                let f = RelativeDateTimeFormatter()
+                Text("Cached \(f.localizedString(for: cacheDate, relativeTo: Date())) \u{2022} Select up to \(maxIndividuals) for a group (1:2) visit.")
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Select up to \(maxIndividuals) for a group (1:2) visit.")
+            }
+        }
+    }
+
     /// Authorized services = intersection of all selected individuals' service descriptions.
     /// If none selected, show empty (must select an individual first).
     private var authorizedServices: [String] {
@@ -87,7 +102,7 @@ struct ServerUnscheduledContent: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Individual(s)"), footer: Text(isUnlisted ? "Enter the individual's name manually." : "Select up to \(maxIndividuals) for a group (1:2) visit.")) {
+                Section(header: Text("Individual(s)"), footer: cachedFooter) {
 
                     // F2: Unlisted Individual toggle
                     Button(action: {
@@ -125,13 +140,25 @@ struct ServerUnscheduledContent: View {
                         TextField("Enter individual name", text: $unlistedName)
                             .textFieldStyle(.roundedBorder)
                     } else {
-                        if appState.isLoadingIndividuals {
+                        if appState.isLoadingIndividuals && appState.serverIndividuals.isEmpty {
                             HStack(spacing: 10) {
                                 ProgressView()
                                 Text("Loading individuals…")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
+                        } else if appState.serverIndividuals.isEmpty && !appState.effectivelyOnline {
+                            // Offline with no cached data
+                            VStack(spacing: 6) {
+                                Image(systemName: "wifi.slash")
+                                    .font(.title3)
+                                    .foregroundColor(.secondary)
+                                Text("Connect to the internet once to load individuals")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding(.vertical, 8)
                         } else if appState.serverIndividuals.isEmpty {
                             Text("No active individuals found")
                                 .foregroundColor(.secondary)
@@ -180,7 +207,18 @@ struct ServerUnscheduledContent: View {
                 Section(header: Text("Service"), footer: noCommonServicesMessage.map { Text($0).foregroundColor(Theme.danger) }) {
                     if isUnlisted {
                         // F2: Show all available services for unlisted individual
-                        if allAvailableServices.isEmpty {
+                        if allAvailableServices.isEmpty && !appState.effectivelyOnline {
+                            VStack(spacing: 6) {
+                                Image(systemName: "wifi.slash")
+                                    .font(.title3)
+                                    .foregroundColor(.secondary)
+                                Text("Connect to the internet once to load services")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding(.vertical, 4)
+                        } else if allAvailableServices.isEmpty {
                             Text("No services available")
                                 .foregroundColor(.secondary)
                                 .font(.subheadline)
@@ -196,6 +234,17 @@ struct ServerUnscheduledContent: View {
                     } else if noCommonServicesMessage != nil {
                         Text("No common authorized services")
                             .foregroundColor(.secondary)
+                    } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty && !appState.effectivelyOnline {
+                        VStack(spacing: 6) {
+                            Image(systemName: "wifi.slash")
+                                .font(.title3)
+                                .foregroundColor(.secondary)
+                            Text("Connect to the internet once to load services")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.vertical, 4)
                     } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
                         Text("No authorized services")
                             .foregroundColor(.secondary)
@@ -252,9 +301,8 @@ struct ServerUnscheduledContent: View {
                 ClockInSuccessView()
             }
             .onAppear {
-                if appState.serverIndividuals.isEmpty {
-                    Task { await appState.refreshIndividuals() }
-                }
+                // Always attempt a refresh; refreshIndividuals handles offline fallback
+                Task { await appState.refreshIndividuals() }
             }
         }
     }

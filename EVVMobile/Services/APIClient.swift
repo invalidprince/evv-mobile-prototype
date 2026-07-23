@@ -231,7 +231,7 @@ struct ExceptionResponse: Decodable {
 
 // MARK: - Individuals (for unscheduled visit selection)
 
-struct ServerIndividualOption: Decodable, Identifiable {
+struct ServerIndividualOption: Codable, Identifiable {
     let id: String
     let name: String
     let services: [String]?

@@ -42,6 +42,7 @@
 		EE1E5B614A13991388147ADD /* UnscheduledVisitSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E901FDBCC170EE39F601A79 /* UnscheduledVisitSheet.swift */; };
 		A1B2C3D4E5F60001AABB0001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002AABB0002 /* PrivacyInfo.xcprivacy */; };
 		A1B2C3D4E5F60005AABB0005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60004AABB0004 /* Assets.xcassets */; };
+		B5A1C2D3E4F50601A2B3C4D5 /* LocalCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A1C2D3E4F50602A2B3C4D6 /* LocalCache.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 		8BCE1E01E6B620AA8EA9DC45 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		D2C1B0A9180706F5E4D3C2B1 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		F3D1A0B2C4E56789ABCDEF02 /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
+		B5A1C2D3E4F50602A2B3C4D6 /* LocalCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCache.swift; sourceTree = "<group>"; };
 		8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteReminderCenter.swift; sourceTree = "<group>"; };
 		998C2DED284D6434E76D7284 /* GoogleAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthService.swift; sourceTree = "<group>"; };
 		AEE6D26CF44F431431C7AEB9 /* UpNextCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpNextCard.swift; sourceTree = "<group>"; };
@@ -166,6 +168,7 @@
 				F3D1A0B2C4E56789ABCDEF02 /* DiagnosticLogger.swift */,
 				998C2DED284D6434E76D7284 /* GoogleAuthService.swift */,
 				D2C1B0A9180706F5E4D3C2B1 /* LocationManager.swift */,
+				B5A1C2D3E4F50602A2B3C4D6 /* LocalCache.swift */,
 				8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */,
 			);
 			path = Services;
@@ -384,6 +387,7 @@
 				0C7817D804E0D3DB0F5E5E50 /* GoogleAuthService.swift in Sources */,
 				87CC7A1829076198FBA32C88 /* HistoryRow.swift in Sources */,
 				3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */,
+				B5A1C2D3E4F50601A2B3C4D5 /* LocalCache.swift in Sources */,
 				226FC9328809187AC9040CFD /* LoginView.swift in Sources */,
 				76E6D9568491F1450FAD8A8F /* MockData.swift in Sources */,
 				A4CAEA872281BED8E53FDAEF /* Models.swift in Sources */,
