@@ -25,6 +25,10 @@ struct ServerUnscheduledContent: View {
     @State private var selectedIndividualIds: Set<String> = []
     @State private var selectedServiceName: String = ""
     @State private var searchText = ""
+    // F2: Unlisted individual
+    @State private var isUnlisted = false
+    @State private var unlistedName = ""
+    @State private var unlistedServiceName: String = ""
 
     private let maxIndividuals = 2  // 1:2 group visits are the max
 
@@ -53,6 +57,17 @@ struct ServerUnscheduledContent: View {
         return final.sorted()
     }
 
+    /// All available services (for unlisted individual — show every service from all individuals)
+    private var allAvailableServices: [String] {
+        var allSvcs = Set<String>()
+        for individual in appState.serverIndividuals {
+            for svc in (individual.services ?? []) {
+                allSvcs.insert(svc)
+            }
+        }
+        return allSvcs.sorted()
+    }
+
     private var filteredIndividuals: [ServerIndividualOption] {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if trimmed.isEmpty { return appState.serverIndividuals }
@@ -72,60 +87,113 @@ struct ServerUnscheduledContent: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Individual(s)"), footer: Text("Select up to \(maxIndividuals) for a group (1:2) visit.")) {
-                    if appState.isLoadingIndividuals {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Loading individuals…")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    } else if appState.serverIndividuals.isEmpty {
-                        Text("No active individuals found")
-                            .foregroundColor(.secondary)
-                    } else {
-                        TextField("Search…", text: $searchText)
-                            .textFieldStyle(.roundedBorder)
+                Section(header: Text("Individual(s)"), footer: Text(isUnlisted ? "Enter the individual's name manually." : "Select up to \(maxIndividuals) for a group (1:2) visit.")) {
 
-                        // Constrained list: max ~4 visible rows (each ~56pt)
-                        ScrollView {
-                            LazyVStack(spacing: 0) {
-                                ForEach(filteredIndividuals) { individual in
-                                    Button(action: { toggleIndividual(individual) }) {
-                                        HStack {
-                                            AvatarView(name: individual.name, size: 36)
-                                            VStack(alignment: .leading) {
-                                                Text(individual.name).foregroundColor(.primary)
-                                                if let services = individual.services, !services.isEmpty {
-                                                    Text(services.joined(separator: ", "))
-                                                        .font(.caption)
-                                                        .foregroundColor(.secondary)
-                                                        .lineLimit(1)
-                                                }
-                                            }
-                                            Spacer()
-                                            if selectedIndividualIds.contains(individual.id) {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .foregroundColor(Theme.success)
-                                            } else if selectedIndividualIds.count >= maxIndividuals {
-                                                Image(systemName: "circle")
-                                                    .foregroundColor(.secondary.opacity(0.3))
-                                            }
-                                        }
-                                        .padding(.vertical, 10)
-                                    }
-                                    .disabled(!selectedIndividualIds.contains(individual.id) && selectedIndividualIds.count >= maxIndividuals)
-
-                                    Divider()
-                                }
+                    // F2: Unlisted Individual toggle
+                    Button(action: {
+                        withAnimation {
+                            isUnlisted.toggle()
+                            if isUnlisted {
+                                selectedIndividualIds.removeAll()
+                                selectedServiceName = ""
+                            } else {
+                                unlistedName = ""
+                                unlistedServiceName = ""
                             }
                         }
-                        .frame(maxHeight: 224) // ~4 rows × 56pt each
+                    }) {
+                        HStack {
+                            Image(systemName: isUnlisted ? "person.fill.questionmark" : "person.fill.questionmark")
+                                .foregroundColor(isUnlisted ? .white : Theme.primary)
+                                .font(.title3)
+                            Text("Unlisted Individual")
+                                .foregroundColor(isUnlisted ? .white : .primary)
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            if isUnlisted {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, isUnlisted ? 10 : 0)
+                        .background(isUnlisted ? Theme.primary : Color.clear)
+                        .cornerRadius(8)
+                    }
+
+                    if isUnlisted {
+                        TextField("Enter individual name", text: $unlistedName)
+                            .textFieldStyle(.roundedBorder)
+                    } else {
+                        if appState.isLoadingIndividuals {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("Loading individuals…")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else if appState.serverIndividuals.isEmpty {
+                            Text("No active individuals found")
+                                .foregroundColor(.secondary)
+                        } else {
+                            TextField("Search…", text: $searchText)
+                                .textFieldStyle(.roundedBorder)
+
+                            // Constrained list: max ~4 visible rows (each ~56pt)
+                            ScrollView {
+                                LazyVStack(spacing: 0) {
+                                    ForEach(filteredIndividuals) { individual in
+                                        Button(action: { toggleIndividual(individual) }) {
+                                            HStack {
+                                                AvatarView(name: individual.name, size: 36)
+                                                VStack(alignment: .leading) {
+                                                    Text(individual.name).foregroundColor(.primary)
+                                                    if let services = individual.services, !services.isEmpty {
+                                                        Text(services.joined(separator: ", "))
+                                                            .font(.caption)
+                                                            .foregroundColor(.secondary)
+                                                            .lineLimit(1)
+                                                    }
+                                                }
+                                                Spacer()
+                                                if selectedIndividualIds.contains(individual.id) {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .foregroundColor(Theme.success)
+                                                } else if selectedIndividualIds.count >= maxIndividuals {
+                                                    Image(systemName: "circle")
+                                                        .foregroundColor(.secondary.opacity(0.3))
+                                                }
+                                            }
+                                            .padding(.vertical, 10)
+                                        }
+                                        .disabled(!selectedIndividualIds.contains(individual.id) && selectedIndividualIds.count >= maxIndividuals)
+
+                                        Divider()
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 224) // ~4 rows × 56pt each
+                        }
                     }
                 }
 
                 Section(header: Text("Service"), footer: noCommonServicesMessage.map { Text($0).foregroundColor(Theme.danger) }) {
-                    if noCommonServicesMessage != nil {
+                    if isUnlisted {
+                        // F2: Show all available services for unlisted individual
+                        if allAvailableServices.isEmpty {
+                            Text("No services available")
+                                .foregroundColor(.secondary)
+                                .font(.subheadline)
+                        } else {
+                            Picker("Service", selection: $unlistedServiceName) {
+                                ForEach(allAvailableServices, id: \.self) { svcName in
+                                    Text(svcName).tag(svcName)
+                                }
+                            }
+                            .pickerStyle(.inline)
+                            .labelsHidden()
+                        }
+                    } else if noCommonServicesMessage != nil {
                         Text("No common authorized services")
                             .foregroundColor(.secondary)
                     } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
@@ -148,18 +216,27 @@ struct ServerUnscheduledContent: View {
                 }
 
                 Section {
-                    Button(action: startVisit) {
-                        Label("Clock In Now", systemImage: "play.circle.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty)
-
-                    // "Clock In Without Service" fallback
-                    if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
-                        Button(action: startVisitWithoutService) {
-                            Label("Clock In Without Service", systemImage: "exclamationmark.triangle.fill")
+                    if isUnlisted {
+                        // F2: Unlisted clock-in
+                        Button(action: startUnlistedVisit) {
+                            Label("Clock In Now", systemImage: "play.circle.fill")
                                 .frame(maxWidth: .infinity)
-                                .foregroundColor(.orange)
+                        }
+                        .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty)
+                    } else {
+                        Button(action: startVisit) {
+                            Label("Clock In Now", systemImage: "play.circle.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty)
+
+                        // "Clock In Without Service" fallback
+                        if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
+                            Button(action: startVisitWithoutService) {
+                                Label("Clock In Without Service", systemImage: "exclamationmark.triangle.fill")
+                                    .frame(maxWidth: .infinity)
+                                    .foregroundColor(.orange)
+                            }
                         }
                     }
                 }
@@ -226,6 +303,19 @@ struct ServerUnscheduledContent: View {
             )
         }
         appState.startUnscheduledVisitWithoutService(clients: clients)
+        showSuccess = true
+    }
+
+    // F2: Start visit for unlisted individual
+    private func startUnlistedVisit() {
+        let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !unlistedServiceName.isEmpty else { return }
+
+        // Create a dummy Client with empty address (no server ID)
+        let client = Client(id: UUID(), name: name, address: "", city: "")
+        let serviceType = mapServiceNameToType(unlistedServiceName)
+        appState.startUnscheduledVisit(clients: [client], service: serviceType,
+                                       serviceName: unlistedServiceName, unlistedName: name)
         showSuccess = true
     }
 

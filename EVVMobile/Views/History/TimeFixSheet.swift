@@ -4,6 +4,8 @@ struct TimeFixSheet: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     let visit: Visit
+    /// Optional callback when a time-fix is successfully submitted (B4: auto-confirm clock out)
+    var onSubmitted: (() -> Void)? = nil
 
     @State private var newStart: Date
     @State private var newEnd: Date
@@ -22,8 +24,9 @@ struct TimeFixSheet: View {
         "Other"
     ]
 
-    init(visit: Visit) {
+    init(visit: Visit, onSubmitted: (() -> Void)? = nil) {
         self.visit = visit
+        self.onSubmitted = onSubmitted
         _newStart = State(initialValue: visit.actualStart ?? visit.scheduledStart)
         _newEnd = State(initialValue: visit.actualEnd ?? visit.scheduledEnd)
     }
@@ -94,7 +97,10 @@ struct TimeFixSheet: View {
                 }
             }
             .alert("Time fix request submitted", isPresented: $showSuccess) {
-                Button("OK") { dismiss() }
+                Button("OK") {
+                    onSubmitted?()
+                    dismiss()
+                }
             } message: {
                 Text("Your supervisor will review and respond.")
             }

@@ -195,11 +195,12 @@ struct IndividualsResponse: Decodable {
 // MARK: - Unscheduled visit creation
 
 struct UnscheduledVisitRequest: Encodable {
-    let clientIds: [String]
+    let clientIds: [String]?
     let service: String?
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
+    let unlistedName: String?
 }
 
 struct UnscheduledVisitCreated: Decodable {
@@ -264,12 +265,18 @@ struct QueuedAction: Identifiable, Codable {
     let nbMinutes: Int?
     let nbNote: String?
     let nbDate: String?
+    // Unscheduled visit fields (F1 offline)
+    let unschedClientIds: [String]?
+    let unschedService: String?
+    let unschedClientName: String?   // F2 unlisted individual name
+    let localVisitId: UUID?          // Links to the optimistic local Visit
 
     enum ActionType: String, Codable {
         case clockIn
         case clockOut
         case addNote
         case nonBillable
+        case unscheduledVisit
     }
 }
 
@@ -705,14 +712,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, unlistedName: String? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientIds: clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy)
+            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, unlistedName: unlistedName)
         )
         request.timeoutInterval = 15
 
@@ -751,6 +758,26 @@ actor APIClient {
             return try JSONDecoder().decode(ShiftsResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Diagnostic Logs (F3)
+
+    func submitLogs(entries: [[String: String]]) async throws {
+        let url = URL(string: "\(baseURL)/logs")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["entries": entries])
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to submit logs"
+            throw APIError.serverError(statusCode, errBody)
         }
     }
 

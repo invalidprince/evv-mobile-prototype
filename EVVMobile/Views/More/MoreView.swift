@@ -7,6 +7,9 @@ struct MoreView: View {
     @State private var docReminders = true
     @State private var biometric = true
     @State private var language = "English"
+    @State private var isSubmittingLog = false
+    @State private var showLogSuccess = false
+    @State private var showLogError = false
 
     var body: some View {
         NavigationView {
@@ -136,6 +139,22 @@ struct MoreView: View {
                     }
                 }
 
+                // F3: Diagnostic log submission
+                Section(header: Text("Diagnostics"),
+                        footer: Text("Send recent app events (API errors, sync, offline activity) to help diagnose issues. \(DiagnosticLogger.shared.entryCount) event(s) buffered.")) {
+                    Button(action: submitLog) {
+                        if isSubmittingLog {
+                            HStack(spacing: 8) {
+                                ProgressView().scaleEffect(0.8)
+                                Text("Submitting…")
+                            }
+                        } else {
+                            Label("Submit Diagnostic Log", systemImage: "ladybug")
+                        }
+                    }
+                    .disabled(isSubmittingLog || DiagnosticLogger.shared.entryCount == 0)
+                }
+
                 // Legal
                 Section(header: Text("Legal")) {
                     Link(destination: URL(string: "https://focus-nexus-production.up.railway.app/privacy")!) {
@@ -158,8 +177,33 @@ struct MoreView: View {
                 }
             }
             .navigationTitle("More")
+            .alert("Log submitted", isPresented: $showLogSuccess) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Diagnostic log sent successfully.")
+            }
+            .alert("Submission failed", isPresented: $showLogError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Could not send the log. Try again when online.")
+            }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func submitLog() {
+        isSubmittingLog = true
+        Task {
+            let ok = await appState.submitDiagnosticLog()
+            await MainActor.run {
+                isSubmittingLog = false
+                if ok {
+                    showLogSuccess = true
+                } else {
+                    showLogError = true
+                }
+            }
+        }
     }
 
     private func credIcon(_ status: CredentialStatus) -> some View {

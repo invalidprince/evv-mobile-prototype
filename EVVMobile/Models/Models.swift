@@ -119,6 +119,8 @@ struct Visit: Identifiable {
     /// Visible to managers. Once set by a late completion it never clears:
     /// late is a fact, not a temporary state.
     var lateDocumentation: Bool = false
+    /// Free-text name for an unlisted individual (F2)
+    var unlistedIndividualName: String?
 
     var client: Client { clients[0] }
 

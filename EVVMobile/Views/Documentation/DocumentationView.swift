@@ -44,11 +44,6 @@ struct DocumentationView: View {
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.secondary)
                         DocTextEditor(text: $note.additionalComments, placeholder: "Anything else worth noting about this visit…", minHeight: 100)
-                        Button(action: {}) {
-                            Label("Dictate Note", systemImage: "mic.fill")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
                     }
                 }
 

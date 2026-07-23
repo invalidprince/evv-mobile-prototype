@@ -15,6 +15,7 @@ struct ClockOutFlow: View {
     @State private var completedVisit: Visit?
     @State private var signatureSkipReason: String?
     @State private var showTimeFix = false
+    @State private var timeFixWasSubmitted = false
 
     private var docAlreadyComplete: Bool {
         appState.isDocComplete(visitId: visit.id)
@@ -48,8 +49,15 @@ struct ClockOutFlow: View {
                     DocumentationView(visit: visit)
                 }
             }
-            .sheet(isPresented: $showTimeFix) {
-                TimeFixSheet(visit: visit)
+            .sheet(isPresented: $showTimeFix, onDismiss: {
+                // B4: If a change request was submitted, auto-confirm clock out
+                if timeFixWasSubmitted {
+                    doClockOut()
+                }
+            }) {
+                TimeFixSheet(visit: visit, onSubmitted: {
+                    timeFixWasSubmitted = true
+                })
             }
             .onAppear {
                 if step == .docGate && docAlreadyComplete { step = .signature }

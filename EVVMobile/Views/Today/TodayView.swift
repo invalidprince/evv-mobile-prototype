@@ -80,6 +80,39 @@ struct TodayView: View {
                         .padding(.vertical, 20)
                     }
 
+                    // F1: Show pending offline items
+                    if !appState.offlineQueue.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.triangle.2.circlepath.icloud")
+                                    .foregroundColor(Theme.warning)
+                                Text("Pending Sync")
+                                    .font(.headline)
+                            }
+                            Text("\(appState.offlineQueue.count) action(s) saved locally \u{2014} will sync when you\u{2019}re back online.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            ForEach(appState.offlineQueue) { action in
+                                HStack(spacing: 8) {
+                                    Image(systemName: queuedActionIcon(action.type))
+                                        .foregroundColor(Theme.warning)
+                                        .font(.caption)
+                                    Text(queuedActionLabel(action))
+                                        .font(.caption)
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Text(relativeTime(action.createdAt))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                        .padding(14)
+                        .background(Theme.warning.opacity(0.1))
+                        .cornerRadius(12)
+                    }
+
                     otherActions
                 }
                 .padding(16)
@@ -105,8 +138,13 @@ struct TodayView: View {
                 NonBillableSheet()
             }
             .sheet(item: $noteVisit) { visit in
-                NavigationView {
-                    DocumentationView(visit: visit)
+                if appState.mode == .server {
+                    // B2 fix: server mode uses ServerAddNoteSheet
+                    ServerAddNoteSheet(visit: visit)
+                } else {
+                    NavigationView {
+                        DocumentationView(visit: visit)
+                    }
                 }
             }
         }
@@ -180,6 +218,41 @@ struct TodayView: View {
         }
         .padding(.top, 8)
     }
+}
+
+// MARK: - Offline queue display helpers
+
+private func queuedActionIcon(_ type: QueuedAction.ActionType) -> String {
+    switch type {
+    case .clockIn: return "play.circle"
+    case .clockOut: return "stop.circle"
+    case .addNote: return "square.and.pencil"
+    case .nonBillable: return "briefcase"
+    case .unscheduledVisit: return "plus.circle"
+    }
+}
+
+private func queuedActionLabel(_ action: QueuedAction) -> String {
+    switch action.type {
+    case .clockIn: return "Clock in"
+    case .clockOut: return "Clock out"
+    case .addNote: return "Note"
+    case .nonBillable: return "Non-billable time"
+    case .unscheduledVisit:
+        if let name = action.unschedClientName {
+            return "Unscheduled visit \u{2014} \(name)"
+        }
+        return "Unscheduled visit"
+    }
+}
+
+private func relativeTime(_ date: Date) -> String {
+    let seconds = Int(Date().timeIntervalSince(date))
+    if seconds < 60 { return "just now" }
+    let minutes = seconds / 60
+    if minutes < 60 { return "\(minutes)m ago" }
+    let hours = minutes / 60
+    return "\(hours)h ago"
 }
 
 struct IncompleteNoteCard: View {

@@ -81,8 +81,14 @@ struct HistoryView: View {
                 DeleteRequestSheet(visit: visit)
             }
             .sheet(item: $noteVisit) { visit in
-                NavigationView {
-                    DocumentationView(visit: visit)
+                if appState.mode == .server {
+                    // B2 fix: server mode uses ServerAddNoteSheet instead of
+                    // DocumentationView (which relies on mock outcomes data)
+                    ServerAddNoteSheet(visit: visit)
+                } else {
+                    NavigationView {
+                        DocumentationView(visit: visit)
+                    }
                 }
             }
             .sheet(item: $addNoteVisit) { visit in

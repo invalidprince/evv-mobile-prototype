@@ -237,6 +237,15 @@ final class AppState: ObservableObject {
             startTimerIfNeeded()
             haptic(.success)
 
+            if !effectivelyOnline {
+                // Offline: queue and keep the optimistic update
+                todayVisits[idx].syncState = .pending
+                enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId)
+                DiagnosticLogger.shared.logOffline("Clock-in queued offline for shift \(shiftId)")
+                scheduleAutoSync()
+                return
+            }
+
             Task { @MainActor in
                 do {
                     // Pass GPS coordinates if available
@@ -249,13 +258,21 @@ final class AppState: ObservableObject {
                     )
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].serverVisitId = visitInfo.id
+                        self.todayVisits[i].syncState = .synced
                     }
                     await self.refreshServerShifts()
                 } catch let error as APIError {
                     if error.isNetworkError {
-                        self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil)
+                        // Keep the optimistic update, queue for later
+                        if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                            self.todayVisits[i].syncState = .pending
+                        }
+                        self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId)
+                        DiagnosticLogger.shared.logOffline("Clock-in queued (network error) for shift \(shiftId)")
+                        self.scheduleAutoSync()
                     } else {
                         self.surfaceServerError(error)
+                        DiagnosticLogger.shared.logAPI("Clock-in failed: \(error.localizedDescription)")
                         if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                             self.todayVisits[i].status = .scheduled
                             self.todayVisits[i].actualStart = nil
@@ -285,11 +302,15 @@ final class AppState: ObservableObject {
         guard let idx = todayVisits.firstIndex(where: { $0.status == .inProgress }) else { return nil }
         let visitId = todayVisits[idx].id
 
-        if mode == .server, let serverVisitId = todayVisits[idx].serverVisitId {
+        if mode == .server {
+            let serverVisitId = todayVisits[idx].serverVisitId
             // Collect all visit IDs to clock out (1:2 has multiple)
-            let allVisitIds = todayVisits[idx].serverVisitIds.isEmpty
-                ? [serverVisitId]
-                : todayVisits[idx].serverVisitIds
+            let allVisitIds: [String]
+            if let svid = serverVisitId {
+                allVisitIds = todayVisits[idx].serverVisitIds.isEmpty ? [svid] : todayVisits[idx].serverVisitIds
+            } else {
+                allVisitIds = []
+            }
 
             // Server mode: optimistic update + API call
             todayVisits[idx].actualEnd = Date()
@@ -299,6 +320,19 @@ final class AppState: ObservableObject {
             startTimerIfNeeded()
             haptic(.success)
             NoteReminderCenter.shared.scheduleReminders(for: finished)
+
+            // If offline or no server visit ID yet (offline clock-in), queue immediately
+            if !effectivelyOnline || allVisitIds.isEmpty {
+                for vid in allVisitIds {
+                    enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid)
+                }
+                if allVisitIds.isEmpty {
+                    // Visit was created offline, mark pending
+                    DiagnosticLogger.shared.logOffline("Clock-out queued (no server visit ID yet)")
+                }
+                scheduleAutoSync()
+                return finished
+            }
 
             Task { @MainActor in
                 do {
@@ -316,10 +350,11 @@ final class AppState: ObservableObject {
                         for vid in allVisitIds {
                             self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid)
                         }
-                        self.pendingSyncCount += allVisitIds.count
                         self.scheduleAutoSync()
+                        DiagnosticLogger.shared.logOffline("Clock-out queued (network error)")
                     } else {
                         self.surfaceServerError(error)
+                        DiagnosticLogger.shared.logAPI("Clock-out failed: \(error.localizedDescription)")
                         if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                             self.todayVisits[i].actualEnd = nil
                             self.todayVisits[i].status = .inProgress
@@ -348,25 +383,41 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil) {
+    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false) {
         guard activeVisit == nil else { return }
 
-        if mode == .server, !clients.isEmpty {
+        if mode == .server {
             // Server mode: POST to server, then refresh
             let now = Date()
             let localVisitId = UUID()
-            let visit = Visit(id: localVisitId, clients: clients, service: service,
+            var visit = Visit(id: localVisitId, clients: clients, service: service,
                               scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
                               actualStart: now, actualEnd: nil,
                               status: .inProgress, isGroup: clients.count > 1)
+            visit.unlistedIndividualName = unlistedName
             todayVisits.append(visit)
             startTimerIfNeeded()
             haptic(.success)
 
-            // Collect all server individual IDs (stored in address field)
-            let serverClientIds = clients.map { $0.address }
+            // Collect all server individual IDs (stored in address field); empty for unlisted
+            let serverClientIds = clients.map { $0.address }.filter { !$0.isEmpty }
             // Use the original service description if provided (matches what the API expects)
-            let apiServiceName = serviceName ?? service.rawValue
+            let apiServiceName: String? = noService ? nil : (serviceName ?? service.rawValue)
+
+            if !effectivelyOnline {
+                // Offline: keep local visit, queue for later sync
+                if let i = todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                    todayVisits[i].syncState = .pending
+                }
+                enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                     unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                     unschedService: apiServiceName,
+                                     unschedClientName: unlistedName,
+                                     localVisitId: localVisitId)
+                DiagnosticLogger.shared.logOffline("Unscheduled visit queued offline")
+                scheduleAutoSync()
+                return
+            }
 
             Task { @MainActor in
                 do {
@@ -376,7 +427,8 @@ final class AppState: ObservableObject {
                         service: apiServiceName,
                         lat: coords?.lat,
                         lng: coords?.lng,
-                        accuracy: coords?.accuracy
+                        accuracy: coords?.accuracy,
+                        unlistedName: unlistedName
                     )
                     // Update the local visit with server IDs so clock-out works
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
@@ -390,10 +442,29 @@ final class AppState: ObservableObject {
                         if let shift = response.shift {
                             self.todayVisits[i].serverShiftId = shift.id
                         }
+                        self.todayVisits[i].syncState = .synced
+                    }
+                } catch let error as APIError {
+                    if error.isNetworkError {
+                        // Keep local visit, queue for later
+                        if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                            self.todayVisits[i].syncState = .pending
+                        }
+                        self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                                  unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                                  unschedService: apiServiceName,
+                                                  unschedClientName: unlistedName,
+                                                  localVisitId: localVisitId)
+                        DiagnosticLogger.shared.logOffline("Unscheduled visit queued (network error)")
+                        self.scheduleAutoSync()
+                    } else {
+                        self.surfaceServerError(error)
+                        DiagnosticLogger.shared.logAPI("Unscheduled visit failed: \(error.localizedDescription)")
+                        self.todayVisits.removeAll { $0.id == localVisitId }
+                        self.startTimerIfNeeded()
                     }
                 } catch {
-                    self.surfaceServerError(error as? APIError ?? .networkError(error))
-                    // Remove the local visit on failure
+                    self.surfaceServerError(APIError.networkError(error))
                     self.todayVisits.removeAll { $0.id == localVisitId }
                     self.startTimerIfNeeded()
                 }
@@ -413,57 +484,8 @@ final class AppState: ObservableObject {
 
     func startUnscheduledVisitWithoutService(clients: [Client]) {
         guard activeVisit == nil else { return }
-
-        if mode == .server, !clients.isEmpty {
-            let now = Date()
-            let localVisitId = UUID()
-            let visit = Visit(id: localVisitId, clients: clients, service: .inHomeSupport,
-                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
-                              actualStart: now, actualEnd: nil,
-                              status: .inProgress, isGroup: clients.count > 1)
-            todayVisits.append(visit)
-            startTimerIfNeeded()
-            haptic(.success)
-
-            let serverClientIds = clients.map { $0.address }
-
-            Task { @MainActor in
-                do {
-                    let coords = LocationManager.shared.currentCoordinates
-                    let response = try await APIClient.shared.createUnscheduledVisit(
-                        clientIds: serverClientIds,
-                        service: nil,  // no service
-                        lat: coords?.lat,
-                        lng: coords?.lng,
-                        accuracy: coords?.accuracy
-                    )
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                        self.todayVisits[i].serverVisitId = response.visit.id
-                        if let allVisits = response.visits, allVisits.count > 1 {
-                            self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
-                        } else {
-                            self.todayVisits[i].serverVisitIds = [response.visit.id]
-                        }
-                        if let shift = response.shift {
-                            self.todayVisits[i].serverShiftId = shift.id
-                        }
-                    }
-                } catch {
-                    self.surfaceServerError(error as? APIError ?? .networkError(error))
-                    self.todayVisits.removeAll { $0.id == localVisitId }
-                    self.startTimerIfNeeded()
-                }
-            }
-        } else {
-            let now = Date()
-            let visit = Visit(id: UUID(), clients: clients, service: .inHomeSupport,
-                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
-                              actualStart: now, actualEnd: nil,
-                              status: .inProgress, isGroup: clients.count > 1)
-            todayVisits.append(visit)
-            startTimerIfNeeded()
-            haptic(.success)
-        }
+        // Reuse the same offline-capable flow but with noService=true
+        startUnscheduledVisit(clients: clients, service: .inHomeSupport, serviceName: nil, unlistedName: nil, noService: true)
     }
 
     func acceptOpenShift(_ shift: OpenShift) {
@@ -680,6 +702,7 @@ final class AppState: ObservableObject {
 
         do {
             let response = try await APIClient.shared.fetchShiftsResponse()
+            scheduleLoadError = nil  // clear any previous error
             let mapped = response.shifts.compactMap { mapServerShift($0) }
 
             let cal = Calendar.current
@@ -717,7 +740,9 @@ final class AppState: ObservableObject {
             lastSync = Date()
             startTimerIfNeeded()
         } catch {
-            surfaceServerError(error as? APIError ?? .networkError(error))
+            let apiErr = error as? APIError ?? .networkError(error)
+            scheduleLoadError = apiErr.localizedDescription
+            surfaceServerError(apiErr)
         }
     }
 
@@ -856,56 +881,100 @@ final class AppState: ObservableObject {
     private func enqueueOfflineAction(_ type: QueuedAction.ActionType, shiftId: Int?, visitId: String?,
                                         noteText: String? = nil,
                                         nbCategory: String? = nil, nbMinutes: Int? = nil,
-                                        nbNote: String? = nil, nbDate: String? = nil) {
+                                        nbNote: String? = nil, nbDate: String? = nil,
+                                        unschedClientIds: [String]? = nil, unschedService: String? = nil,
+                                        unschedClientName: String? = nil, localVisitId: UUID? = nil) {
+        let coords = LocationManager.shared.currentCoordinates
         let action = QueuedAction(
             id: UUID(),
             type: type,
             shiftId: shiftId,
             visitId: visitId,
-            lat: nil,
-            lng: nil,
-            accuracy: nil,
+            lat: coords?.lat,
+            lng: coords?.lng,
+            accuracy: coords?.accuracy,
             createdAt: Date(),
             noteText: noteText,
             nbCategory: nbCategory,
             nbMinutes: nbMinutes,
             nbNote: nbNote,
-            nbDate: nbDate
+            nbDate: nbDate,
+            unschedClientIds: unschedClientIds,
+            unschedService: unschedService,
+            unschedClientName: unschedClientName,
+            localVisitId: localVisitId
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
+        DiagnosticLogger.shared.logOffline("Queued \(type.rawValue) action (queue size: \(offlineQueue.count))")
     }
 
     @MainActor
     private func replayOfflineQueue() async {
         guard !offlineQueue.isEmpty else { return }
         var remaining: [QueuedAction] = []
+        DiagnosticLogger.shared.logSync("Replaying \(offlineQueue.count) offline action(s)")
 
         for action in offlineQueue {
             do {
                 switch action.type {
                 case .clockIn:
                     if let shiftId = action.shiftId {
-                        _ = try await APIClient.shared.clockIn(shiftId: shiftId)
+                        let visitInfo = try await APIClient.shared.clockIn(shiftId: shiftId, lat: action.lat, lng: action.lng, accuracy: action.accuracy)
+                        // Update local visit with server visit ID
+                        if let localId = action.localVisitId,
+                           let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                            todayVisits[i].serverVisitId = visitInfo.id
+                            todayVisits[i].syncState = .synced
+                        }
                     }
                 case .clockOut:
                     if let visitId = action.visitId {
-                        _ = try await APIClient.shared.clockOut(visitId: visitId)
+                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy)
                     }
                 case .addNote:
                     if let visitId = action.visitId, let text = action.noteText {
-                        _ = try await APIClient.shared.addNote(visitId: visitId, text: text)
+                        let resp = try await APIClient.shared.addNote(visitId: visitId, text: text)
+                        if let ds = resp.docStatus {
+                            if let i = historyVisits.firstIndex(where: { $0.serverVisitId == visitId }) {
+                                historyVisits[i].hasNote = true
+                                historyVisits[i].serverDocStatus = ds
+                                if ds.lowercased() == "complete" { historyVisits[i].docComplete = true }
+                            }
+                        }
                     }
                 case .nonBillable:
                     if let cat = action.nbCategory, let mins = action.nbMinutes {
                         _ = try await APIClient.shared.createNonBillable(
                             date: action.nbDate, category: cat, minutes: mins, note: action.nbNote ?? "")
                     }
+                case .unscheduledVisit:
+                    if let clientIds = action.unschedClientIds {
+                        let response = try await APIClient.shared.createUnscheduledVisit(
+                            clientIds: clientIds, service: action.unschedService,
+                            lat: action.lat, lng: action.lng, accuracy: action.accuracy,
+                            unlistedName: action.unschedClientName)
+                        // Update local visit with real server IDs
+                        if let localId = action.localVisitId,
+                           let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                            todayVisits[i].serverVisitId = response.visit.id
+                            if let allVisits = response.visits, allVisits.count > 1 {
+                                todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                            } else {
+                                todayVisits[i].serverVisitIds = [response.visit.id]
+                            }
+                            if let shift = response.shift {
+                                todayVisits[i].serverShiftId = shift.id
+                            }
+                            todayVisits[i].syncState = .synced
+                        }
+                    }
                 }
             } catch let error as APIError {
                 if error.isNetworkError {
                     remaining.append(action)
                 } else {
+                    DiagnosticLogger.shared.logSync("Replay failed for \(action.type.rawValue): \(error.localizedDescription)")
                     surfaceServerError(error)
                 }
             } catch {
@@ -913,8 +982,12 @@ final class AppState: ObservableObject {
             }
         }
 
-        if !remaining.isEmpty && offlineQueue.count != remaining.count {
-            serverError = "\(offlineQueue.count - remaining.count) action(s) synced late"
+        let synced = offlineQueue.count - remaining.count
+        if synced > 0 {
+            DiagnosticLogger.shared.logSync("\(synced) action(s) synced successfully")
+        }
+        if !remaining.isEmpty && synced > 0 {
+            serverError = "\(synced) action(s) synced late"
             showServerError = true
         }
 
@@ -1030,18 +1103,39 @@ final class AppState: ObservableObject {
             enqueueOfflineAction(.addNote, shiftId: nil, visitId: serverVisitId, noteText: text)
             pendingSyncCount = offlineQueue.count
             scheduleAutoSync()
+            // Optimistically mark note as present locally
+            await MainActor.run {
+                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    historyVisits[i].hasNote = true
+                    historyVisits[i].serverDocStatus = "complete"
+                    historyVisits[i].docComplete = true
+                }
+                if let i = todayVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    todayVisits[i].hasNote = true
+                    todayVisits[i].docComplete = true
+                }
+                markDocComplete(visitId: visitId)
+            }
             return
         }
 
         do {
-            _ = try await APIClient.shared.addNote(visitId: serverVisitId, text: text)
+            let response = try await APIClient.shared.addNote(visitId: serverVisitId, text: text)
             await MainActor.run {
-                // Update hasNote on matching visits
+                let docStatus = response.docStatus ?? "complete"
+                let isComplete = docStatus.lowercased() == "complete"
+                // Update hasNote + docStatus on matching visits (B1 fix)
                 if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
                     historyVisits[i].hasNote = true
+                    historyVisits[i].serverDocStatus = docStatus
+                    if isComplete { historyVisits[i].docComplete = true }
                 }
                 if let i = todayVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
                     todayVisits[i].hasNote = true
+                    if isComplete { todayVisits[i].docComplete = true }
+                }
+                if isComplete {
+                    markDocComplete(visitId: visitId)
                 }
             }
         } catch let error as APIError {
@@ -1053,6 +1147,7 @@ final class AppState: ObservableObject {
                 }
             } else {
                 await MainActor.run { surfaceServerError(error) }
+                DiagnosticLogger.shared.logAPI("Note submission failed: \(error.localizedDescription)")
             }
         } catch {
             await MainActor.run { surfaceServerError(.networkError(error)) }
@@ -1132,11 +1227,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Diagnostic log submission (F3)
+
+    func submitDiagnosticLog() async -> Bool {
+        let entries = DiagnosticLogger.shared.exportEntries()
+        guard !entries.isEmpty else { return false }
+
+        do {
+            try await APIClient.shared.submitLogs(entries: entries)
+            DiagnosticLogger.shared.clear()
+            return true
+        } catch {
+            DiagnosticLogger.shared.logAPI("Log submission failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     // MARK: - Error surfacing
+
+    /// Schedule-specific error (for inline display in ScheduleView)
+    @Published var scheduleLoadError: String?
 
     func surfaceServerError(_ error: APIError) {
         serverError = error.localizedDescription
         showServerError = true
+        DiagnosticLogger.shared.logAPI(error.localizedDescription)
     }
 
     func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {

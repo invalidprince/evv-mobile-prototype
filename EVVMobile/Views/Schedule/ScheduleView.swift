@@ -28,6 +28,50 @@ struct ServerScheduleContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
 
+                // B5: Offline banner
+                if !appState.effectivelyOnline {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi.slash")
+                            .foregroundColor(Theme.danger)
+                        Text("You're offline")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(Theme.danger)
+                        Spacer()
+                        Text("Showing cached schedule")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(12)
+                    .background(Theme.danger.opacity(0.1))
+                    .cornerRadius(10)
+                }
+
+                // B5: Error banner with retry
+                if let error = appState.scheduleLoadError, appState.effectivelyOnline {
+                    VStack(spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(Theme.warning)
+                            Text("Could not load schedule")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button(action: {
+                            Task { await appState.refreshServerShifts() }
+                        }) {
+                            Label("Retry", systemImage: "arrow.clockwise")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                    }
+                    .padding(14)
+                    .background(Theme.warning.opacity(0.1))
+                    .cornerRadius(12)
+                }
+
                 if appState.isLoadingShifts && appState.todayVisits.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -41,7 +85,7 @@ struct ServerScheduleContent: View {
 
                 let groups = appState.groupedScheduleVisits
 
-                if groups.isEmpty && !appState.isLoadingShifts {
+                if groups.isEmpty && !appState.isLoadingShifts && appState.scheduleLoadError == nil {
                     VStack(spacing: 10) {
                         Image(systemName: "calendar.badge.exclamationmark")
                             .font(.largeTitle)
