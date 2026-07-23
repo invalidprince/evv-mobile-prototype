@@ -69,10 +69,30 @@ struct DocumentationView: View {
         return baseComplete
     }
 
+    /// True when server mode and offline — blocks submission.
+    private var isOfflineBlocked: Bool {
+        appState.mode == .server && !appState.effectivelyOnline
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
                 header
+
+                // Offline banner
+                if isOfflineBlocked {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi.slash")
+                            .foregroundColor(Theme.danger)
+                        Text("Note submission requires an internet connection")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(Theme.danger)
+                        Spacer()
+                    }
+                    .padding(12)
+                    .background(Theme.danger.opacity(0.08))
+                    .cornerRadius(10)
+                }
 
                 if isLoadingTemplate {
                     HStack(spacing: 10) {
@@ -275,8 +295,8 @@ struct DocumentationView: View {
                                     showSubmitted = true
                                 }
                             }
-                            .buttonStyle(PrimaryButtonStyle(enabled: noteComplete))
-                            .disabled(!noteComplete)
+                            .buttonStyle(PrimaryButtonStyle(enabled: noteComplete && !isOfflineBlocked))
+                            .disabled(!noteComplete || isOfflineBlocked)
                         }
                     }
                     .padding(.bottom, 16)

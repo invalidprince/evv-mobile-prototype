@@ -40,7 +40,7 @@ struct TodayView: View {
                     }
 
                     ForEach(appState.incompleteNoteVisits) { visit in
-                        IncompleteNoteCard(visit: visit) {
+                        IncompleteNoteCard(visit: visit, isOffline: !appState.effectivelyOnline) {
                             noteVisit = visit
                         }
                     }
@@ -252,6 +252,7 @@ private func relativeTime(_ date: Date) -> String {
 
 struct IncompleteNoteCard: View {
     let visit: Visit
+    var isOffline: Bool = false
     let onFinish: () -> Void
 
     /// Notes are due the same day as the visit — once midnight passes, the
@@ -277,8 +278,8 @@ struct IncompleteNoteCard: View {
 
     private var titleText: String {
         isLate
-            ? "LATE — note for \(visit.client.name), \(whenText)"
-            : "Incomplete note — \(visit.client.name), \(whenText)"
+            ? "LATE \u{2014} note for \(visit.client.name), \(whenText)"
+            : "Incomplete note \u{2014} \(visit.client.name), \(whenText)"
     }
 
     var body: some View {
@@ -298,7 +299,13 @@ struct IncompleteNoteCard: View {
             Button(action: onFinish) {
                 Label("Finish Note", systemImage: "square.and.pencil")
             }
-            .buttonStyle(PrimaryButtonStyle(color: accent))
+            .buttonStyle(PrimaryButtonStyle(color: isOffline ? .gray : accent))
+            .disabled(isOffline)
+            if isOffline {
+                Label("Requires internet connection", systemImage: "wifi.slash")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
         .padding(14)
         .background(accent.opacity(0.12))

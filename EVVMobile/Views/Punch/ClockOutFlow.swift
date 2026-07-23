@@ -16,6 +16,7 @@ struct ClockOutFlow: View {
     @State private var signatureSkipReason: String?
     @State private var showTimeFix = false
     @State private var timeFixWasSubmitted = false
+    @State private var showOfflineChangeAlert = false
 
     private var docAlreadyComplete: Bool {
         appState.isDocComplete(visitId: visit.id)
@@ -161,7 +162,13 @@ struct ClockOutFlow: View {
                     }
                     .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
 
-                    Button(action: { showTimeFix = true }) {
+                    Button(action: {
+                        if !appState.effectivelyOnline {
+                            showOfflineChangeAlert = true
+                        } else {
+                            showTimeFix = true
+                        }
+                    }) {
                         Label("Request a Change", systemImage: "pencil.circle")
                     }
                     .buttonStyle(SecondaryButtonStyle())
@@ -171,6 +178,14 @@ struct ClockOutFlow: View {
             }
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+        .alert("No Internet Connection", isPresented: $showOfflineChangeAlert) {
+            Button("Clock Out Without Request") {
+                doClockOut()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Requesting a change requires an internet connection. You can clock out now and submit a change request when you\u{2019}re back online.")
+        }
     }
 
     // MARK: - Summary row helper

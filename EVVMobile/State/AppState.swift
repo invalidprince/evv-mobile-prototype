@@ -326,7 +326,7 @@ final class AppState: ObservableObject {
             // If offline or no server visit ID yet (offline clock-in), queue immediately
             if !effectivelyOnline || allVisitIds.isEmpty {
                 for vid in allVisitIds {
-                    enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid)
+                    enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid, signatureSkipReason: signatureSkipReason)
                 }
                 if allVisitIds.isEmpty {
                     // Visit was created offline, mark pending
@@ -350,7 +350,7 @@ final class AppState: ObservableObject {
                     if error.isNetworkError {
                         // Enqueue each visit for offline sync
                         for vid in allVisitIds {
-                            self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid)
+                            self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid, signatureSkipReason: signatureSkipReason)
                         }
                         self.scheduleAutoSync()
                         DiagnosticLogger.shared.logOffline("Clock-out queued (network error)")
@@ -952,7 +952,8 @@ final class AppState: ObservableObject {
                                         nbCategory: String? = nil, nbMinutes: Int? = nil,
                                         nbNote: String? = nil, nbDate: String? = nil,
                                         unschedClientIds: [String]? = nil, unschedService: String? = nil,
-                                        unschedClientName: String? = nil, localVisitId: UUID? = nil) {
+                                        unschedClientName: String? = nil, localVisitId: UUID? = nil,
+                                        signatureSkipReason: String? = nil) {
         let coords = LocationManager.shared.currentCoordinates
         let action = QueuedAction(
             id: UUID(),
@@ -971,20 +972,26 @@ final class AppState: ObservableObject {
             unschedClientIds: unschedClientIds,
             unschedService: unschedService,
             unschedClientName: unschedClientName,
-            localVisitId: localVisitId
+            localVisitId: localVisitId,
+            signatureSkipReason: signatureSkipReason
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
         DiagnosticLogger.shared.logOffline("Queued \(type.rawValue) action (queue size: \(offlineQueue.count))")
     }
 
+    /// Maximum retries for a server-rejected queued action before it is
+    /// permanently discarded with a user-visible error.
+    private static let maxQueueRetries = 3
+
     @MainActor
     private func replayOfflineQueue() async {
         guard !offlineQueue.isEmpty else { return }
         var remaining: [QueuedAction] = []
+        var failedPermanently: [QueuedAction] = []
         DiagnosticLogger.shared.logSync("Replaying \(offlineQueue.count) offline action(s)")
 
-        for action in offlineQueue {
+        for var action in offlineQueue {
             do {
                 switch action.type {
                 case .clockIn:
@@ -999,7 +1006,7 @@ final class AppState: ObservableObject {
                     }
                 case .clockOut:
                     if let visitId = action.visitId {
-                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy)
+                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signatureSkipReason: action.signatureSkipReason)
                     }
                 case .addNote:
                     if let visitId = action.visitId, let text = action.noteText {
@@ -1043,7 +1050,17 @@ final class AppState: ObservableObject {
                 if error.isNetworkError {
                     remaining.append(action)
                 } else {
-                    DiagnosticLogger.shared.logSync("Replay failed for \(action.type.rawValue): \(error.localizedDescription)")
+                    // Server rejected this action (4xx/5xx) — increment retry count
+                    action.retryCount += 1
+                    if action.retryCount >= Self.maxQueueRetries {
+                        // Permanently discard after max retries
+                        failedPermanently.append(action)
+                        DiagnosticLogger.shared.logSync("Permanently failed \(action.type.rawValue) after \(action.retryCount) retries: \(error.localizedDescription)")
+                    } else {
+                        // Keep for retry with incremented count
+                        remaining.append(action)
+                        DiagnosticLogger.shared.logSync("Replay failed for \(action.type.rawValue) (retry \(action.retryCount)/\(Self.maxQueueRetries)): \(error.localizedDescription)")
+                    }
                     surfaceServerError(error)
                 }
             } catch {
@@ -1051,12 +1068,23 @@ final class AppState: ObservableObject {
             }
         }
 
-        let synced = offlineQueue.count - remaining.count
+        let synced = offlineQueue.count - remaining.count - failedPermanently.count
         if synced > 0 {
             DiagnosticLogger.shared.logSync("\(synced) action(s) synced successfully")
         }
         if !remaining.isEmpty && synced > 0 {
             serverError = "\(synced) action(s) synced late"
+            showServerError = true
+        }
+
+        // Surface permanent failures to user
+        if !failedPermanently.isEmpty {
+            let clockOutFailures = failedPermanently.filter { $0.type == .clockOut }.count
+            if clockOutFailures > 0 {
+                serverError = "Clock-out sync failed \u{2014} please contact your supervisor"
+            } else {
+                serverError = "\(failedPermanently.count) queued action(s) failed permanently \u{2014} please contact your supervisor"
+            }
             showServerError = true
         }
 

@@ -325,6 +325,10 @@ struct QueuedAction: Identifiable, Codable {
     let unschedService: String?
     let unschedClientName: String?   // F2 unlisted individual name
     let localVisitId: UUID?          // Links to the optimistic local Visit
+    // Clock-out fields
+    let signatureSkipReason: String? // Signature skip reason for offline clock-out
+    // Retry tracking
+    var retryCount: Int
 
     enum ActionType: String, Codable {
         case clockIn
@@ -332,6 +336,64 @@ struct QueuedAction: Identifiable, Codable {
         case addNote
         case nonBillable
         case unscheduledVisit
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, type, shiftId, visitId, lat, lng, accuracy, createdAt
+        case noteText, nbCategory, nbMinutes, nbNote, nbDate
+        case unschedClientIds, unschedService, unschedClientName, localVisitId
+        case signatureSkipReason, retryCount
+    }
+
+    init(id: UUID, type: ActionType, shiftId: Int?, visitId: String?,
+         lat: Double?, lng: Double?, accuracy: Double?, createdAt: Date,
+         noteText: String? = nil, nbCategory: String? = nil, nbMinutes: Int? = nil,
+         nbNote: String? = nil, nbDate: String? = nil,
+         unschedClientIds: [String]? = nil, unschedService: String? = nil,
+         unschedClientName: String? = nil, localVisitId: UUID? = nil,
+         signatureSkipReason: String? = nil, retryCount: Int = 0) {
+        self.id = id
+        self.type = type
+        self.shiftId = shiftId
+        self.visitId = visitId
+        self.lat = lat
+        self.lng = lng
+        self.accuracy = accuracy
+        self.createdAt = createdAt
+        self.noteText = noteText
+        self.nbCategory = nbCategory
+        self.nbMinutes = nbMinutes
+        self.nbNote = nbNote
+        self.nbDate = nbDate
+        self.unschedClientIds = unschedClientIds
+        self.unschedService = unschedService
+        self.unschedClientName = unschedClientName
+        self.localVisitId = localVisitId
+        self.signatureSkipReason = signatureSkipReason
+        self.retryCount = retryCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        type = try c.decode(ActionType.self, forKey: .type)
+        shiftId = try c.decodeIfPresent(Int.self, forKey: .shiftId)
+        visitId = try c.decodeIfPresent(String.self, forKey: .visitId)
+        lat = try c.decodeIfPresent(Double.self, forKey: .lat)
+        lng = try c.decodeIfPresent(Double.self, forKey: .lng)
+        accuracy = try c.decodeIfPresent(Double.self, forKey: .accuracy)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        noteText = try c.decodeIfPresent(String.self, forKey: .noteText)
+        nbCategory = try c.decodeIfPresent(String.self, forKey: .nbCategory)
+        nbMinutes = try c.decodeIfPresent(Int.self, forKey: .nbMinutes)
+        nbNote = try c.decodeIfPresent(String.self, forKey: .nbNote)
+        nbDate = try c.decodeIfPresent(String.self, forKey: .nbDate)
+        unschedClientIds = try c.decodeIfPresent([String].self, forKey: .unschedClientIds)
+        unschedService = try c.decodeIfPresent(String.self, forKey: .unschedService)
+        unschedClientName = try c.decodeIfPresent(String.self, forKey: .unschedClientName)
+        localVisitId = try c.decodeIfPresent(UUID.self, forKey: .localVisitId)
+        signatureSkipReason = try c.decodeIfPresent(String.self, forKey: .signatureSkipReason)
+        retryCount = (try? c.decodeIfPresent(Int.self, forKey: .retryCount)) ?? 0
     }
 }
 
