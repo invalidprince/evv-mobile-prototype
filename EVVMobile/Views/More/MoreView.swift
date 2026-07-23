@@ -136,6 +136,16 @@ struct MoreView: View {
                     }
                 }
 
+                // Legal
+                Section(header: Text("Legal")) {
+                    Link(destination: URL(string: "https://focus-nexus-production.up.railway.app/privacy")!) {
+                        Label("Privacy Policy", systemImage: "hand.raised")
+                    }
+                    Link(destination: URL(string: "https://focus-nexus-production.up.railway.app/support")!) {
+                        Label("Support", systemImage: "questionmark.circle")
+                    }
+                }
+
                 // Sign out
                 Section {
                     Button(role: .destructive, action: { appState.signOut() }) {

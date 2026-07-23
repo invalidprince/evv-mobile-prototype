@@ -48,5 +48,7 @@
 	<string>EVV requires your location at clock in and clock out to verify visits.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to sign in quickly.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
