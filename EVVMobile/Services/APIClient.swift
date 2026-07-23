@@ -152,6 +152,56 @@ struct NoteResponse: Decodable {
     let docStatus: String?
 }
 
+// MARK: - Structured Documentation
+
+struct ServerOutcome: Decodable, Identifiable {
+    let id: Int
+    let title: String
+    let goal: String?
+    let status: String?
+}
+
+struct ServerHealthInfo: Decodable {
+    let allergies: [String]?
+    let safetyAlerts: [String]?
+    let protocols: [String]?
+    let diagnosis: [String]?
+    let healthNotes: String?
+}
+
+struct ServerOutcomeEntry: Decodable {
+    let outcomeId: Int?
+    let title: String?
+    let promptLevel: String?
+    let frequency: Int?
+    let goalOpportunity: Bool?
+    let behaviorObserved: Bool?
+    let narrative: String?
+}
+
+struct ServerExistingNote: Decodable {
+    let type: String?
+    let outcomes: [ServerOutcomeEntry]?
+    let additionalComments: String?
+    let submittedAt: String?
+    let submittedBy: String?
+    // Legacy flat note fields
+    let comments: String?
+    let goals: [String]?
+}
+
+struct DocumentationTemplateResponse: Decodable {
+    let visitId: String?
+    let outcomes: [ServerOutcome]?
+    let healthInfo: ServerHealthInfo?
+    let existingNote: ServerExistingNote?
+}
+
+struct DocumentationSubmitResponse: Decodable {
+    let ok: Bool?
+    let docStatus: String?
+}
+
 // MARK: - Non-billable
 
 struct NonBillableEntry: Decodable, Identifiable {
@@ -564,6 +614,60 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(NoteResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Structured Documentation
+
+    func fetchDocumentation(visitId: String) async throws -> DocumentationTemplateResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch documentation"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(DocumentationTemplateResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String) async throws -> DocumentationSubmitResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        let body: [String: Any] = [
+            "outcomes": outcomes,
+            "additionalComments": additionalComments
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to submit documentation"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(DocumentationSubmitResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

@@ -518,6 +518,25 @@ final class AppState: ObservableObject {
         NoteReminderCenter.shared.cancelReminders(for: visitId)
     }
 
+    /// Mark documentation complete for a server visit (structured documentation flow).
+    /// Updates hasNote, serverDocStatus, and docComplete on matching visits across
+    /// todayVisits and historyVisits arrays so the UI reflects completion immediately.
+    func markServerDocComplete(visitId: UUID, serverVisitId: String, docStatus: String) {
+        let isComplete = docStatus.lowercased() == "complete"
+        if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+            historyVisits[i].hasNote = true
+            historyVisits[i].serverDocStatus = docStatus
+            if isComplete { historyVisits[i].docComplete = true }
+        }
+        if let i = todayVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+            todayVisits[i].hasNote = true
+            if isComplete { todayVisits[i].docComplete = true }
+        }
+        if isComplete {
+            markDocComplete(visitId: visitId)
+        }
+    }
+
     /// Demo affordance (More tab): fire a note reminder notification now.
     func sendTestNoteReminder(late: Bool) {
         let clientName = incompleteNoteVisits.first?.client.name ?? MockData.clients[0].name

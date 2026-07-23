@@ -138,13 +138,8 @@ struct TodayView: View {
                 NonBillableSheet()
             }
             .sheet(item: $noteVisit) { visit in
-                if appState.mode == .server {
-                    // B2 fix: server mode uses ServerAddNoteSheet
-                    ServerAddNoteSheet(visit: visit)
-                } else {
-                    NavigationView {
-                        DocumentationView(visit: visit)
-                    }
+                NavigationView {
+                    DocumentationView(visit: visit)
                 }
             }
         }
