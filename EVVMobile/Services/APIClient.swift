@@ -127,15 +127,13 @@ struct HistoryVisitsResponse: Decodable {
 // MARK: - Requests (GET /me/requests)
 
 struct ServerException: Decodable, Identifiable {
-    let id: Int?
+    let id: String
     let visitId: String?
-    let type: String?        // "time-fix" or "delete"
+    let type: String?        // "Time-change request" or "Delete request"
     let status: String?      // "new", "in progress", "resolved"
     let resolution: String?  // "approved", "denied", etc.
-    let reason: String?
-    let newIn: String?
-    let newOut: String?
-    let createdAt: String?
+    let detail: String?
+    let date: String?
 }
 
 struct RequestsResponse: Decodable {
@@ -178,7 +176,7 @@ struct NonBillableCreateResponse: Decodable {
 
 struct ExceptionResponse: Decodable {
     let ok: Bool?
-    let exceptionId: Int?
+    let exceptionId: String?
 }
 
 // MARK: - Individuals (for unscheduled visit selection)

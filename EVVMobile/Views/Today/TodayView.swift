@@ -84,6 +84,15 @@ struct TodayView: View {
                 }
                 .padding(16)
             }
+            .refreshable {
+                if appState.mode == .server {
+                    await appState.refreshServerShifts()
+                } else {
+                    appState.syncNow()
+                    // Brief delay so the spinner is visible in mock mode
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+            }
             .background(Theme.screenBackground.ignoresSafeArea())
             .navigationBarHidden(true)
             .sheet(item: $clockInTarget) { visit in

@@ -12,8 +12,16 @@ struct ClockInConfirmSheet: View {
     @State private var manualCity = ""
     @State private var manualState = ""
     @State private var manualZip = ""
+    @State private var isAcquiringLocation = false
+    @State private var locationReady = false
+    @ObservedObject private var locationManager = LocationManager.shared
 
-    private var gpsUnavailable: Bool { appState.simulateGPSUnavailable }
+    private var gpsUnavailable: Bool {
+        appState.simulateGPSUnavailable ||
+        locationManager.authorizationStatus == .denied ||
+        locationManager.authorizationStatus == .restricted ||
+        (!isAcquiringLocation && !locationReady && locationManager.locationError != nil)
+    }
 
     private var manualAddressValid: Bool {
         !manualCity.trimmingCharacters(in: .whitespaces).isEmpty &&
@@ -73,11 +81,19 @@ struct ClockInConfirmSheet: View {
                         Label("GPS", systemImage: gpsUnavailable ? "location.slash.fill" : "location.fill")
                         Spacer()
                         HStack(spacing: 6) {
-                            Circle().fill(gpsUnavailable ? Theme.danger : Theme.success)
-                                .frame(width: 8, height: 8)
-                            Text(gpsUnavailable ? "GPS unavailable" : "Location acquired")
-                                .font(.subheadline)
-                                .foregroundColor(gpsUnavailable ? Theme.danger : .primary)
+                            if isAcquiringLocation {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("Acquiring location…")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Circle().fill(gpsUnavailable ? Theme.danger : Theme.success)
+                                    .frame(width: 8, height: 8)
+                                Text(gpsUnavailable ? "GPS unavailable" : "Location acquired")
+                                    .font(.subheadline)
+                                    .foregroundColor(gpsUnavailable ? Theme.danger : .primary)
+                            }
                         }
                     }
                 }
@@ -109,6 +125,15 @@ struct ClockInConfirmSheet: View {
             }
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { dismiss() }) {
                 ClockInSuccessView()
+            }
+            .task {
+                // Acquire GPS location when the sheet appears
+                if !appState.simulateGPSUnavailable {
+                    isAcquiringLocation = true
+                    let loc = await locationManager.acquireLocation()
+                    isAcquiringLocation = false
+                    locationReady = loc != nil
+                }
             }
         }
     }

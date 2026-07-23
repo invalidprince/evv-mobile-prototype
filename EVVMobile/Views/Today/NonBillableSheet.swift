@@ -72,7 +72,7 @@ struct NonBillableSheet: View {
                 .keyboardType(.numberPad)
         }
 
-        Section(header: Text("Note")) {
+        Section(header: Text("Note (required)"), footer: note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Text("A note describing the activity is required.").foregroundColor(Theme.danger) : nil) {
             TextField("What are you working on?", text: $note)
         }
 
@@ -99,7 +99,7 @@ struct NonBillableSheet: View {
                         .font(.headline)
                 }
             }
-            .disabled(isSubmitting || (Int(minutesText) ?? 0) <= 0)
+            .disabled(isSubmitting || (Int(minutesText) ?? 0) <= 0 || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
@@ -142,6 +142,10 @@ struct NonBillableSheet: View {
     private func submitServer() {
         guard let minutes = Int(minutesText), minutes > 0 else {
             errorMessage = "Please enter a valid number of minutes."
+            return
+        }
+        guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Please enter a note describing the activity."
             return
         }
         isSubmitting = true

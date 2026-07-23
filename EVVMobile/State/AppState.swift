@@ -87,13 +87,14 @@ final class AppState: ObservableObject {
 
     /// All scheduled visits grouped by date for the Schedule tab (server mode).
     /// Returns an array of (date, label, visits) sorted by date.
+    /// Excludes in-progress and completed visits (Schedule = upcoming only).
     var groupedScheduleVisits: [(date: Date, label: String, visits: [Visit])] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let tomorrow = cal.date(byAdding: .day, value: 1, to: today)!
 
         var groups: [Date: [Visit]] = [:]
-        for visit in todayVisits {
+        for visit in todayVisits where visit.status == .scheduled {
             let day = cal.startOfDay(for: visit.scheduledStart)
             groups[day, default: []].append(visit)
         }
@@ -238,7 +239,14 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
-                    let visitInfo = try await APIClient.shared.clockIn(shiftId: shiftId)
+                    // Pass GPS coordinates if available
+                    let coords = LocationManager.shared.currentCoordinates
+                    let visitInfo = try await APIClient.shared.clockIn(
+                        shiftId: shiftId,
+                        lat: coords?.lat,
+                        lng: coords?.lng,
+                        accuracy: coords?.accuracy
+                    )
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].serverVisitId = visitInfo.id
                     }
@@ -362,9 +370,13 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
+                    let coords = LocationManager.shared.currentCoordinates
                     let response = try await APIClient.shared.createUnscheduledVisit(
                         clientIds: serverClientIds,
-                        service: apiServiceName
+                        service: apiServiceName,
+                        lat: coords?.lat,
+                        lng: coords?.lng,
+                        accuracy: coords?.accuracy
                     )
                     // Update the local visit with server IDs so clock-out works
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
@@ -417,9 +429,13 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
+                    let coords = LocationManager.shared.currentCoordinates
                     let response = try await APIClient.shared.createUnscheduledVisit(
                         clientIds: serverClientIds,
-                        service: nil  // no service
+                        service: nil,  // no service
+                        lat: coords?.lat,
+                        lng: coords?.lng,
+                        accuracy: coords?.accuracy
                     )
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
                         self.todayVisits[i].serverVisitId = response.visit.id
@@ -615,6 +631,7 @@ final class AppState: ObservableObject {
             self.isLoggedIn = true
         }
         await refreshServerShifts()
+        LocationManager.shared.requestPermission()
     }
 
     func loginWithServer(email: String) async throws {
@@ -636,6 +653,7 @@ final class AppState: ObservableObject {
             self.isLoggedIn = true
         }
         await refreshServerShifts()
+        LocationManager.shared.requestPermission()
     }
 
     // MARK: - Server individuals fetch
@@ -678,11 +696,18 @@ final class AppState: ObservableObject {
                 }
             }
 
-            // Preserve note-draft / doc-complete state
+            // Preserve note-draft / doc-complete state and precise actualStart for in-progress visits
             for i in newToday.indices {
                 if let existing = todayVisits.first(where: { $0.serverShiftId == newToday[i].serverShiftId }) {
                     newToday[i].docComplete = existing.docComplete
                     newToday[i].lateDocumentation = existing.lateDocumentation
+                    // Preserve the precise actualStart from the optimistic update;
+                    // the server only stores minute-precision times ("H:MM AM/PM")
+                    // so re-parsing would lose the seconds component.
+                    if existing.status == .inProgress, let existingStart = existing.actualStart,
+                       newToday[i].status == .inProgress {
+                        newToday[i].actualStart = existingStart
+                    }
                 }
             }
 
@@ -786,6 +811,7 @@ final class AppState: ObservableObject {
     private func parseShiftDateTime(dateStr: String, timeStr: String) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/New_York")
         formatter.dateFormat = "yyyy-MM-dd h:mm a"
         if let d = formatter.date(from: "\(dateStr) \(timeStr)") { return d }
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
@@ -952,14 +978,15 @@ final class AppState: ObservableObject {
         for exc in visitExceptions {
             let resolved = exc.status?.lowercased() == "resolved"
             let resolution = exc.resolution?.lowercased()
-            if exc.type == "time-fix" || exc.type == "time_fix" {
+            let typeLower = exc.type?.lowercased() ?? ""
+            if typeLower.contains("time") && (typeLower.contains("change") || typeLower.contains("fix")) {
                 if resolved {
                     tfStatus = resolution == "approved" ? .approved : .denied
                 } else {
                     tfStatus = .pending
                 }
             }
-            if exc.type == "delete" || exc.type == "delete-request" || exc.type == "delete_request" {
+            if typeLower.contains("delete") {
                 if resolved {
                     drStatus = resolution == "approved" ? .approved : .denied
                 } else {
