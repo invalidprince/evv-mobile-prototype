@@ -39,6 +39,8 @@ struct ServerVisitInfo: Decodable {
     let clockOut: String?
     let status: String?
     let minutes: Int?
+    let docStatus: String?
+    let hasNote: Bool?
 }
 
 struct ServerShiftVisitInfo: Decodable {
@@ -47,6 +49,8 @@ struct ServerShiftVisitInfo: Decodable {
     let clockIn: String?
     let clockOut: String?
     let status: String?
+    let docStatus: String?
+    let hasNote: Bool?
 }
 
 struct ServerShift: Decodable {

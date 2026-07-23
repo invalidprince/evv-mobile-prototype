@@ -779,7 +779,10 @@ final class AppState: ObservableObject {
             // Preserve note-draft / doc-complete state and precise actualStart for in-progress visits
             for i in newToday.indices {
                 if let existing = todayVisits.first(where: { $0.serverShiftId == newToday[i].serverShiftId }) {
-                    newToday[i].docComplete = existing.docComplete
+                    // Merge: complete if EITHER server or local says so (local may
+                    // have been set optimistically before server synced)
+                    newToday[i].docComplete = newToday[i].docComplete || existing.docComplete
+                    newToday[i].hasNote = newToday[i].hasNote || existing.hasNote
                     newToday[i].lateDocumentation = existing.lateDocumentation
                     // Preserve the precise actualStart from the optimistic update;
                     // the server only stores minute-precision times ("H:MM AM/PM")
@@ -867,6 +870,15 @@ final class AppState: ObservableObject {
             visit.serverVisitIds = myVisits.map { $0.id }
         } else if let vid = serverVisitId {
             visit.serverVisitIds = [vid]
+        }
+
+        // Set documentation status from server data (Bug 2+3 fix)
+        if let myVisit = s.myVisit {
+            visit.hasNote = myVisit.hasNote ?? false
+            if myVisit.docStatus?.lowercased() == "complete" {
+                visit.docComplete = true
+            }
+            visit.serverDocStatus = myVisit.docStatus
         }
 
         return visit
