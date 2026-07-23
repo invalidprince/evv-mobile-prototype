@@ -7,6 +7,10 @@ final class AppState: ObservableObject {
     @Published var isLoggedIn = false
     @Published var currentStaff = MockData.currentStaff
 
+    /// True when the user entered via "Demo Login" (TestFlight review mode).
+    /// All screens show the orange "DEMO MODE" banner. No real API calls.
+    @Published var isDemoMode = false
+
     // MARK: - Mode
     @Published var mode: AppMode = .mock
     @Published var serverStaff: ServerStaff?  // populated after server login
@@ -561,6 +565,7 @@ final class AppState: ObservableObject {
 
     func signOut() {
         isLoggedIn = false
+        isDemoMode = false
         mode = .mock
         serverStaff = nil
         serverToken = nil
@@ -573,6 +578,20 @@ final class AppState: ObservableObject {
         historyVisits = []
         serverExceptions = []
         serverOpenShifts = []
+    }
+
+    // MARK: - Demo login (TestFlight review)
+
+    func loginAsDemo() {
+        isDemoMode = true
+        mode = .mock
+        currentStaff = Staff(id: UUID(), name: "Demo Reviewer", role: "Direct Support Professional")
+        todayVisits = MockData.todaysVisits()
+        pastVisits = MockData.pastVisits()
+        openShifts = MockData.openShifts()
+        pendingSyncCount = 0
+        isLoggedIn = true
+        startTimerIfNeeded()
     }
 
     // MARK: - Server login

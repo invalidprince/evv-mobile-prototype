@@ -132,7 +132,7 @@ struct ServerOpenShiftsSection: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(shift.individual.name)
                                 .font(.headline)
-                            Text(shift.service)
+                            Text(shift.service ?? "")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             if let location = shift.location, !location.isEmpty {

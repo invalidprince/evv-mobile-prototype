@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// Set to `false` and rebuild to remove the Demo Login button
+/// (e.g. before publishing to the unlisted App Store).
+let DEMO_LOGIN_ENABLED = true
+
 struct LoginView: View {
     @EnvironmentObject var appState: AppState
     @State private var isGoogleLoggingIn = false
@@ -57,6 +61,19 @@ struct LoginView: View {
                 Text("Use your @fbhi.net Google account")
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                // MARK: - Demo Login (TestFlight review)
+                if DEMO_LOGIN_ENABLED {
+                    Button(action: { appState.loginAsDemo() }) {
+                        Text("Demo Login")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 40)
+                            .background(Color(.systemGray5))
+                            .cornerRadius(10)
+                    }
+                }
             }
             .padding(.horizontal, 32)
 

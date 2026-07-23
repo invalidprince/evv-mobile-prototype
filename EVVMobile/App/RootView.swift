@@ -24,8 +24,10 @@ struct MainTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if appState.mode == .mock {
-                DemoModeBanner()
+            if appState.isDemoMode {
+                DemoModeBanner(isReviewDemo: true)
+            } else if appState.mode == .mock {
+                DemoModeBanner(isReviewDemo: false)
             }
             SyncStatusBanner()
             TabView {
@@ -45,11 +47,13 @@ struct MainTabView: View {
 // MARK: - Demo Mode Banner
 
 struct DemoModeBanner: View {
+    var isReviewDemo: Bool = false
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "theatermasks.fill")
+            Image(systemName: isReviewDemo ? "exclamationmark.triangle.fill" : "theatermasks.fill")
                 .font(.caption2)
-            Text("DEMO — sample data, nothing syncs")
+            Text(isReviewDemo ? "DEMO MODE — Not real data" : "DEMO — sample data, nothing syncs")
                 .font(.caption.weight(.semibold))
         }
         .foregroundColor(.white)
