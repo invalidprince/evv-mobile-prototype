@@ -195,6 +195,7 @@ struct DocumentationTemplateResponse: Decodable {
     let outcomes: [ServerOutcome]?
     let healthInfo: ServerHealthInfo?
     let existingNote: ServerExistingNote?
+    let aiAssistEnabled: Bool?
 }
 
 struct DocumentationSubmitResponse: Decodable {
@@ -642,16 +643,21 @@ actor APIClient {
         }
     }
 
-    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String) async throws -> DocumentationSubmitResponse {
+    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "outcomes": outcomes,
             "additionalComments": additionalComments
         ]
+        if aiAssisted {
+            body["aiAssisted"] = true
+            if let inputText = aiInputText { body["aiInputText"] = inputText }
+            if let model = aiModel { body["aiModel"] = model }
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = 15
 
@@ -668,6 +674,33 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(DocumentationSubmitResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - AI Assist Draft
+
+    func generateAIDraft(visitId: String, inputText: String) async throws -> AIDraftResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/ai-draft")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        let body: [String: Any] = ["inputText": inputText]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 25 // AI calls can take up to 20s server-side
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "AI draft failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(AIDraftResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

@@ -18,6 +18,16 @@ struct DocumentationView: View {
     @State private var isSubmitting = false
     @State private var submitError: String?
 
+    // AI Assist state
+    @State private var aiAssistEnabled = false
+    @State private var showAIAssistSheet = false
+    @State private var aiDraftApplied = false
+    @State private var aiInputText: String?
+    @State private var aiModel: String?
+    @State private var aiDraftedOutcomeIds: Set<UUID> = []  // Outcome IDs populated by AI
+    @State private var aiUnaddressedOutcomeIds: Set<Int> = []  // Server outcome IDs not addressed
+    @State private var sectionsViewed: Set<UUID> = []  // Track which AI-drafted sections staff viewed
+
     // Unified outcomes: server or mock
     private var effectiveOutcomes: [Outcome] {
         if appState.mode == .server {
@@ -50,7 +60,13 @@ struct DocumentationView: View {
         // If no outcomes, just additional comments is enough (or just submittable)
         let outcomes = effectiveOutcomes
         if outcomes.isEmpty { return true }
-        return note.isComplete(for: outcomes)
+        let baseComplete = note.isComplete(for: outcomes)
+        // If AI draft was used, require staff to have viewed each drafted section
+        if aiDraftApplied && !aiDraftedOutcomeIds.isEmpty {
+            let allViewed = aiDraftedOutcomeIds.allSatisfy { sectionsViewed.contains($0) }
+            return baseComplete && allViewed
+        }
+        return baseComplete
     }
 
     var body: some View {
@@ -87,6 +103,58 @@ struct DocumentationView: View {
                 }
 
                 if !isLoadingTemplate && loadError == nil {
+                    // AI Assist button (server mode, online, feature flag on)
+                    if appState.mode == .server && appState.effectivelyOnline && aiAssistEnabled && !aiDraftApplied {
+                        Button(action: { showAIAssistSheet = true }) {
+                            HStack(spacing: 8) {
+                                Text("✨")
+                                Text("AI Assist")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("Describe your visit → auto-fill form")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                LinearGradient(
+                                    colors: [Theme.primary.opacity(0.08), Theme.primary.opacity(0.04)],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Theme.primary.opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    // AI draft applied banner
+                    if aiDraftApplied {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .foregroundColor(Theme.primary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("AI draft applied")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(Theme.primary)
+                                Text("Review each section before submitting. Edit anything that needs changing.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(Theme.primary.opacity(0.06))
+                        .cornerRadius(10)
+                    }
+
                     // Read-only health & safety info about the individual
                     DocSection(title: "Health & Safety", icon: "cross.case", expanded: $expanded) {
                         HealthSafetyInfoView(client: effectiveClient)
@@ -96,7 +164,57 @@ struct DocumentationView: View {
                         DocSection(title: "Outcomes & Goals", icon: "target", expanded: $expanded) {
                             VStack(spacing: 16) {
                                 ForEach(effectiveOutcomes) { outcome in
-                                    OutcomeEntryView(outcome: outcome, entry: entryBinding(for: outcome))
+                                    VStack(spacing: 0) {
+                                        // AI draft badge or unaddressed chip
+                                        if aiDraftApplied {
+                                            if let so = serverOutcomes.first(where: { $0.localId == outcome.id }),
+                                               aiUnaddressedOutcomeIds.contains(so.serverId) {
+                                                HStack(spacing: 6) {
+                                                    Image(systemName: "exclamationmark.circle.fill")
+                                                        .font(.caption2)
+                                                        .foregroundColor(Theme.danger)
+                                                    Text("Not mentioned — please complete")
+                                                        .font(.caption2.weight(.semibold))
+                                                        .foregroundColor(Theme.danger)
+                                                    Spacer()
+                                                }
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                                .background(Theme.danger.opacity(0.08))
+                                                .cornerRadius(8)
+                                            } else if aiDraftedOutcomeIds.contains(outcome.id) {
+                                                HStack(spacing: 6) {
+                                                    Image(systemName: "sparkles")
+                                                        .font(.caption2)
+                                                        .foregroundColor(Theme.primary)
+                                                    Text(sectionsViewed.contains(outcome.id) ? "AI draft — reviewed ✓" : "AI draft — tap to review")
+                                                        .font(.caption2.weight(.medium))
+                                                        .foregroundColor(Theme.primary)
+                                                    Spacer()
+                                                    if !sectionsViewed.contains(outcome.id) {
+                                                        Image(systemName: "eye")
+                                                            .font(.caption2)
+                                                            .foregroundColor(Theme.primary)
+                                                    }
+                                                }
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                                .background(Theme.primary.opacity(0.06))
+                                                .cornerRadius(8)
+                                                .onTapGesture {
+                                                    sectionsViewed.insert(outcome.id)
+                                                }
+                                            }
+                                        }
+
+                                        OutcomeEntryView(outcome: outcome, entry: entryBinding(for: outcome))
+                                            .onTapGesture {
+                                                // Mark section as viewed when interacted with
+                                                if aiDraftApplied && aiDraftedOutcomeIds.contains(outcome.id) {
+                                                    sectionsViewed.insert(outcome.id)
+                                                }
+                                            }
+                                    }
                                 }
                             }
                         }
@@ -112,6 +230,15 @@ struct DocumentationView: View {
                     }
 
                     if !effectiveOutcomes.isEmpty && !noteComplete {
+                        if aiDraftApplied && !aiDraftedOutcomeIds.isEmpty {
+                            let unviewed = aiDraftedOutcomeIds.subtracting(sectionsViewed)
+                            if !unviewed.isEmpty {
+                                Label("Review all AI-drafted sections before submitting (\(unviewed.count) remaining).", systemImage: "eye")
+                                    .font(.caption)
+                                    .foregroundColor(Theme.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                         Label("To submit, each goal needs a data point and a narrative.", systemImage: "info.circle")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -177,6 +304,13 @@ struct DocumentationView: View {
                 }
             }
         }
+        .sheet(isPresented: $showAIAssistSheet) {
+            if let svid = visit.serverVisitId {
+                AIAssistSheet(serverVisitId: svid) { draftResponse in
+                    applyAIDraft(draftResponse)
+                }
+            }
+        }
         .alert("Documentation submitted", isPresented: $showSubmitted) {
             Button("OK") { dismiss() }
         } message: {
@@ -219,6 +353,9 @@ struct DocumentationView: View {
                     diagnosis: health?.diagnosis ?? [],
                     healthNotes: health?.healthNotes ?? ""
                 )
+
+                // Capture AI Assist feature flag
+                aiAssistEnabled = template.aiAssistEnabled ?? false
 
                 // Load existing structured note if present and draft is empty
                 if let existing = template.existingNote, note.additionalComments.isEmpty && note.outcomeEntries.isEmpty {
@@ -264,6 +401,49 @@ struct DocumentationView: View {
         }
     }
 
+    // MARK: - AI Draft application
+
+    private func applyAIDraft(_ response: AIDraftResponse) {
+        let draft = response.draft
+        aiModel = response.model
+
+        // Store the unaddressed outcome IDs
+        aiUnaddressedOutcomeIds = Set(draft.unaddressed ?? [])
+
+        // Apply outcome entries from the draft
+        var draftedIds = Set<UUID>()
+        for draftOutcome in draft.outcomes ?? [] {
+            guard let serverId = draftOutcome.outcomeId,
+                  let match = serverOutcomes.first(where: { $0.serverId == serverId }) else { continue }
+
+            // Skip if this outcome was unaddressed (narrative is nil/empty)
+            let narrative = draftOutcome.narrative ?? ""
+            if narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+
+            var oe = OutcomeEntry()
+            if let pl = draftOutcome.promptLevel {
+                oe.promptLevel = PromptLevel.allCases.first(where: { $0.rawValue == pl })
+            }
+            oe.frequency = draftOutcome.frequency ?? 0
+            oe.goalOpportunity = draftOutcome.goalOpportunity ?? false
+            oe.behaviorObserved = draftOutcome.behaviorObserved ?? false
+            oe.narrative = narrative
+            note.outcomeEntries[match.localId] = oe
+            draftedIds.insert(match.localId)
+        }
+
+        // Apply additional comments if present
+        if let comments = draft.additionalComments, !comments.isEmpty {
+            note.additionalComments = comments
+        }
+
+        aiDraftedOutcomeIds = draftedIds
+        aiDraftApplied = true
+
+        // Expand outcomes section to show the draft
+        expanded.insert("Outcomes & Goals")
+    }
+
     // MARK: - Server documentation submission
 
     private func submitServerDocumentation() async {
@@ -293,7 +473,10 @@ struct DocumentationView: View {
             let response = try await APIClient.shared.submitDocumentation(
                 visitId: svid,
                 outcomes: outcomePayload,
-                additionalComments: note.additionalComments
+                additionalComments: note.additionalComments,
+                aiAssisted: aiDraftApplied,
+                aiInputText: aiInputText,
+                aiModel: aiModel
             )
             await MainActor.run {
                 isSubmitting = false

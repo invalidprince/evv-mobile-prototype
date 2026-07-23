@@ -22,6 +22,7 @@
 		3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D3E24BD9E02EC479B9857CB /* HistoryView.swift */; };
 		409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB38EF84FCABD2F0387E43A /* MoreView.swift */; };
 		467435D004963F49496C6552 /* OutcomeEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */; };
+		AA11BB22CC33DD44EE55FF66 /* AIAssistSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF67 /* AIAssistSheet.swift */; };
 		4A6A747B079FB1628A9C55F7 /* GoogleAuthConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7A1084E030E40E8EB9A847 /* GoogleAuthConfig.swift */; };
 		50AF4BDE023315495011FC02 /* UpNextCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEE6D26CF44F431431C7AEB9 /* UpNextCard.swift */; };
 		58AFC516A6F73F772741950F /* ShiftDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB7F8A3BA2F6608BCA11131E /* ShiftDetailView.swift */; };
@@ -65,6 +66,7 @@
 		40799C6376F8F4D66B813AA7 /* HistoryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRow.swift; sourceTree = "<group>"; };
 		423A0C42C98BB37FAF17E3F7 /* NonBillableSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NonBillableSheet.swift; sourceTree = "<group>"; };
 		42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeEntryView.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55FF67 /* AIAssistSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistSheet.swift; sourceTree = "<group>"; };
 		59D85001A0AB1FEC33B1F24F /* ClockInSuccessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockInSuccessView.swift; sourceTree = "<group>"; };
 		61B6FB73632F6CB7629FBADD /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		675AD19AC65A993CD6C7C0A2 /* DeleteRequestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeleteRequestSheet.swift; sourceTree = "<group>"; };
@@ -146,6 +148,7 @@
 		34525589EEE9E8EFDA13285E /* Documentation */ = {
 			isa = PBXGroup;
 			children = (
+				AA11BB22CC33DD44EE55FF67 /* AIAssistSheet.swift */,
 				EB0A91BD032961677F97C2DA /* DocumentationView.swift */,
 				42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */,
 			);
@@ -395,6 +398,7 @@
 				615EA70CC51666385E28D72B /* NonBillableSheet.swift in Sources */,
 				A1B2C3D4E5F60718A9B0C1D2 /* LocationManager.swift in Sources */,
 				39FC467AD6772FA6EB3FDCB9 /* NoteReminderCenter.swift in Sources */,
+				AA11BB22CC33DD44EE55FF66 /* AIAssistSheet.swift in Sources */,
 				467435D004963F49496C6552 /* OutcomeEntryView.swift in Sources */,
 				03C9325CFE630FE48739DE85 /* RootView.swift in Sources */,
 				CC0AC163EF01DAAC3898CAC7 /* ScheduleView.swift in Sources */,
