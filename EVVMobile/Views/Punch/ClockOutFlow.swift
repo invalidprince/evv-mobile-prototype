@@ -16,7 +16,7 @@ struct ClockOutFlow: View {
     @State private var signatureSkipReason: String?
     @State private var showTimeFix = false
     @State private var timeFixWasSubmitted = false
-    @State private var showOfflineChangeAlert = false
+    @State private var timeFixQueuedOffline = false
 
     private var docAlreadyComplete: Bool {
         appState.isDocComplete(visitId: visit.id)
@@ -53,6 +53,9 @@ struct ClockOutFlow: View {
             .sheet(isPresented: $showTimeFix, onDismiss: {
                 // B4: If a change request was submitted, auto-confirm clock out
                 if timeFixWasSubmitted {
+                    if !appState.effectivelyOnline {
+                        timeFixQueuedOffline = true
+                    }
                     doClockOut()
                 }
             }) {
@@ -163,11 +166,7 @@ struct ClockOutFlow: View {
                     .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
 
                     Button(action: {
-                        if !appState.effectivelyOnline {
-                            showOfflineChangeAlert = true
-                        } else {
-                            showTimeFix = true
-                        }
+                        showTimeFix = true
                     }) {
                         Label("Request a Change", systemImage: "pencil.circle")
                     }
@@ -178,14 +177,6 @@ struct ClockOutFlow: View {
             }
         }
         .background(Theme.screenBackground.ignoresSafeArea())
-        .alert("No Internet Connection", isPresented: $showOfflineChangeAlert) {
-            Button("Clock Out Without Request") {
-                doClockOut()
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Requesting a change requires an internet connection. You can clock out now and submit a change request when you\u{2019}re back online.")
-        }
     }
 
     // MARK: - Summary row helper
@@ -246,6 +237,11 @@ struct ClockOutFlow: View {
                 Text(completedVisit?.durationText ?? "")
                     .font(.title2)
                     .foregroundColor(.white.opacity(0.9))
+                if timeFixQueuedOffline {
+                    Text("Change request will sync when you\u{2019}re back online.")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.85))
+                }
                 if thenClockIntoNext != nil {
                     Text("Clocking into next visit…")
                         .font(.subheadline)

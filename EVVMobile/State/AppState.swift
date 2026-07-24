@@ -325,12 +325,16 @@ final class AppState: ObservableObject {
 
             // If offline or no server visit ID yet (offline clock-in), queue immediately
             if !effectivelyOnline || allVisitIds.isEmpty {
-                for vid in allVisitIds {
-                    enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid, signatureSkipReason: signatureSkipReason)
-                }
                 if allVisitIds.isEmpty {
-                    // Visit was created offline, mark pending
+                    // Visit was created offline; queue with local ID for resolution during replay
+                    enqueueOfflineAction(.clockOut, shiftId: nil, visitId: nil,
+                                         localVisitId: visitId, signatureSkipReason: signatureSkipReason)
                     DiagnosticLogger.shared.logOffline("Clock-out queued (no server visit ID yet)")
+                } else {
+                    for vid in allVisitIds {
+                        enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid,
+                                             localVisitId: visitId, signatureSkipReason: signatureSkipReason)
+                    }
                 }
                 scheduleAutoSync()
                 return finished
@@ -350,7 +354,8 @@ final class AppState: ObservableObject {
                     if error.isNetworkError {
                         // Enqueue each visit for offline sync
                         for vid in allVisitIds {
-                            self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid, signatureSkipReason: signatureSkipReason)
+                            self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid,
+                                                     localVisitId: visitId, signatureSkipReason: signatureSkipReason)
                         }
                         self.scheduleAutoSync()
                         DiagnosticLogger.shared.logOffline("Clock-out queued (network error)")
@@ -953,7 +958,26 @@ final class AppState: ObservableObject {
                                         nbNote: String? = nil, nbDate: String? = nil,
                                         unschedClientIds: [String]? = nil, unschedService: String? = nil,
                                         unschedClientName: String? = nil, localVisitId: UUID? = nil,
-                                        signatureSkipReason: String? = nil) {
+                                        signatureSkipReason: String? = nil,
+                                        timeFixNewIn: String? = nil, timeFixNewOut: String? = nil,
+                                        timeFixReason: String? = nil) {
+        // DEDUP: clock-out — keep first per server visitId
+        if type == .clockOut, let vid = visitId,
+           offlineQueue.contains(where: { $0.type == .clockOut && $0.visitId == vid }) {
+            DiagnosticLogger.shared.logOffline("Duplicate clock-out for visit \(vid) skipped")
+            return
+        }
+        // DEDUP: clock-in — keep first per shiftId
+        if type == .clockIn, let sid = shiftId,
+           offlineQueue.contains(where: { $0.type == .clockIn && $0.shiftId == sid }) {
+            DiagnosticLogger.shared.logOffline("Duplicate clock-in for shift \(sid) skipped")
+            return
+        }
+        // DEDUP: time fix — keep LAST per localVisitId (replace existing)
+        if type == .timeFix, let lid = localVisitId {
+            offlineQueue.removeAll { $0.type == .timeFix && $0.localVisitId == lid }
+        }
+
         let coords = LocationManager.shared.currentCoordinates
         let action = QueuedAction(
             id: UUID(),
@@ -973,11 +997,24 @@ final class AppState: ObservableObject {
             unschedService: unschedService,
             unschedClientName: unschedClientName,
             localVisitId: localVisitId,
-            signatureSkipReason: signatureSkipReason
+            signatureSkipReason: signatureSkipReason,
+            timeFixNewIn: timeFixNewIn,
+            timeFixNewOut: timeFixNewOut,
+            timeFixReason: timeFixReason
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
         DiagnosticLogger.shared.logOffline("Queued \(type.rawValue) action (queue size: \(offlineQueue.count))")
+    }
+
+    /// Queue a time-fix request for offline replay. Called from TimeFixSheet
+    /// when the user submits a change request without connectivity.
+    func enqueueOfflineTimeFix(localVisitId: UUID, serverVisitId: String?,
+                               newIn: String, newOut: String, reason: String) {
+        enqueueOfflineAction(.timeFix, shiftId: nil, visitId: serverVisitId,
+                             localVisitId: localVisitId,
+                             timeFixNewIn: newIn, timeFixNewOut: newOut, timeFixReason: reason)
+        scheduleAutoSync()
     }
 
     /// Maximum retries for a server-rejected queued action before it is
@@ -987,26 +1024,87 @@ final class AppState: ObservableObject {
     @MainActor
     private func replayOfflineQueue() async {
         guard !offlineQueue.isEmpty else { return }
+
+        // STEP 1: Sort by action type priority (clock-in/unscheduled first,
+        // clock-out next, then notes/time-fixes/non-billable last).
+        let priorityOrder: [QueuedAction.ActionType] = [
+            .clockIn, .unscheduledVisit, .clockOut, .addNote, .timeFix, .nonBillable
+        ]
+        let sorted = offlineQueue.sorted { a, b in
+            let pa = priorityOrder.firstIndex(of: a.type) ?? priorityOrder.count
+            let pb = priorityOrder.firstIndex(of: b.type) ?? priorityOrder.count
+            return pa < pb
+        }
+
+        // STEP 2: Replay-time dedup guard — same visitId + same type → skip duplicate.
+        var processedKeys = Set<String>()
+        var deduplicated: [QueuedAction] = []
+        // For timeFix, keep last per localVisitId (reverse scan for latest).
+        var seenTimeFixLocal = Set<UUID>()
+        let reversedTimeFixes = sorted.filter { $0.type == .timeFix }.reversed()
+        var keptTimeFixIds = Set<UUID>()
+        for tf in reversedTimeFixes {
+            if let lid = tf.localVisitId {
+                if seenTimeFixLocal.contains(lid) { continue }
+                seenTimeFixLocal.insert(lid)
+            }
+            keptTimeFixIds.insert(tf.id)
+        }
+
+        for action in sorted {
+            if action.type == .timeFix {
+                if !keptTimeFixIds.contains(action.id) {
+                    DiagnosticLogger.shared.logSync("Dedup: skipping superseded time-fix for visit \(action.localVisitId?.uuidString ?? "unknown")")
+                    continue
+                }
+            } else {
+                // General dedup: same type + same visitId → skip
+                let key = "\(action.type.rawValue)-\(action.visitId ?? action.localVisitId?.uuidString ?? UUID().uuidString)"
+                if processedKeys.contains(key) {
+                    DiagnosticLogger.shared.logSync("Dedup: skipping duplicate \(action.type.rawValue) for \(action.visitId ?? "local")")
+                    continue
+                }
+                processedKeys.insert(key)
+            }
+            deduplicated.append(action)
+        }
+
+        // STEP 3: Process actions, tracking localVisitId → serverVisitId resolution.
         var remaining: [QueuedAction] = []
         var failedPermanently: [QueuedAction] = []
-        DiagnosticLogger.shared.logSync("Replaying \(offlineQueue.count) offline action(s)")
+        var localToServerVisitId: [UUID: String] = [:]
 
-        for var action in offlineQueue {
+        DiagnosticLogger.shared.logSync("Replaying \(deduplicated.count) offline action(s) (from \(offlineQueue.count) queued)")
+
+        for var action in deduplicated {
             do {
                 switch action.type {
                 case .clockIn:
                     if let shiftId = action.shiftId {
                         let visitInfo = try await APIClient.shared.clockIn(shiftId: shiftId, lat: action.lat, lng: action.lng, accuracy: action.accuracy)
                         // Update local visit with server visit ID
-                        if let localId = action.localVisitId,
-                           let i = todayVisits.firstIndex(where: { $0.id == localId }) {
-                            todayVisits[i].serverVisitId = visitInfo.id
-                            todayVisits[i].syncState = .synced
+                        if let localId = action.localVisitId {
+                            localToServerVisitId[localId] = visitInfo.id
+                            if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                                todayVisits[i].serverVisitId = visitInfo.id
+                                todayVisits[i].syncState = .synced
+                            }
                         }
                     }
                 case .clockOut:
-                    if let visitId = action.visitId {
+                    // Resolve visitId: direct or via local→server mapping
+                    var resolvedVisitId = action.visitId
+                    if resolvedVisitId == nil, let localId = action.localVisitId {
+                        resolvedVisitId = localToServerVisitId[localId]
+                            ?? todayVisits.first(where: { $0.id == localId })?.serverVisitId
+                    }
+                    if let visitId = resolvedVisitId {
                         _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signatureSkipReason: action.signatureSkipReason)
+                    } else {
+                        // Can't resolve yet — keep for next sync
+                        remaining.append(action)
+                        DiagnosticLogger.shared.logSync("Clock-out deferred: visit ID not resolved for local \(action.localVisitId?.uuidString ?? "nil")")
+                        continue
                     }
                 case .addNote:
                     if let visitId = action.visitId, let text = action.noteText {
@@ -1031,19 +1129,44 @@ final class AppState: ObservableObject {
                             lat: action.lat, lng: action.lng, accuracy: action.accuracy,
                             unlistedName: action.unschedClientName)
                         // Update local visit with real server IDs
-                        if let localId = action.localVisitId,
-                           let i = todayVisits.firstIndex(where: { $0.id == localId }) {
-                            todayVisits[i].serverVisitId = response.visit.id
-                            if let allVisits = response.visits, allVisits.count > 1 {
-                                todayVisits[i].serverVisitIds = allVisits.map { $0.id }
-                            } else {
-                                todayVisits[i].serverVisitIds = [response.visit.id]
+                        if let localId = action.localVisitId {
+                            localToServerVisitId[localId] = response.visit.id
+                            if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                                todayVisits[i].serverVisitId = response.visit.id
+                                if let allVisits = response.visits, allVisits.count > 1 {
+                                    todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                                } else {
+                                    todayVisits[i].serverVisitIds = [response.visit.id]
+                                }
+                                if let shift = response.shift {
+                                    todayVisits[i].serverShiftId = shift.id
+                                }
+                                todayVisits[i].syncState = .synced
                             }
-                            if let shift = response.shift {
-                                todayVisits[i].serverShiftId = shift.id
-                            }
-                            todayVisits[i].syncState = .synced
                         }
+                    }
+                case .timeFix:
+                    // Resolve visitId: direct or via local→server mapping
+                    var resolvedVisitId = action.visitId
+                    if resolvedVisitId == nil, let localId = action.localVisitId {
+                        resolvedVisitId = localToServerVisitId[localId]
+                            ?? todayVisits.first(where: { $0.id == localId })?.serverVisitId
+                    }
+                    if let visitId = resolvedVisitId {
+                        _ = try await APIClient.shared.requestTimeFix(
+                            visitId: visitId,
+                            newIn: action.timeFixNewIn,
+                            newOut: action.timeFixNewOut,
+                            reason: action.timeFixReason ?? "")
+                        // Update status on matching history visit
+                        if let i = historyVisits.firstIndex(where: { $0.serverVisitId == visitId }) {
+                            historyVisits[i].timeFixStatus = .pending
+                        }
+                    } else {
+                        // Can't resolve yet — keep for next sync
+                        remaining.append(action)
+                        DiagnosticLogger.shared.logSync("Time-fix deferred: visit ID not resolved for local \(action.localVisitId?.uuidString ?? "nil")")
+                        continue
                     }
                 }
             } catch let error as APIError {
@@ -1288,17 +1411,38 @@ final class AppState: ObservableObject {
 
     // MARK: - Server Time Fix
 
-    /// Returns nil on success, or an error message on failure.
-    func submitServerTimeFix(visitId: UUID, serverVisitId: String, newIn: String?, newOut: String?, reason: String) async -> String? {
-        do {
-            _ = try await APIClient.shared.requestTimeFix(visitId: serverVisitId, newIn: newIn, newOut: newOut, reason: reason)
+    /// Returns nil on success (or queued offline), or an error message on failure.
+    func submitServerTimeFix(visitId: UUID, serverVisitId: String?, newIn: String?, newOut: String?, reason: String) async -> String? {
+        // Offline: queue for later replay
+        if !effectivelyOnline {
+            enqueueOfflineTimeFix(localVisitId: visitId, serverVisitId: serverVisitId,
+                                 newIn: newIn ?? "", newOut: newOut ?? "", reason: reason)
             await MainActor.run {
-                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                if let svid = serverVisitId,
+                   let i = historyVisits.firstIndex(where: { $0.serverVisitId == svid }) {
+                    historyVisits[i].timeFixStatus = .pending
+                }
+            }
+            return nil
+        }
+        guard let svid = serverVisitId else {
+            return "Visit not synced yet"
+        }
+        do {
+            _ = try await APIClient.shared.requestTimeFix(visitId: svid, newIn: newIn, newOut: newOut, reason: reason)
+            await MainActor.run {
+                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == svid }) {
                     historyVisits[i].timeFixStatus = .pending
                 }
             }
             return nil
         } catch let error as APIError {
+            if error.isNetworkError {
+                // Went offline between check and call; queue
+                enqueueOfflineTimeFix(localVisitId: visitId, serverVisitId: svid,
+                                     newIn: newIn ?? "", newOut: newOut ?? "", reason: reason)
+                return nil
+            }
             return error.localizedDescription
         } catch {
             return error.localizedDescription

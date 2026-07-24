@@ -13,6 +13,7 @@ struct TimeFixSheet: View {
     @State private var comment = ""
     @State private var isSubmitting = false
     @State private var showSuccess = false
+    @State private var showOfflineQueued = false
     @State private var errorMessage: String?
 
     private let reasons = [
@@ -104,11 +105,19 @@ struct TimeFixSheet: View {
             } message: {
                 Text("Your supervisor will review and respond.")
             }
+            .alert("Change request queued", isPresented: $showOfflineQueued) {
+                Button("OK") {
+                    onSubmitted?()
+                    dismiss()
+                }
+            } message: {
+                Text("Your change request will be submitted when you\u{2019}re back online.")
+            }
         }
     }
 
     private func submit() {
-        if appState.mode == .server, let svid = visit.serverVisitId {
+        if appState.mode == .server {
             isSubmitting = true
             errorMessage = nil
 
@@ -117,6 +126,26 @@ struct TimeFixSheet: View {
             let newInStr = formatter.string(from: newStart)
             let newOutStr = formatter.string(from: newEnd)
             let fullReason = comment.isEmpty ? reason : "\(reason): \(comment)"
+
+            // Offline: queue immediately and show offline confirmation
+            if !appState.effectivelyOnline {
+                appState.enqueueOfflineTimeFix(
+                    localVisitId: visit.id,
+                    serverVisitId: visit.serverVisitId,
+                    newIn: newInStr,
+                    newOut: newOutStr,
+                    reason: fullReason
+                )
+                isSubmitting = false
+                showOfflineQueued = true
+                return
+            }
+
+            guard let svid = visit.serverVisitId else {
+                errorMessage = "Visit not synced yet"
+                isSubmitting = false
+                return
+            }
 
             Task {
                 let err = await appState.submitServerTimeFix(

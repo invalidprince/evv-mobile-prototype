@@ -327,6 +327,10 @@ struct QueuedAction: Identifiable, Codable {
     let localVisitId: UUID?          // Links to the optimistic local Visit
     // Clock-out fields
     let signatureSkipReason: String? // Signature skip reason for offline clock-out
+    // Time fix fields (offline time-fix queuing)
+    let timeFixNewIn: String?
+    let timeFixNewOut: String?
+    let timeFixReason: String?
     // Retry tracking
     var retryCount: Int
 
@@ -336,13 +340,14 @@ struct QueuedAction: Identifiable, Codable {
         case addNote
         case nonBillable
         case unscheduledVisit
+        case timeFix
     }
 
     enum CodingKeys: String, CodingKey {
         case id, type, shiftId, visitId, lat, lng, accuracy, createdAt
         case noteText, nbCategory, nbMinutes, nbNote, nbDate
         case unschedClientIds, unschedService, unschedClientName, localVisitId
-        case signatureSkipReason, retryCount
+        case signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
     }
 
     init(id: UUID, type: ActionType, shiftId: Int?, visitId: String?,
@@ -351,7 +356,9 @@ struct QueuedAction: Identifiable, Codable {
          nbNote: String? = nil, nbDate: String? = nil,
          unschedClientIds: [String]? = nil, unschedService: String? = nil,
          unschedClientName: String? = nil, localVisitId: UUID? = nil,
-         signatureSkipReason: String? = nil, retryCount: Int = 0) {
+         signatureSkipReason: String? = nil,
+         timeFixNewIn: String? = nil, timeFixNewOut: String? = nil, timeFixReason: String? = nil,
+         retryCount: Int = 0) {
         self.id = id
         self.type = type
         self.shiftId = shiftId
@@ -370,6 +377,9 @@ struct QueuedAction: Identifiable, Codable {
         self.unschedClientName = unschedClientName
         self.localVisitId = localVisitId
         self.signatureSkipReason = signatureSkipReason
+        self.timeFixNewIn = timeFixNewIn
+        self.timeFixNewOut = timeFixNewOut
+        self.timeFixReason = timeFixReason
         self.retryCount = retryCount
     }
 
@@ -393,6 +403,9 @@ struct QueuedAction: Identifiable, Codable {
         unschedClientName = try c.decodeIfPresent(String.self, forKey: .unschedClientName)
         localVisitId = try c.decodeIfPresent(UUID.self, forKey: .localVisitId)
         signatureSkipReason = try c.decodeIfPresent(String.self, forKey: .signatureSkipReason)
+        timeFixNewIn = try c.decodeIfPresent(String.self, forKey: .timeFixNewIn)
+        timeFixNewOut = try c.decodeIfPresent(String.self, forKey: .timeFixNewOut)
+        timeFixReason = try c.decodeIfPresent(String.self, forKey: .timeFixReason)
         retryCount = (try? c.decodeIfPresent(Int.self, forKey: .retryCount)) ?? 0
     }
 }

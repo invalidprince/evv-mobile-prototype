@@ -224,6 +224,7 @@ private func queuedActionIcon(_ type: QueuedAction.ActionType) -> String {
     case .addNote: return "square.and.pencil"
     case .nonBillable: return "briefcase"
     case .unscheduledVisit: return "plus.circle"
+    case .timeFix: return "clock.arrow.2.circlepath"
     }
 }
 
@@ -238,6 +239,7 @@ private func queuedActionLabel(_ action: QueuedAction) -> String {
             return "Unscheduled visit \u{2014} \(name)"
         }
         return "Unscheduled visit"
+    case .timeFix: return "Change request"
     }
 }
 
