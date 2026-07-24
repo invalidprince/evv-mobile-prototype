@@ -22,13 +22,30 @@ struct HistoryView: View {
 
     // MARK: - Server mode data
 
+    /// Merges server history with unsynced local events (offline clock in/out).
+    /// Deduplicates by serverVisitId so synced records replace local ones.
+    private var mergedHistoryVisits: [Visit] {
+        var merged = appState.historyVisits
+        let existingServerIds = Set(merged.compactMap { $0.serverVisitId })
+
+        // Include completed or in-progress visits from todayVisits that
+        // are pending sync and not already present in server history
+        let unsyncedLocal = appState.todayVisits.filter { visit in
+            (visit.status == .completed || visit.status == .inProgress)
+            && visit.syncState == .pending
+            && (visit.serverVisitId == nil || !existingServerIds.contains(visit.serverVisitId!))
+        }
+        merged.append(contentsOf: unsyncedLocal)
+        return merged
+    }
+
     private var serverGroupedVisits: [(label: String, visits: [Visit])] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
 
         var groups: [String: (date: Date, visits: [Visit])] = [:]
-        for visit in appState.historyVisits {
+        for visit in mergedHistoryVisits {
             let day = cal.startOfDay(for: visit.actualStart ?? visit.scheduledStart)
             let label: String
             if cal.isDate(day, inSameDayAs: today) {
@@ -56,7 +73,7 @@ struct HistoryView: View {
     }
 
     private var totalHoursServer: Double {
-        appState.historyVisits.reduce(0) { $0 + $1.hoursValue }
+        mergedHistoryVisits.reduce(0) { $0 + $1.hoursValue }
     }
 
     private var totalHoursMock: Double {
@@ -112,7 +129,7 @@ struct HistoryView: View {
                     .padding(.vertical, 20)
                 }
 
-                if !appState.isLoadingHistory && appState.historyVisits.isEmpty {
+                if !appState.isLoadingHistory && mergedHistoryVisits.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.largeTitle)
@@ -188,7 +205,7 @@ struct HistoryView: View {
                 Text("Visits")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text("\(appState.historyVisits.count)")
+                Text("\(mergedHistoryVisits.count)")
                     .font(.system(size: 32, weight: .bold))
             }
         }
@@ -261,6 +278,10 @@ struct ServerHistoryRow: View {
 
             // Status chips row
             HStack(spacing: 6) {
+                // Unsynced badge for offline events
+                if visit.syncState == .pending {
+                    StatusBadge(text: "⏳ Unsynced", color: Theme.warning)
+                }
                 // Note status
                 if visit.hasNote {
                     StatusBadge(text: "📝 Note", color: Theme.success)
