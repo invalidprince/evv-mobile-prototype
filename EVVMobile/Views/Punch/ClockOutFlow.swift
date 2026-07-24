@@ -17,6 +17,8 @@ struct ClockOutFlow: View {
     @State private var showTimeFix = false
     @State private var timeFixWasSubmitted = false
     @State private var timeFixQueuedOffline = false
+    /// Guards against double-tap on Confirm Clock Out / Request a Change
+    @State private var isClockingOut = false
 
     private var docAlreadyComplete: Bool {
         appState.isDocComplete(visitId: visit.id)
@@ -164,6 +166,7 @@ struct ClockOutFlow: View {
                         Label("Confirm Clock Out", systemImage: "stop.circle.fill")
                     }
                     .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
+                    .disabled(isClockingOut)
 
                     Button(action: {
                         showTimeFix = true
@@ -171,6 +174,7 @@ struct ClockOutFlow: View {
                         Label("Request a Change", systemImage: "pencil.circle")
                     }
                     .buttonStyle(SecondaryButtonStyle())
+                    .disabled(isClockingOut)
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 16)
@@ -260,6 +264,8 @@ struct ClockOutFlow: View {
     }
 
     private func doClockOut() {
+        guard !isClockingOut else { return }
+        isClockingOut = true
         completedVisit = appState.clockOut(signatureSkipReason: signatureSkipReason)
         step = .complete
     }
