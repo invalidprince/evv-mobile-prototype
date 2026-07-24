@@ -48,6 +48,10 @@
 	<string>EVV requires your location at clock in and clock out to verify visits.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to sign in quickly.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>EVV uses the microphone to dictate visit notes hands-free.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>EVV uses on-device speech recognition to transcribe your voice into visit notes.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

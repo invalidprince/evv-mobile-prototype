@@ -653,20 +653,31 @@ struct DocTextEditor: View {
     @Binding var text: String
     let placeholder: String
     var minHeight: CGFloat = 90
+    var showDictation: Bool = true
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            if text.isEmpty {
-                Text(placeholder)
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                }
+                TextEditor(text: $text)
                     .font(.subheadline)
-                    .foregroundColor(.secondary.opacity(0.6))
-                    .padding(.top, 8)
-                    .padding(.leading, 5)
+                    .frame(minHeight: minHeight)
+                    .opacity(text.isEmpty ? 0.6 : 1)
             }
-            TextEditor(text: $text)
-                .font(.subheadline)
-                .frame(minHeight: minHeight)
-                .opacity(text.isEmpty ? 0.6 : 1)
+            if showDictation {
+                HStack {
+                    Spacer()
+                    DictationButton(text: $text)
+                }
+                .padding(.trailing, 4)
+                .padding(.bottom, 4)
+            }
         }
         .background(Theme.screenBackground)
         .cornerRadius(10)

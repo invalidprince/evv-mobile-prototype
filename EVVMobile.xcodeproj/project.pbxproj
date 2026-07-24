@@ -44,6 +44,8 @@
 		A1B2C3D4E5F60001AABB0001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002AABB0002 /* PrivacyInfo.xcprivacy */; };
 		A1B2C3D4E5F60005AABB0005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60004AABB0004 /* Assets.xcassets */; };
 		B5A1C2D3E4F50601A2B3C4D5 /* LocalCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A1C2D3E4F50602A2B3C4D6 /* LocalCache.swift */; };
+		DD11AA22BB33CC44DD55EE01 /* SpeechRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD11AA22BB33CC44DD55EE02 /* SpeechRecognizer.swift */; };
+		DD11AA22BB33CC44DD55EE03 /* DictationButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD11AA22BB33CC44DD55EE04 /* DictationButton.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -97,6 +99,8 @@
 		FE6BC3B85F893A88BCBE38F1 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60002AABB0002 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A1B2C3D4E5F60004AABB0004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DD11AA22BB33CC44DD55EE02 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
+		DD11AA22BB33CC44DD55EE04 /* DictationButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationButton.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -151,6 +155,7 @@
 				AA11BB22CC33DD44EE55FF67 /* AIAssistSheet.swift */,
 				EB0A91BD032961677F97C2DA /* DocumentationView.swift */,
 				42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */,
+				DD11AA22BB33CC44DD55EE04 /* DictationButton.swift */,
 			);
 			path = Documentation;
 			sourceTree = "<group>";
@@ -173,6 +178,7 @@
 				D2C1B0A9180706F5E4D3C2B1 /* LocationManager.swift */,
 				B5A1C2D3E4F50602A2B3C4D6 /* LocalCache.swift */,
 				8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */,
+				DD11AA22BB33CC44DD55EE02 /* SpeechRecognizer.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -410,6 +416,8 @@
 				2F389F8408447CC5DCA4B2EB /* TodayView.swift in Sources */,
 				EE1E5B614A13991388147ADD /* UnscheduledVisitSheet.swift in Sources */,
 				50AF4BDE023315495011FC02 /* UpNextCard.swift in Sources */,
+				DD11AA22BB33CC44DD55EE01 /* SpeechRecognizer.swift in Sources */,
+				DD11AA22BB33CC44DD55EE03 /* DictationButton.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
