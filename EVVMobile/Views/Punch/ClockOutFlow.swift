@@ -89,7 +89,13 @@ struct ClockOutFlow: View {
             Spacer()
             VStack(spacing: 12) {
                 Button("Complete Documentation Now") { showDocumentation = true }
-                    .buttonStyle(PrimaryButtonStyle())
+                    .buttonStyle(PrimaryButtonStyle(enabled: appState.effectivelyOnline))
+                    .disabled(!appState.effectivelyOnline)
+                if !appState.effectivelyOnline {
+                    Label("Available when online", systemImage: "wifi.slash")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Button("Continue — Finish Later") { step = .signature }
                     .buttonStyle(SecondaryButtonStyle())
             }
