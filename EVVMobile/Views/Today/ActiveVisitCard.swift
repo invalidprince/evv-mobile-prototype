@@ -5,8 +5,6 @@ struct ActiveVisitCard: View {
     @State private var showClockOut = false
     @State private var showDocumentation = false
     @State private var clockOutAndNext = false
-    @State private var showServerNote = false
-
     private var nextVisit: Visit? {
         appState.todayVisits
             .filter { $0.status == .scheduled }
@@ -88,16 +86,9 @@ struct ActiveVisitCard: View {
                 .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
 
                 HStack(spacing: 12) {
-                    if appState.mode == .server {
-                        Button(action: { showServerNote = true }) {
-                            Label("Add Note", systemImage: "square.and.pencil")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                    } else {
-                        Button(action: { showDocumentation = true }) {
-                            Label("Add Note", systemImage: "square.and.pencil")
-                                .font(.subheadline.weight(.semibold))
-                        }
+                    Button(action: { showDocumentation = true }) {
+                        Label("Add Note", systemImage: "square.and.pencil")
+                            .font(.subheadline.weight(.semibold))
                     }
                     Spacer()
                     if nextVisit != nil {
@@ -119,9 +110,6 @@ struct ActiveVisitCard: View {
                 NavigationView {
                     DocumentationView(visit: visit)
                 }
-            }
-            .sheet(isPresented: $showServerNote) {
-                ServerAddNoteSheet(visit: visit)
             }
         }
     }
