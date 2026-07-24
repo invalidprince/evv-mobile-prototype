@@ -39,48 +39,7 @@ struct TodayView: View {
                         ActiveVisitCard()
                     }
 
-                    ForEach(appState.incompleteNoteVisits) { visit in
-                        IncompleteNoteCard(visit: visit, isOffline: !appState.effectivelyOnline) {
-                            noteVisit = visit
-                        }
-                    }
-
-                    if appState.isLoadingShifts {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Loading shifts…")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 20)
-                    }
-
-                    if !upcoming.isEmpty {
-                        Text("Up Next")
-                            .font(.title3.bold())
-                            .padding(.top, 4)
-                        ForEach(upcoming) { visit in
-                            UpNextCard(visit: visit) {
-                                clockInTarget = visit
-                            }
-                        }
-                    }
-
-                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "calendar.badge.checkmark")
-                                .font(.largeTitle)
-                                .foregroundColor(.secondary)
-                            Text("No shifts today — check the Schedule tab for upcoming and open shifts.")
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 20)
-                    }
-
-                    // F1: Show pending offline items
+                    // Pending sync items shown above incomplete notes
                     if !appState.offlineQueue.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 6) {
@@ -111,6 +70,47 @@ struct TodayView: View {
                         .padding(14)
                         .background(Theme.warning.opacity(0.1))
                         .cornerRadius(12)
+                    }
+
+                    ForEach(appState.incompleteNoteVisits) { visit in
+                        IncompleteNoteCard(visit: visit, isOffline: !appState.effectivelyOnline) {
+                            noteVisit = visit
+                        }
+                    }
+
+                    if appState.isLoadingShifts {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading shifts\u{2026}")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    }
+
+                    if !upcoming.isEmpty {
+                        Text("Up Next")
+                            .font(.title3.bold())
+                            .padding(.top, 4)
+                        ForEach(upcoming) { visit in
+                            UpNextCard(visit: visit) {
+                                clockInTarget = visit
+                            }
+                        }
+                    }
+
+                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "calendar.badge.checkmark")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("No shifts today \u{2014} check the Schedule tab for upcoming and open shifts.")
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
                     }
 
                     otherActions
