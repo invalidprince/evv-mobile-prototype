@@ -290,7 +290,9 @@ enum APIError: LocalizedError {
         case .unauthorized(let msg): return msg
         case .conflict(let msg): return msg
         case .forbidden(let msg): return msg
-        case .networkError(let err): return "Network error: \(err.localizedDescription)"
+        case .networkError(let err):
+            if isCancellation { return "Request was interrupted" }
+            return "Connection error: \(err.localizedDescription)"
         case .serverError(let code, let msg): return "Server error (\(code)): \(msg)"
         case .decodingError(let err): return "Data error: \(err.localizedDescription)"
         }
@@ -298,6 +300,16 @@ enum APIError: LocalizedError {
 
     var isNetworkError: Bool {
         if case .networkError = self { return true }
+        return false
+    }
+
+    /// True when the underlying error is a task/request cancellation
+    /// (NSURLErrorCancelled or Swift CancellationError).  These should
+    /// never be surfaced to the user as real failures.
+    var isCancellation: Bool {
+        guard case .networkError(let err) = self else { return false }
+        if let urlError = err as? URLError, urlError.code == .cancelled { return true }
+        if err is CancellationError { return true }
         return false
     }
 }
@@ -1056,6 +1068,22 @@ actor APIClient {
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await URLSession.shared.data(for: request)
+        } catch let error as URLError where error.code == .cancelled {
+            // Retry once after a brief pause — cancellations are often
+            // transient (structured-task teardown, network path change).
+            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 s
+            do {
+                return try await URLSession.shared.data(for: request)
+            } catch {
+                throw APIError.networkError(error)
+            }
+        } catch is CancellationError {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            do {
+                return try await URLSession.shared.data(for: request)
+            } catch {
+                throw APIError.networkError(error)
+            }
         } catch {
             throw APIError.networkError(error)
         }

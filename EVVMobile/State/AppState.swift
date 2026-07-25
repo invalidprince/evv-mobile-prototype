@@ -730,8 +730,11 @@ final class AppState: ObservableObject {
             individualsFromCacheDate = nil  // live data
             // Persist to disk for offline use
             LocalCache.shared.saveIndividuals(fetched)
+        } catch is CancellationError {
+            // Silently ignore task cancellation
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
+            if apiErr.isCancellation { return }  // benign
             // On network failure, fall back to cached data if we have nothing
             if apiErr.isNetworkError && serverIndividuals.isEmpty {
                 loadCachedIndividuals()
@@ -756,9 +759,17 @@ final class AppState: ObservableObject {
 
     // MARK: - Server shift fetch & mapping
 
+    /// True while a refresh-shifts call is in-flight.  Prevents a second
+    /// concurrent call from racing the first (which can cause URLSession
+    /// cancellation on some iOS versions).
+    @MainActor private var isRefreshingShifts = false
+
     @MainActor
     func refreshServerShifts() async {
         guard mode == .server else { return }
+        guard !isRefreshingShifts else { return }  // skip if already in-flight
+        isRefreshingShifts = true
+        defer { isRefreshingShifts = false }
         isLoadingShifts = true
         defer { isLoadingShifts = false }
 
@@ -804,9 +815,13 @@ final class AppState: ObservableObject {
             serverOpenShifts = response.openShifts ?? []
             lastSync = Date()
             startTimerIfNeeded()
+        } catch is CancellationError {
+            // Silently ignore task cancellation
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
-            scheduleLoadError = apiErr.localizedDescription
+            if !apiErr.isCancellation {
+                scheduleLoadError = apiErr.localizedDescription
+            }
             surfaceServerError(apiErr)
         }
     }
@@ -1230,6 +1245,9 @@ final class AppState: ObservableObject {
 
             serverExceptions = exceptions
             historyVisits = serverVisits.compactMap { mapHistoryVisit($0, exceptions: exceptions) }
+        } catch is CancellationError {
+            // Structured-task cancellation (async let sibling failed,
+            // view lifecycle, etc.) — silently ignore.
         } catch {
             surfaceServerError(error as? APIError ?? .networkError(error))
         }
@@ -1490,6 +1508,9 @@ final class AppState: ObservableObject {
     @Published var scheduleLoadError: String?
 
     func surfaceServerError(_ error: APIError) {
+        // Cancelled requests are benign (structured-task teardown,
+        // network path flip, view lifecycle) — never surface them.
+        if error.isCancellation { return }
         serverError = error.localizedDescription
         showServerError = true
         DiagnosticLogger.shared.logAPI(error.localizedDescription)

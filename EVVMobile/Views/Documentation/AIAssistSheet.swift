@@ -133,22 +133,25 @@ struct AIAssistSheet: View {
                     onDraftReceived(draft)
                     dismiss()
                 }
+            } catch is CancellationError {
+                await MainActor.run { isGenerating = false }
             } catch {
+                let apiErr = error as? APIError ?? APIError.networkError(error)
+                if apiErr.isCancellation {
+                    await MainActor.run { isGenerating = false }
+                    return
+                }
                 await MainActor.run {
                     isGenerating = false
-                    if let apiErr = error as? APIError {
-                        switch apiErr {
-                        case .serverError(429, _):
-                            errorMessage = "Too many requests — please wait a few minutes and try again."
-                        case .serverError(503, _), .serverError(502, _):
-                            errorMessage = "AI Assist is temporarily unavailable. Write your note manually for now."
-                        case .networkError:
-                            errorMessage = "No internet connection. AI Assist requires connectivity."
-                        default:
-                            errorMessage = apiErr.localizedDescription
-                        }
-                    } else {
-                        errorMessage = "Something went wrong. Try again or write your note manually."
+                    switch apiErr {
+                    case .serverError(429, _):
+                        errorMessage = "Too many requests — please wait a few minutes and try again."
+                    case .serverError(503, _), .serverError(502, _):
+                        errorMessage = "AI Assist is temporarily unavailable. Write your note manually for now."
+                    case .networkError:
+                        errorMessage = "No internet connection. AI Assist requires connectivity."
+                    default:
+                        errorMessage = apiErr.localizedDescription
                     }
                 }
             }

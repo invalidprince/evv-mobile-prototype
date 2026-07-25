@@ -369,21 +369,23 @@ struct VoiceConversationSheet: View {
                     phase = .aiSpeaking
                 }
             }
+        } catch is CancellationError {
+            // Task was cancelled (view dismissed, etc.) — silently ignore.
         } catch {
+            let apiErr = error as? APIError ?? APIError.networkError(error)
+            // Silently ignore cancellation — don't show error banner.
+            if apiErr.isCancellation { return }
+
             await MainActor.run {
-                if let apiErr = error as? APIError {
-                    switch apiErr {
-                    case .serverError(429, _):
-                        errorMessage = "Too many requests — please wait a moment."
-                    case .serverError(503, _), .serverError(502, _):
-                        errorMessage = "AI is temporarily unavailable. Try again shortly."
-                    case .networkError:
-                        errorMessage = "No internet connection."
-                    default:
-                        errorMessage = apiErr.localizedDescription
-                    }
-                } else {
-                    errorMessage = "Something went wrong. Tap Retry."
+                switch apiErr {
+                case .serverError(429, _):
+                    errorMessage = "Too many requests — please wait a moment."
+                case .serverError(503, _), .serverError(502, _):
+                    errorMessage = "AI is temporarily unavailable. Try again shortly."
+                case .networkError:
+                    errorMessage = "No internet connection."
+                default:
+                    errorMessage = apiErr.localizedDescription
                 }
                 phase = conversationHistory.isEmpty ? .starting : .waitingForUser
             }

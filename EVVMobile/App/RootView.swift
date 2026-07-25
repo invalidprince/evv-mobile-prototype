@@ -11,7 +11,7 @@ struct RootView: View {
                 LoginView()
             }
         }
-        .alert("Server Error", isPresented: $appState.showServerError) {
+        .alert("Error", isPresented: $appState.showServerError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(appState.serverError ?? "An unknown error occurred")

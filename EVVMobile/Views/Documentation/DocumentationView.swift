@@ -436,7 +436,15 @@ struct DocumentationView: View {
 
                 isLoadingTemplate = false
             }
+        } catch is CancellationError {
+            // Silently ignore task cancellation
+            await MainActor.run { isLoadingTemplate = false }
         } catch {
+            let apiErr = error as? APIError ?? APIError.networkError(error)
+            if apiErr.isCancellation {
+                await MainActor.run { isLoadingTemplate = false }
+                return
+            }
             await MainActor.run {
                 loadError = error.localizedDescription
                 isLoadingTemplate = false
@@ -564,10 +572,17 @@ struct DocumentationView: View {
 
                 showSubmitted = true
             }
+        } catch is CancellationError {
+            await MainActor.run { isSubmitting = false }
         } catch {
+            let apiErr = error as? APIError ?? APIError.networkError(error)
+            if apiErr.isCancellation {
+                await MainActor.run { isSubmitting = false }
+                return
+            }
             await MainActor.run {
                 isSubmitting = false
-                if let apiErr = error as? APIError, apiErr.isNetworkError {
+                if apiErr.isNetworkError {
                     // Queue for offline - save draft and show message
                     appState.saveNoteDraft(visitId: visit.id, note: note)
                     submitError = "You're offline. Draft saved — submit when back online."
