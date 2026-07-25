@@ -3,7 +3,12 @@ import AVFoundation
 
 /// A conversational voice-based documentation assistant.
 /// The AI asks questions aloud (TTS), staff answers by voice (STT),
-/// and when all outcomes are covered the AI generates a polished note.
+/// and when all outcomes are covered the AI generates structured note data.
+///
+/// Improvements over v1:
+/// - TTS is interruptible: tapping mic or Skip stops speech immediately.
+/// - Hands-free flow: after AI speaks, auto-listens; silence detection auto-sends.
+/// - Structured outcome output: fills per-outcome form fields, not just comments.
 struct VoiceConversationSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -11,7 +16,8 @@ struct VoiceConversationSheet: View {
     let outcomes: [ConversationOutcome]
     let individualName: String
     let service: String
-    let onNoteGenerated: (String) -> Void
+    /// Called when conversation completes with structured result
+    let onStructuredResult: (DocConversationResponse) -> Void
 
     // MARK: - State
 
@@ -22,18 +28,31 @@ struct VoiceConversationSheet: View {
     @State private var phase: ConversationPhase = .starting
     @State private var errorMessage: String?
     @State private var showPermissionAlert = false
-    @State private var isSpeakingTTS = false
 
     private let synthesizer = AVSpeechSynthesizer()
     @State private var ttsDelegate: TTSDelegate?
+
+    // Silence detection for hands-free mode
+    @State private var silenceTimer: Timer?
+    /// How long the user must be silent (no transcript change) before auto-sending
+    private let silenceThreshold: TimeInterval = 2.2
+    /// Maximum time to wait for any speech before falling back to tap-to-talk
+    private let emptyListenTimeout: TimeInterval = 10.0
+    @State private var recordingStartTime: Date = Date()
+    /// When true, hands-free auto-listen is disabled (user must tap mic)
+    @State private var manualMode = false
+
+    // Store the last structured response for the done callback
+    @State private var lastResponse: DocConversationResponse?
 
     // MARK: - Types
 
     enum ConversationPhase {
         case starting       // Initial load — fetching first AI question
         case aiSpeaking     // AI question is being read aloud
-        case waitingForUser // Waiting for staff to tap mic
-        case recording      // Staff is speaking
+        case waitingForUser // Waiting for staff to tap mic (manual mode or fallback)
+        case listening      // Hands-free: auto-listening after AI spoke
+        case recording      // Staff is speaking (manual tap-to-talk mode)
         case sending        // Sending user answer to backend
         case done           // Conversation complete — note generated
     }
@@ -57,7 +76,7 @@ struct VoiceConversationSheet: View {
                             }
 
                             // Live transcription preview
-                            if phase == .recording && !currentUserDraft.isEmpty {
+                            if (phase == .recording || phase == .listening) && !currentUserDraft.isEmpty {
                                 ConversationBubble(turn: ConversationTurn(role: .user, content: currentUserDraft))
                                     .opacity(0.6)
                                     .id("live-draft")
@@ -127,14 +146,22 @@ struct VoiceConversationSheet: View {
                 stopEverything()
             }
             .onChange(of: speech.transcript) { newValue in
-                if phase == .recording {
+                if phase == .recording || phase == .listening {
                     currentUserDraft = newValue
                 }
             }
             .onChange(of: speech.isRecording) { recording in
-                // When speech recognizer stops on its own (silence/final result),
-                // auto-send if we have content
+                // When speech recognizer stops on its own (e.g. final result or error),
+                // auto-send if we have content (manual recording mode only).
                 if !recording && phase == .recording && !currentUserDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    stopSilenceTimer()
+                    phase = .sending
+                    let text = currentUserDraft
+                    Task { await sendTurn(userText: text) }
+                }
+                // Same for hands-free listening mode
+                if !recording && phase == .listening && !currentUserDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    stopSilenceTimer()
                     phase = .sending
                     let text = currentUserDraft
                     Task { await sendTurn(userText: text) }
@@ -182,12 +209,22 @@ struct VoiceConversationSheet: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                Button("Skip") {
-                    synthesizer.stopSpeaking(at: .immediate)
-                    phase = .waitingForUser
+                HStack(spacing: 20) {
+                    // Skip: stop TTS and go to listening
+                    Button("Skip") {
+                        interruptTTSAndListen()
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                    // Mic button: interrupt TTS and start answering immediately
+                    Button(action: { interruptTTSAndListen() }) {
+                        Image(systemName: "mic.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundColor(Theme.primary)
+                    }
+                    .accessibilityLabel("Interrupt AI and start speaking")
                 }
-                .font(.caption)
-                .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity)
 
@@ -222,6 +259,47 @@ struct VoiceConversationSheet: View {
                 }
             }
 
+        case .listening:
+            // Hands-free: auto-listening after AI finished speaking
+            VStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Theme.success)
+                        .frame(width: 8, height: 8)
+                    Text(currentUserDraft.isEmpty ? "Listening…" : "Listening — will auto-send after pause")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 20) {
+                    // "I'm Done" button
+                    Button(action: {
+                        stopSilenceTimer()
+                        speech.stopRecording()
+                        Task { await finishEarly() }
+                    }) {
+                        VStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title2)
+                            Text("I'm Done")
+                                .font(.caption2)
+                        }
+                        .foregroundColor(Theme.success)
+                    }
+
+                    // Mic button: tap to stop and send immediately
+                    Button(action: { stopListeningAndSend() }) {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 64))
+                            .foregroundColor(Theme.primary)
+                    }
+                    .accessibilityLabel("Stop listening and send now")
+
+                    // Placeholder to balance layout
+                    Color.clear.frame(width: 44, height: 44)
+                }
+            }
+
         case .recording:
             VStack(spacing: 10) {
                 Text(currentUserDraft.isEmpty ? "Listening…" : "Listening — tap stop when done")
@@ -240,7 +318,7 @@ struct VoiceConversationSheet: View {
                         .foregroundColor(Theme.danger)
                     }
 
-                    // Stop/send button (pulsing)
+                    // Stop/send button
                     Button(action: { stopAndSend() }) {
                         Image(systemName: "stop.circle.fill")
                             .font(.system(size: 64))
@@ -275,12 +353,11 @@ struct VoiceConversationSheet: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.largeTitle)
                     .foregroundColor(Theme.success)
-                Text("Note generated!")
+                Text("Documentation complete!")
                     .font(.headline)
                 Button("Use This Note") {
-                    // The last assistant message with done=true is the note
-                    if let lastAI = conversationHistory.last(where: { $0.role == .assistant }) {
-                        onNoteGenerated(lastAI.content)
+                    if let response = lastResponse {
+                        onStructuredResult(response)
                     }
                     dismiss()
                 }
@@ -303,7 +380,12 @@ struct VoiceConversationSheet: View {
     private func sendTurn(userText: String) async {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            phase = .waitingForUser
+            // Nothing to send — go back to waiting
+            if manualMode {
+                phase = .waitingForUser
+            } else {
+                autoListen()
+            }
             return
         }
 
@@ -331,6 +413,7 @@ struct VoiceConversationSheet: View {
 
     private func finishEarly() async {
         phase = .sending
+        stopSilenceTimer()
 
         // Add the current AI message to history if present
         if !currentAIMessage.isEmpty {
@@ -358,8 +441,21 @@ struct VoiceConversationSheet: View {
 
             await MainActor.run {
                 if response.done {
-                    // Final note — add to history and transition to done
-                    conversationHistory.append(ConversationTurn(role: .assistant, content: response.message))
+                    // Store structured response for callback
+                    lastResponse = response
+                    // Add summary message to conversation history for display
+                    let displayMessage: String
+                    if let outcomes = response.outcomes, !outcomes.isEmpty {
+                        let filledCount = outcomes.filter { !($0.narrative ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+                        displayMessage = "Documentation complete — \(filledCount) outcome\(filledCount == 1 ? "" : "s") filled."
+                        if let comments = response.additionalComments, !comments.isEmpty {
+                            // Show a preview
+                        }
+                    } else {
+                        // Fallback: plain text note
+                        displayMessage = response.message
+                    }
+                    conversationHistory.append(ConversationTurn(role: .assistant, content: displayMessage))
                     currentAIMessage = ""
                     phase = .done
                 } else {
@@ -392,14 +488,19 @@ struct VoiceConversationSheet: View {
         }
     }
 
-    // MARK: - Speech (TTS)
+    // MARK: - Speech (TTS) — Interruptible
 
     private func setupTTSDelegate() {
         let delegate = TTSDelegate { [self] in
-            // Called when TTS finishes speaking
+            // Called when TTS finishes speaking (or is cancelled)
             Task { @MainActor in
                 if phase == .aiSpeaking {
-                    phase = .waitingForUser
+                    // TTS finished naturally — start auto-listening (hands-free)
+                    if !manualMode {
+                        autoListen()
+                    } else {
+                        phase = .waitingForUser
+                    }
                 }
             }
         }
@@ -420,12 +521,49 @@ struct VoiceConversationSheet: View {
         synthesizer.speak(utterance)
     }
 
-    // MARK: - Speech (STT)
+    /// Immediately stop TTS and begin listening (used by mic tap during AI speech and Skip button)
+    private func interruptTTSAndListen() {
+        synthesizer.stopSpeaking(at: .immediate)
+        // The TTSDelegate.didCancel will fire, but we take over here
+        // to avoid race conditions — go straight to listening.
+        if !manualMode {
+            autoListen()
+        } else {
+            startRecording()
+        }
+    }
 
+    // MARK: - Speech (STT) — Hands-Free & Manual
+
+    /// Start auto-listening (hands-free mode). After AI finishes speaking,
+    /// this is called automatically. Uses silence detection to auto-send.
+    private func autoListen() {
+        currentUserDraft = ""
+        phase = .listening
+        recordingStartTime = Date()
+        Task { await speech.startRecording() }
+        startSilenceTimer()
+    }
+
+    /// Manual recording mode (tap mic to start)
     private func startRecording() {
         currentUserDraft = ""
         phase = .recording
         Task { await speech.startRecording() }
+    }
+
+    /// Stop listening (hands-free) and send whatever was captured
+    private func stopListeningAndSend() {
+        stopSilenceTimer()
+        speech.stopRecording()
+        let text = currentUserDraft
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            phase = .sending
+            Task { await sendTurn(userText: text) }
+        } else {
+            // Nothing captured — go to manual mode
+            phase = .waitingForUser
+        }
     }
 
     private func stopAndSend() {
@@ -440,14 +578,63 @@ struct VoiceConversationSheet: View {
     }
 
     private func cancelRecording() {
+        stopSilenceTimer()
         speech.stopRecording()
         currentUserDraft = ""
         phase = .waitingForUser
     }
 
     private func stopEverything() {
+        stopSilenceTimer()
         speech.stopRecording()
         synthesizer.stopSpeaking(at: .immediate)
+    }
+
+    // MARK: - Silence Detection Timer
+
+    /// Starts a repeating timer that checks for silence (no transcript change)
+    /// and auto-sends when the user pauses for `silenceThreshold` seconds.
+    private func startSilenceTimer() {
+        stopSilenceTimer()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] _ in
+            Task { @MainActor in
+                guard phase == .listening else {
+                    stopSilenceTimer()
+                    return
+                }
+
+                let now = Date()
+                let draft = currentUserDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if !draft.isEmpty {
+                    // User has said something — check if they've been silent long enough
+                    let silenceDuration = now.timeIntervalSince(speech.lastTranscriptChangeTime)
+                    if silenceDuration >= silenceThreshold {
+                        // Auto-send!
+                        stopSilenceTimer()
+                        speech.stopRecording()
+                        let text = currentUserDraft
+                        phase = .sending
+                        Task { await sendTurn(userText: text) }
+                    }
+                } else {
+                    // User hasn't said anything yet — check empty-listen timeout
+                    let waitDuration = now.timeIntervalSince(recordingStartTime)
+                    if waitDuration >= emptyListenTimeout {
+                        // Fall back to manual tap-to-talk
+                        stopSilenceTimer()
+                        speech.stopRecording()
+                        manualMode = true
+                        phase = .waitingForUser
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopSilenceTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
     }
 }
 
@@ -528,4 +715,17 @@ final class TTSDelegate: NSObject, AVSpeechSynthesizerDelegate {
 struct DocConversationResponse: Decodable {
     let done: Bool
     let message: String
+    /// Structured per-outcome entries (only present when done=true)
+    let outcomes: [DocConversationOutcome]?
+    /// Additional comments not tied to a specific outcome (only present when done=true)
+    let additionalComments: String?
+}
+
+struct DocConversationOutcome: Decodable {
+    let title: String?
+    let promptLevel: String?
+    let frequency: Int?
+    let goalOpportunity: Bool?
+    let behaviorObserved: Bool?
+    let narrative: String?
 }

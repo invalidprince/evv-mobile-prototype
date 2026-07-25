@@ -10,6 +10,10 @@ final class SpeechRecognizer: ObservableObject {
     @Published var isRecording = false
     @Published var permissionDenied = false
 
+    /// Timestamp of the last transcript change (for silence detection).
+    /// Updated every time the transcript text changes during recording.
+    @Published var lastTranscriptChangeTime: Date = Date()
+
     private let recognizer: SFSpeechRecognizer? = {
         let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         r?.supportsOnDeviceRecognition = true
@@ -90,7 +94,11 @@ final class SpeechRecognizer: ObservableObject {
             Task { @MainActor in
                 guard let self = self else { return }
                 if let result = result {
-                    self.transcript = result.bestTranscription.formattedString
+                    let newText = result.bestTranscription.formattedString
+                    if newText != self.transcript {
+                        self.lastTranscriptChangeTime = Date()
+                    }
+                    self.transcript = newText
                 }
                 if error != nil || (result?.isFinal == true) {
                     self.stopRecording()

@@ -374,12 +374,8 @@ struct DocumentationView: View {
                     },
                     individualName: visit.client.name,
                     service: visit.service.rawValue
-                ) { generatedNote in
-                    // Place the generated note into additionalComments
-                    note.additionalComments = generatedNote
-                    // Mark AI-assisted
-                    aiDraftApplied = true
-                    aiInputText = "[Voice conversation]"
+                ) { response in
+                    applyVoiceConversationResult(response)
                 }
             }
         }
@@ -521,6 +517,54 @@ struct DocumentationView: View {
         aiDraftApplied = true
 
         // Expand outcomes section to show the draft
+        expanded.insert("Outcomes & Goals")
+    }
+
+    // MARK: - Voice Conversation structured result application
+
+    private func applyVoiceConversationResult(_ response: DocConversationResponse) {
+        // If the response has structured outcomes, fill per-outcome form fields
+        var draftedIds = Set<UUID>()
+
+        if let responseOutcomes = response.outcomes, !responseOutcomes.isEmpty {
+            for voiceOutcome in responseOutcomes {
+                // Match by title (case-insensitive, trimmed)
+                guard let voiceTitle = voiceOutcome.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let match = serverOutcomes.first(where: {
+                          $0.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                              .caseInsensitiveCompare(voiceTitle) == .orderedSame
+                      }) else { continue }
+
+                // Skip outcomes with empty narrative (not discussed)
+                let narrative = voiceOutcome.narrative ?? ""
+                if narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+
+                var oe = OutcomeEntry()
+                if let pl = voiceOutcome.promptLevel {
+                    oe.promptLevel = PromptLevel.allCases.first(where: { $0.rawValue == pl })
+                }
+                oe.frequency = voiceOutcome.frequency ?? 0
+                oe.goalOpportunity = voiceOutcome.goalOpportunity ?? false
+                oe.behaviorObserved = voiceOutcome.behaviorObserved ?? false
+                oe.narrative = narrative
+                note.outcomeEntries[match.localId] = oe
+                draftedIds.insert(match.localId)
+            }
+        }
+
+        // Apply additional comments
+        if let comments = response.additionalComments, !comments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            note.additionalComments = comments
+        } else if draftedIds.isEmpty {
+            // Fallback: no structured outcomes — put the message in additional comments (backward compat)
+            note.additionalComments = response.message
+        }
+
+        aiDraftedOutcomeIds = draftedIds
+        aiDraftApplied = true
+        aiInputText = "[Voice conversation]"
+
+        // Expand outcomes section to show the result
         expanded.insert("Outcomes & Goals")
     }
 
