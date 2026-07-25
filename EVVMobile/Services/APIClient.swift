@@ -785,6 +785,54 @@ actor APIClient {
         }
     }
 
+    // MARK: - Voice Documentation Conversation
+
+    func docConversation(
+        visitId: String,
+        outcomes: [ConversationOutcome],
+        individualName: String,
+        service: String,
+        history: [[String: String]],
+        finish: Bool
+    ) async throws -> DocConversationResponse {
+        let url = URL(string: "\(baseURL)/ai/doc-conversation")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.timeoutInterval = 30 // Conversation turns may take a moment
+
+        let outcomeDicts: [[String: Any]] = outcomes.map { o in
+            var d: [String: Any] = ["title": o.title]
+            if let g = o.goal { d["goal"] = g }
+            return d
+        }
+
+        let body: [String: Any] = [
+            "visitId": visitId,
+            "outcomes": outcomeDicts,
+            "individualName": individualName,
+            "service": service,
+            "history": history,
+            "finish": finish,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Conversation request failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(DocConversationResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
     // MARK: - Non-Billable
 
     func createNonBillable(date: String?, category: String, minutes: Int, note: String) async throws -> NonBillableCreateResponse {

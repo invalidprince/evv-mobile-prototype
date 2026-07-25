@@ -28,6 +28,9 @@ struct DocumentationView: View {
     @State private var aiUnaddressedOutcomeIds: Set<Int> = []  // Server outcome IDs not addressed
     @State private var sectionsViewed: Set<UUID> = []  // Track which AI-drafted sections staff viewed
 
+    // Voice conversation state
+    @State private var showVoiceConversation = false
+
     // Unified outcomes: server or mock
     private var effectiveOutcomes: [Outcome] {
         if appState.mode == .server {
@@ -123,15 +126,46 @@ struct DocumentationView: View {
                 }
 
                 if !isLoadingTemplate && loadError == nil {
-                    // AI Assist button (server mode, online, feature flag on)
+                    // AI Assist buttons (server mode, online, feature flag on)
                     if appState.mode == .server && appState.effectivelyOnline && aiAssistEnabled && !aiDraftApplied {
+                        // Voice Conversation button
+                        Button(action: { showVoiceConversation = true }) {
+                            HStack(spacing: 8) {
+                                Text("🎙️")
+                                Text("Voice Conversation")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("Talk through your visit")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                LinearGradient(
+                                    colors: [Theme.success.opacity(0.10), Theme.success.opacity(0.04)],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
+                            )
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Theme.success.opacity(0.25), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        // Text-based AI Assist button
                         Button(action: { showAIAssistSheet = true }) {
                             HStack(spacing: 8) {
                                 Text("✨")
                                 Text("AI Assist")
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
-                                Text("Describe your visit → auto-fill form")
+                                Text("Type or dictate → auto-fill form")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                 Image(systemName: "chevron.right")
@@ -328,6 +362,24 @@ struct DocumentationView: View {
             if let svid = visit.serverVisitId {
                 AIAssistSheet(serverVisitId: svid) { draftResponse in
                     applyAIDraft(draftResponse)
+                }
+            }
+        }
+        .sheet(isPresented: $showVoiceConversation) {
+            if let svid = visit.serverVisitId {
+                VoiceConversationSheet(
+                    serverVisitId: svid,
+                    outcomes: serverOutcomes.map { so in
+                        ConversationOutcome(title: so.title, goal: so.goal)
+                    },
+                    individualName: visit.client.name,
+                    service: visit.service.rawValue
+                ) { generatedNote in
+                    // Place the generated note into additionalComments
+                    note.additionalComments = generatedNote
+                    // Mark AI-assisted
+                    aiDraftApplied = true
+                    aiInputText = "[Voice conversation]"
                 }
             }
         }
