@@ -719,6 +719,8 @@ struct DocConversationResponse: Decodable {
     let outcomes: [DocConversationOutcome]?
     /// Additional comments not tied to a specific outcome (only present when done=true)
     let additionalComments: String?
+    /// Transport review question answer (only present when done=true)
+    let transportReviewedGoals: Bool?
 }
 
 struct DocConversationOutcome: Decodable {

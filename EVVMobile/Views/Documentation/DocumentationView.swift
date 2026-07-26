@@ -60,6 +60,8 @@ struct DocumentationView: View {
     }
 
     private var noteComplete: Bool {
+        // Transport review question is always required
+        guard note.transportReviewedGoals != nil else { return false }
         // If no outcomes, just additional comments is enough (or just submittable)
         let outcomes = effectiveOutcomes
         if outcomes.isEmpty { return true }
@@ -274,6 +276,65 @@ struct DocumentationView: View {
                         }
                     }
 
+                    // Required transport review question
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bus.fill")
+                                .foregroundColor(Theme.primary)
+                            Text("Reviewed goals, activities, and schedule during transport?")
+                                .font(.subheadline.weight(.semibold))
+                            Text("*")
+                                .foregroundColor(Theme.danger)
+                        }
+                        HStack(spacing: 12) {
+                            Button(action: { note.transportReviewedGoals = true }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: note.transportReviewedGoals == true ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(note.transportReviewedGoals == true ? Theme.success : .secondary)
+                                    Text("Yes")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundColor(note.transportReviewedGoals == true ? Theme.success : .primary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(note.transportReviewedGoals == true ? Theme.success.opacity(0.10) : Color(UIColor.tertiarySystemFill))
+                                .cornerRadius(10)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(note.transportReviewedGoals == true ? Theme.success.opacity(0.4) : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            Button(action: { note.transportReviewedGoals = false }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: note.transportReviewedGoals == false ? "xmark.circle.fill" : "circle")
+                                        .foregroundColor(note.transportReviewedGoals == false ? Theme.danger : .secondary)
+                                    Text("No")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundColor(note.transportReviewedGoals == false ? Theme.danger : .primary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(note.transportReviewedGoals == false ? Theme.danger.opacity(0.10) : Color(UIColor.tertiarySystemFill))
+                                .cornerRadius(10)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(note.transportReviewedGoals == false ? Theme.danger.opacity(0.4) : Color.clear, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            Spacer()
+                        }
+                        if note.transportReviewedGoals == nil {
+                            Text("Required — select Yes or No")
+                                .font(.caption)
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
+                    .cardStyle()
+
                     DocSection(title: "Additional Comments", icon: "text.alignleft", expanded: $expanded) {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Optional")
@@ -457,6 +518,11 @@ struct DocumentationView: View {
             note.additionalComments = comments
         }
 
+        // Load transport review answer (may be nil for old records)
+        if let transportReview = existing.transportReviewedGoals {
+            note.transportReviewedGoals = transportReview
+        }
+
         // Load per-outcome entries
         if let entries = existing.outcomes {
             for entry in entries {
@@ -533,6 +599,11 @@ struct DocumentationView: View {
             note.additionalComments = comments
         }
 
+        // Apply transport review if present
+        if let transportReview = draft.transportReviewedGoals {
+            note.transportReviewedGoals = transportReview
+        }
+
         aiDraftedOutcomeIds = draftedIds
         aiDraftApplied = true
 
@@ -587,6 +658,11 @@ struct DocumentationView: View {
         } else if draftedIds.isEmpty {
             // Fallback: no structured outcomes — put the message in additional comments (backward compat)
             note.additionalComments = response.message
+        }
+
+        // Apply transport review if present
+        if let transportReview = response.transportReviewedGoals {
+            note.transportReviewedGoals = transportReview
         }
 
         aiDraftedOutcomeIds = draftedIds
@@ -653,6 +729,7 @@ struct DocumentationView: View {
                 visitId: svid,
                 outcomes: outcomePayload,
                 additionalComments: note.additionalComments,
+                transportReviewedGoals: note.transportReviewedGoals ?? false,
                 aiAssisted: aiDraftApplied,
                 aiInputText: aiInputText,
                 aiModel: aiModel

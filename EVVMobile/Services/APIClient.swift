@@ -192,6 +192,8 @@ struct ServerExistingNote: Decodable {
     // Legacy flat note fields
     let comments: String?
     let goals: [String]?
+    /// Transport review question answer
+    let transportReviewedGoals: Bool?
 }
 
 struct DocumentationTemplateResponse: Decodable {
@@ -734,7 +736,7 @@ actor APIClient {
         }
     }
 
-    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
+    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, transportReviewedGoals: Bool, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -742,7 +744,8 @@ actor APIClient {
         addAuth(&request)
         var body: [String: Any] = [
             "outcomes": outcomes,
-            "additionalComments": additionalComments
+            "additionalComments": additionalComments,
+            "transportReviewedGoals": transportReviewedGoals
         ]
         if aiAssisted {
             body["aiAssisted"] = true

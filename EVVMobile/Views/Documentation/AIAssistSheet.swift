@@ -175,6 +175,7 @@ struct AIDraftPayload: Decodable {
     let outcomes: [AIDraftOutcome]?
     let additionalComments: String?
     let unaddressed: [Int]?
+    let transportReviewedGoals: Bool?
 }
 
 struct AIDraftResponse: Decodable {

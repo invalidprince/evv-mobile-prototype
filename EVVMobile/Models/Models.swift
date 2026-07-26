@@ -213,6 +213,8 @@ struct OutcomeEntry {
 struct VisitNote {
     var outcomeEntries: [UUID: OutcomeEntry] = [:]   // keyed by Outcome.id
     var additionalComments: String = ""
+    /// Required: "Reviewed goals, activities, and schedule during transport?"
+    var transportReviewedGoals: Bool? = nil
 
     func isComplete(for outcomes: [Outcome]) -> Bool {
         outcomes.allSatisfy { outcomeEntries[$0.id]?.isComplete == true }
