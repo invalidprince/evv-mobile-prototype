@@ -167,14 +167,23 @@ struct OpenShift: Identifiable {
     let end: Date
 }
 
-enum PromptLevel: String, CaseIterable, Identifiable {
+enum DataPoint: String, CaseIterable, Identifiable {
+    case prompts = "Prompts"
+    case successes = "Successes"
+    case opportunities = "Opportunities"
+    case notApplicable = "N/A"
+
+    var id: String { rawValue }
+}
+
+/// Legacy prompt-level values (for backward compat with existing saved records).
+/// These are only used when loading old data — new entries always use DataPoint.
+enum LegacyPromptLevel: String {
     case independent = "Independent"
     case verbal = "Verbal"
     case gestural = "Gestural"
     case partialPhysical = "Partial Physical"
     case fullPhysical = "Full Physical"
-
-    var id: String { rawValue }
 }
 
 struct Outcome: Identifiable {
@@ -187,14 +196,17 @@ struct Outcome: Identifiable {
 // MARK: - Visit note (per-goal data + narrative)
 
 struct OutcomeEntry {
-    var promptLevel: PromptLevel?
+    var dataPoint: DataPoint?
     var frequency: Int = 0
     var goalOpportunity = false
     var behaviorObserved = false
     var narrative: String = ""
 
+    /// When N/A is selected, the outcome is complete without a narrative
+    /// (the staff didn't work on this goal today).
     var isComplete: Bool {
-        promptLevel != nil && !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if dataPoint == .notApplicable { return true }
+        return dataPoint != nil && !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 

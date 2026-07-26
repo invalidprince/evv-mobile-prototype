@@ -20,25 +20,31 @@ struct OutcomeEntryView: View {
                     .font(.title3)
             }
 
-            // Prompt level — 5 big buttons (data point, required)
+            // Data point — 4 big buttons (required)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Prompt Level *")
+                Text("Data Point *")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
-                ForEach(PromptLevel.allCases) { level in
-                    Button(action: { entry.promptLevel = level }) {
+                ForEach(DataPoint.allCases) { dp in
+                    Button(action: {
+                        entry.dataPoint = dp
+                        // When N/A is selected, auto-fill narrative if empty
+                        if dp == .notApplicable && entry.narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            entry.narrative = "We did not work on this outcome today."
+                        }
+                    }) {
                         HStack {
-                            Text(level.rawValue)
+                            Text(dp.rawValue)
                                 .font(.subheadline.weight(.medium))
                             Spacer()
-                            if entry.promptLevel == level {
+                            if entry.dataPoint == dp {
                                 Image(systemName: "checkmark.circle.fill")
                             }
                         }
                         .padding(.horizontal, 14)
                         .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                        .background(entry.promptLevel == level ? Theme.primary : Theme.screenBackground)
-                        .foregroundColor(entry.promptLevel == level ? .white : .primary)
+                        .background(entry.dataPoint == dp ? (dp == .notApplicable ? Color.secondary : Theme.primary) : Theme.screenBackground)
+                        .foregroundColor(entry.dataPoint == dp ? .white : .primary)
                         .cornerRadius(10)
                     }
                 }
@@ -71,13 +77,15 @@ struct OutcomeEntryView: View {
             Toggle("Target behavior observed", isOn: $entry.behaviorObserved)
                 .font(.subheadline)
 
-            // Per-goal narrative (required)
+            // Per-goal narrative (required unless N/A)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Narrative *")
+                Text(entry.dataPoint == .notApplicable ? "Narrative" : "Narrative *")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
                 DocTextEditor(text: $entry.narrative,
-                              placeholder: "Describe how \(outcome.title.lowercased()) went during this visit…",
+                              placeholder: entry.dataPoint == .notApplicable
+                                  ? "Optional — add details if needed"
+                                  : "Describe how \(outcome.title.lowercased()) went during this visit…",
                               minHeight: 80)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)

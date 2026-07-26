@@ -43,6 +43,8 @@ final class AppState: ObservableObject {
 
     // MARK: - Notes (drafts keyed by visit id)
     @Published var noteDrafts: [UUID: VisitNote] = [:]
+    /// Server-mode drafts keyed by stable serverVisitId (survives visit-list refreshes)
+    @Published var serverNoteDrafts: [String: VisitNote] = [:]
 
     // MARK: - Offline queue (server mode)
     @Published var offlineQueue: [QueuedAction] = []
@@ -581,6 +583,14 @@ final class AppState: ObservableObject {
 
     func saveNoteDraft(visitId: UUID, note: VisitNote) {
         noteDrafts[visitId] = note
+    }
+
+    func serverNoteDraft(for serverVisitId: String) -> VisitNote {
+        serverNoteDrafts[serverVisitId] ?? VisitNote()
+    }
+
+    func saveServerNoteDraft(serverVisitId: String, note: VisitNote) {
+        serverNoteDrafts[serverVisitId] = note
     }
 
     func submitNote(visitId: UUID, note: VisitNote) {

@@ -312,7 +312,7 @@ struct DocumentationView: View {
 
                     HStack(spacing: 12) {
                         Button("Save Draft") {
-                            appState.saveNoteDraft(visitId: visit.id, note: note)
+                            saveDraft()
                             dismiss()
                         }
                         .buttonStyle(SecondaryButtonStyle())
@@ -344,14 +344,14 @@ struct DocumentationView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") {
-                    appState.saveNoteDraft(visitId: visit.id, note: note)
+                    saveDraft()
                     dismiss()
                 }
             }
         }
         .onAppear {
             if !loaded {
-                note = appState.noteDraft(for: visit.id)
+                note = loadDraft()
                 loaded = true
                 if appState.mode == .server {
                     Task { await loadServerTemplate() }
@@ -401,11 +401,11 @@ struct DocumentationView: View {
             let template = try await APIClient.shared.fetchDocumentation(visitId: svid)
 
             await MainActor.run {
-                // Map outcomes
+                // Map outcomes — use deterministic localIds so drafts persist
                 serverOutcomes = (template.outcomes ?? []).map { so in
                     ServerDocOutcome(
                         serverId: so.id,
-                        localId: UUID(),
+                        localId: ServerDocOutcome.stableLocalId(for: so.id),
                         title: so.title,
                         goal: so.goal,
                         status: so.status
@@ -465,7 +465,18 @@ struct DocumentationView: View {
                    let match = serverOutcomes.first(where: { $0.serverId == outcomeId }) {
                     var oe = OutcomeEntry()
                     if let pl = entry.promptLevel {
-                        oe.promptLevel = PromptLevel.allCases.first(where: { $0.rawValue == pl })
+                        // Try new DataPoint values first, then fall back to legacy
+                        oe.dataPoint = DataPoint.allCases.first(where: { $0.rawValue == pl })
+                        if oe.dataPoint == nil {
+                            // Legacy prompt level — map to closest new data point
+                            if let legacy = LegacyPromptLevel(rawValue: pl) {
+                                switch legacy {
+                                case .independent: oe.dataPoint = .successes
+                                case .verbal, .gestural: oe.dataPoint = .prompts
+                                case .partialPhysical, .fullPhysical: oe.dataPoint = .prompts
+                                }
+                            }
+                        }
                     }
                     oe.frequency = entry.frequency ?? 0
                     oe.goalOpportunity = entry.goalOpportunity ?? false
@@ -498,7 +509,16 @@ struct DocumentationView: View {
 
             var oe = OutcomeEntry()
             if let pl = draftOutcome.promptLevel {
-                oe.promptLevel = PromptLevel.allCases.first(where: { $0.rawValue == pl })
+                oe.dataPoint = DataPoint.allCases.first(where: { $0.rawValue == pl })
+                // Fall back: legacy prompt level values from AI
+                if oe.dataPoint == nil {
+                    if let legacy = LegacyPromptLevel(rawValue: pl) {
+                        switch legacy {
+                        case .independent: oe.dataPoint = .successes
+                        case .verbal, .gestural, .partialPhysical, .fullPhysical: oe.dataPoint = .prompts
+                        }
+                    }
+                }
             }
             oe.frequency = draftOutcome.frequency ?? 0
             oe.goalOpportunity = draftOutcome.goalOpportunity ?? false
@@ -541,7 +561,16 @@ struct DocumentationView: View {
 
                 var oe = OutcomeEntry()
                 if let pl = voiceOutcome.promptLevel {
-                    oe.promptLevel = PromptLevel.allCases.first(where: { $0.rawValue == pl })
+                    oe.dataPoint = DataPoint.allCases.first(where: { $0.rawValue == pl })
+                    // Fall back: legacy prompt level values from AI
+                    if oe.dataPoint == nil {
+                        if let legacy = LegacyPromptLevel(rawValue: pl) {
+                            switch legacy {
+                            case .independent: oe.dataPoint = .successes
+                            case .verbal, .gestural, .partialPhysical, .fullPhysical: oe.dataPoint = .prompts
+                            }
+                        }
+                    }
                 }
                 oe.frequency = voiceOutcome.frequency ?? 0
                 oe.goalOpportunity = voiceOutcome.goalOpportunity ?? false
@@ -568,6 +597,31 @@ struct DocumentationView: View {
         expanded.insert("Outcomes & Goals")
     }
 
+    // MARK: - Draft save/load (server-mode uses serverVisitId for stability)
+
+    /// Save the current draft. In server mode, uses serverVisitId as the key
+    /// so the draft survives visit-list refreshes (which regenerate local UUIDs).
+    private func saveDraft() {
+        if appState.mode == .server, let svid = visit.serverVisitId {
+            appState.saveServerNoteDraft(serverVisitId: svid, note: note)
+        } else {
+            appState.saveNoteDraft(visitId: visit.id, note: note)
+        }
+    }
+
+    /// Load any existing draft. In server mode, tries serverVisitId first,
+    /// then falls back to local UUID (covers the case where a draft was saved
+    /// before this fix).
+    private func loadDraft() -> VisitNote {
+        if appState.mode == .server, let svid = visit.serverVisitId {
+            let draft = appState.serverNoteDraft(for: svid)
+            if !draft.outcomeEntries.isEmpty || !draft.additionalComments.isEmpty {
+                return draft
+            }
+        }
+        return appState.noteDraft(for: visit.id)
+    }
+
     // MARK: - Server documentation submission
 
     private func submitServerDocumentation() async {
@@ -587,8 +641,9 @@ struct DocumentationView: View {
                 "behaviorObserved": entry.behaviorObserved,
                 "narrative": entry.narrative
             ]
-            if let pl = entry.promptLevel {
-                dict["promptLevel"] = pl.rawValue
+            if let dp = entry.dataPoint {
+                // Send as promptLevel key for backward compat with server
+                dict["promptLevel"] = dp.rawValue
             }
             return dict
         }
@@ -664,10 +719,31 @@ struct DocumentationView: View {
 
 struct ServerDocOutcome {
     let serverId: Int
+    /// Deterministic UUID derived from serverId so that draft entries
+    /// (keyed by localId) survive across template reloads.
     let localId: UUID
     let title: String
     let goal: String?
     let status: String?
+
+    /// Create a stable, deterministic UUID from a server outcome ID.
+    /// This ensures draft outcome entries (keyed by localId) persist
+    /// correctly across template reloads within the same app session.
+    static func stableLocalId(for serverId: Int) -> UUID {
+        // Build a 16-byte UUID from a fixed prefix + the server ID.
+        // Prefix bytes 0xEE 0x0C serve as a namespace marker.
+        var bytes: [UInt8] = [0xEE, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        withUnsafeBytes(of: serverId.bigEndian) { buf in
+            for (i, b) in buf.enumerated() where i < 8 {
+                bytes[8 + i] = b
+            }
+        }
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3],
+                           bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11],
+                           bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
 }
 
 struct ServerDocHealthInfo {
