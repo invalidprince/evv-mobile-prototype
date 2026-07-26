@@ -54,6 +54,9 @@ struct DocumentationView: View {
             c.allergies = health.allergies
             c.safetyAlerts = health.safetyAlerts
             c.protocols = health.protocols
+            c.communicationUnderstood = health.communicationUnderstood
+            c.adaptiveEquipment = health.adaptiveEquipment
+            c.supervisionLevel = health.supervisionLevel
             return c
         }
         return visit.client
@@ -480,7 +483,10 @@ struct DocumentationView: View {
                     safetyAlerts: health?.safetyAlerts ?? [],
                     protocols: health?.protocols ?? [],
                     diagnosis: health?.diagnosis ?? [],
-                    healthNotes: health?.healthNotes ?? ""
+                    healthNotes: health?.healthNotes ?? "",
+                    communicationUnderstood: health?.communicationUnderstood ?? "",
+                    adaptiveEquipment: health?.adaptiveEquipment ?? "",
+                    supervisionLevel: health?.supervisionLevel ?? ""
                 )
 
                 // Capture AI Assist feature flag
@@ -829,6 +835,9 @@ struct ServerDocHealthInfo {
     let protocols: [String]
     let diagnosis: [String]
     let healthNotes: String
+    let communicationUnderstood: String
+    let adaptiveEquipment: String
+    let supervisionLevel: String
 }
 
 // MARK: - Read-only health & safety information
@@ -846,7 +855,18 @@ struct HealthSafetyInfoView: View {
             infoBlock(title: "Safety Alerts", icon: "exclamationmark.triangle.fill", color: Theme.warning, items: client.safetyAlerts)
             infoBlock(title: "Protocols", icon: "list.clipboard.fill", color: Theme.primary, items: client.protocols)
 
-            if client.allergies.isEmpty && client.safetyAlerts.isEmpty && client.protocols.isEmpty {
+            if !client.communicationUnderstood.isEmpty {
+                singleInfoBlock(title: "Communication", icon: "bubble.left.and.bubble.right.fill", color: Theme.primary, text: client.communicationUnderstood)
+            }
+            if !client.adaptiveEquipment.isEmpty {
+                singleInfoBlock(title: "Adaptive Equipment", icon: "figure.roll", color: Theme.success, text: client.adaptiveEquipment)
+            }
+            if !client.supervisionLevel.isEmpty {
+                singleInfoBlock(title: "Supervision Level", icon: "eye.fill", color: Theme.warning, text: client.supervisionLevel)
+            }
+
+            if client.allergies.isEmpty && client.safetyAlerts.isEmpty && client.protocols.isEmpty
+                && client.communicationUnderstood.isEmpty && client.adaptiveEquipment.isEmpty && client.supervisionLevel.isEmpty {
                 Text("No health & safety information on file for this individual.")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -874,6 +894,19 @@ struct HealthSafetyInfoView: View {
             .background(color.opacity(0.08))
             .cornerRadius(10)
         }
+    }
+
+    private func singleInfoBlock(title: String, icon: String, color: Color, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.bold))
+                .foregroundColor(color)
+            Text(text).font(.subheadline)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.08))
+        .cornerRadius(10)
     }
 }
 

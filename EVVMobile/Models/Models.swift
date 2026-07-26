@@ -8,6 +8,9 @@ struct Client: Identifiable, Hashable {
     var allergies: [String] = []
     var safetyAlerts: [String] = []
     var protocols: [String] = []
+    var communicationUnderstood: String = ""
+    var adaptiveEquipment: String = ""
+    var supervisionLevel: String = ""
 
     var fullAddress: String { "\(address), \(city)" }
 }

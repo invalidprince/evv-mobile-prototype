@@ -171,6 +171,9 @@ struct ServerHealthInfo: Decodable {
     let protocols: [String]?
     let diagnosis: [String]?
     let healthNotes: String?
+    let communicationUnderstood: String?
+    let adaptiveEquipment: String?
+    let supervisionLevel: String?
 }
 
 struct ServerOutcomeEntry: Decodable {
