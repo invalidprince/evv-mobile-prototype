@@ -72,31 +72,23 @@ struct ClockOutFlow: View {
     }
 
     // MARK: - Documentation gate
-
-    /// True when a note was already submitted during the visit (mid-shift
-    /// documentation). The gate then reads as a review step instead of
-    /// claiming the documentation isn't done.
-    private var noteAlreadySubmitted: Bool { visit.hasNote }
-
     private var docGateView: some View {
         VStack(spacing: 20) {
             Spacer()
-            Image(systemName: noteAlreadySubmitted ? "doc.text.magnifyingglass" : "doc.text.fill")
+            Image(systemName: "doc.text.fill")
                 .font(.system(size: 56))
-                .foregroundColor(noteAlreadySubmitted ? Theme.success : Theme.warning)
-            Text(noteAlreadySubmitted ? "Review your visit documentation" : "Visit documentation isn't finished")
+                .foregroundColor(Theme.warning)
+            Text("Visit documentation isn't finished")
                 .font(.title3.bold())
                 .multilineTextAlignment(.center)
-            Text(noteAlreadySubmitted
-                ? "You submitted a note during this visit. Give it a final review (and any last edits) now, or finish later today."
-                : "Complete your visit note now, or continue and finish it later today.")
+            Text("Complete your visit note now, or continue and finish it later today.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Spacer()
             VStack(spacing: 12) {
-                Button(noteAlreadySubmitted ? "Review Documentation Now" : "Complete Documentation Now") { showDocumentation = true }
+                Button("Complete Documentation Now") { showDocumentation = true }
                     .buttonStyle(PrimaryButtonStyle(enabled: appState.effectivelyOnline))
                     .disabled(!appState.effectivelyOnline)
                 if !appState.effectivelyOnline {

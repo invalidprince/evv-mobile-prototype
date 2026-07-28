@@ -439,9 +439,7 @@ struct DocumentationView: View {
         .alert("Documentation submitted", isPresented: $showSubmitted) {
             Button("OK") { dismiss() }
         } message: {
-            Text(visit.status == .inProgress
-                ? "Your note is saved to this visit. You're still clocked in — you can keep editing it until you clock out, and it will be prefilled there."
-                : "Your visit note has been saved and queued to sync.")
+            Text("Your visit note has been saved and queued to sync.")
         }
     }
 
@@ -789,11 +787,7 @@ struct DocumentationView: View {
             await MainActor.run {
                 isSubmitting = false
                 let docStatus = response.docStatus ?? "complete"
-
-                // Keep the local draft in sync with what was submitted so a
-                // later reopen (mid-visit edit, or the clock-out doc step)
-                // prefills exactly the submitted content.
-                saveDraft()
+                let isComplete = docStatus.lowercased() == "complete"
 
                 // Update visit state (B1 fix behavior)
                 appState.markServerDocComplete(
@@ -816,7 +810,7 @@ struct DocumentationView: View {
                 isSubmitting = false
                 if apiErr.isNetworkError {
                     // Queue for offline - save draft and show message
-                    saveDraft()
+                    appState.saveNoteDraft(visitId: visit.id, note: note)
                     submitError = "You're offline. Draft saved — submit when back online."
                 } else {
                     submitError = error.localizedDescription
