@@ -148,8 +148,11 @@ final class AppState: ObservableObject {
                 let wasEffectivelyOnline = self.effectivelyOnline
                 self.isOnline = (path.status == .satisfied)
                 let nowEffectivelyOnline = self.effectivelyOnline
-                // offline → online transition: auto-sync if items are pending
-                if !wasEffectivelyOnline && nowEffectivelyOnline && self.pendingSyncCount > 0 {
+                // offline → online transition: auto-sync if items are pending.
+                // In server mode always sync — this also re-fetches the shift
+                // list so dashboard-created shifts appear without a re-login.
+                if !wasEffectivelyOnline && nowEffectivelyOnline
+                    && (self.pendingSyncCount > 0 || self.mode == .server) {
                     self.syncNow()
                 }
             }
@@ -164,7 +167,10 @@ final class AppState: ObservableObject {
             .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
             .sink { [weak self] in
                 guard let self = self else { return }
-                guard self.effectivelyOnline, self.pendingSyncCount > 0, !self.isSyncing else { return }
+                guard self.effectivelyOnline, !self.isSyncing else { return }
+                // Server mode: always sync (replays queue AND re-fetches shifts
+                // from the server). Mock mode: only when items are pending.
+                guard self.pendingSyncCount > 0 || self.mode == .server else { return }
                 self.syncNow()
             }
             .store(in: &cancellables)
@@ -176,7 +182,8 @@ final class AppState: ObservableObject {
             .dropFirst()          // skip the initial value
             .sink { [weak self] nowSimulated in
                 guard let self = self else { return }
-                if !nowSimulated && self.isOnline && self.pendingSyncCount > 0 {
+                if !nowSimulated && self.isOnline
+                    && (self.pendingSyncCount > 0 || self.mode == .server) {
                     self.syncNow()
                 }
             }
@@ -191,9 +198,11 @@ final class AppState: ObservableObject {
     }
 
     /// Call from the app's scenePhase handler when the app comes to the
-    /// foreground.
+    /// foreground.  In server mode this always syncs (replay queue + refresh
+    /// shifts) so schedule changes made on the dashboard show up promptly.
     func handleSceneActive() {
-        guard effectivelyOnline, pendingSyncCount > 0, !isSyncing else { return }
+        guard effectivelyOnline, !isSyncing else { return }
+        guard pendingSyncCount > 0 || mode == .server else { return }
         syncNow()
     }
 
@@ -842,10 +851,12 @@ final class AppState: ObservableObject {
             return nil
         }
 
+        // Use the client's real address from the server when available;
+        // the (billing) location name is kept separately in serverLocation.
         let client = Client(
             id: UUID(),
             name: s.individual.name,
-            address: s.location ?? "",
+            address: s.individual.address ?? "",
             city: ""
         )
 

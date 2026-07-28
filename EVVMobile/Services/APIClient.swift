@@ -27,6 +27,10 @@ struct ServerStaff: Decodable {
 struct ServerIndividual: Decodable {
     let id: String
     let name: String
+    /// Client's home/service address (from the dashboard client record).
+    let address: String?
+    /// Geofence radius in feet (from the dashboard client record).
+    let geofence: Int?
 }
 
 struct ServerPartner: Decodable {

@@ -12,7 +12,12 @@ struct Client: Identifiable, Hashable {
     var adaptiveEquipment: String = ""
     var supervisionLevel: String = ""
 
-    var fullAddress: String { "\(address), \(city)" }
+    var fullAddress: String {
+        let parts = [address, city]
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return parts.joined(separator: ", ")
+    }
 }
 
 struct Staff: Identifiable, Hashable {

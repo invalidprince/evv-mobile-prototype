@@ -121,6 +121,12 @@ struct ServerScheduleContent: View {
         .refreshable {
             await appState.refreshServerShifts()
         }
+        .onAppear {
+            // Re-fetch the schedule whenever this screen appears so shifts
+            // created on the dashboard show up without a re-login.
+            guard appState.effectivelyOnline else { return }
+            Task { await appState.refreshServerShifts() }
+        }
     }
 }
 

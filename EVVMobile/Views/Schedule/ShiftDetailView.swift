@@ -1,8 +1,22 @@
 import SwiftUI
+import MapKit
+import CoreLocation
+
+/// Identifiable wrapper for the single map annotation.
+private struct ShiftMapPin: Identifiable {
+    let id = UUID()
+    let coordinate: CLLocationCoordinate2D
+}
 
 struct ShiftDetailView: View {
     let visit: Visit
     @State private var showContactAlert = false
+
+    // MARK: - Map state
+    @State private var mapRegion = MKCoordinateRegion()
+    @State private var mapPin: ShiftMapPin?
+    @State private var geocodeFailed = false
+    @State private var geocodeStarted = false
 
     private var timeWindow: String {
         let f = DateFormatter()
@@ -12,22 +26,45 @@ struct ShiftDetailView: View {
         return "\(f.string(from: visit.scheduledStart)) – \(f2.string(from: visit.scheduledEnd))"
     }
 
+    /// The client's street address (mock mode includes city), if any.
+    private var clientAddress: String? {
+        let addr = visit.client.fullAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        return addr.isEmpty ? nil : addr
+    }
+
+    /// What to show on the location row: real address first, then the
+    /// (billing) location name from the server.
+    private var displayAddress: String? {
+        if let addr = clientAddress { return addr }
+        if let loc = visit.serverLocation, !loc.isEmpty { return loc }
+        return nil
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Map placeholder
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Theme.primary.opacity(0.08))
-                        .frame(height: 180)
-                    VStack(spacing: 8) {
-                        Image(systemName: "map.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(Theme.primary.opacity(0.5))
-                        Text("Map preview")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                // Map preview — shown whenever the client has an address
+                if clientAddress != nil && !geocodeFailed {
+                    ZStack {
+                        if let pin = mapPin {
+                            Map(coordinateRegion: $mapRegion, interactionModes: [], annotationItems: [pin]) { item in
+                                MapMarker(coordinate: item.coordinate, tint: Theme.primary)
+                            }
+                            .frame(height: 180)
+                            .cornerRadius(14)
+                        } else {
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(Theme.primary.opacity(0.08))
+                                .frame(height: 180)
+                            VStack(spacing: 8) {
+                                ProgressView()
+                                Text("Loading map…")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
+                    .onTapGesture { openDirections() }
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -49,11 +86,8 @@ struct ShiftDetailView: View {
                     Divider()
                     Label(timeWindow, systemImage: "clock.fill")
                         .font(.subheadline)
-                    if let loc = visit.serverLocation, !loc.isEmpty {
-                        Label(loc, systemImage: "mappin.and.ellipse")
-                            .font(.subheadline)
-                    } else {
-                        Label(visit.client.fullAddress, systemImage: "mappin.and.ellipse")
+                    if let addr = displayAddress {
+                        Label(addr, systemImage: "mappin.and.ellipse")
                             .font(.subheadline)
                     }
                     if !visit.partners.isEmpty {
@@ -69,10 +103,12 @@ struct ShiftDetailView: View {
                 .cardStyle()
 
                 VStack(spacing: 12) {
-                    Button(action: {}) {
-                        Label("Get Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                    if displayAddress != nil {
+                        Button(action: openDirections) {
+                            Label("Get Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
                     }
-                    .buttonStyle(PrimaryButtonStyle())
 
                     Button(action: { showContactAlert = true }) {
                         Label("Contact Supervisor", systemImage: "phone.fill")
@@ -80,26 +116,60 @@ struct ShiftDetailView: View {
                     .buttonStyle(SecondaryButtonStyle())
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Shift Notes")
-                        .font(.headline)
-                    Text(visit.notes.isEmpty
-                         ? "Client prefers morning routine before activities. Check communication log on arrival. Medication reminder at visit midpoint."
-                         : visit.notes)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                // Shift notes — only shown when the shift actually has notes
+                let notes = visit.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Shift Notes")
+                            .font(.headline)
+                        Text(notes)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .cardStyle()
                 }
-                .cardStyle()
             }
             .padding(16)
         }
         .background(Theme.screenBackground.ignoresSafeArea())
         .navigationTitle("Shift Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { geocodeIfNeeded() }
         .alert("Contact Supervisor", isPresented: $showContactAlert) {
             Button("Call Tanya Ruiz") {}
             Button("Message Tanya Ruiz") {}
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    // MARK: - Geocoding
+
+    private func geocodeIfNeeded() {
+        guard !geocodeStarted, let addr = clientAddress else { return }
+        geocodeStarted = true
+        CLGeocoder().geocodeAddressString(addr) { placemarks, _ in
+            DispatchQueue.main.async {
+                guard let location = placemarks?.first?.location else {
+                    geocodeFailed = true
+                    return
+                }
+                let pin = ShiftMapPin(coordinate: location.coordinate)
+                mapPin = pin
+                mapRegion = MKCoordinateRegion(
+                    center: location.coordinate,
+                    latitudinalMeters: 600,
+                    longitudinalMeters: 600
+                )
+            }
+        }
+    }
+
+    // MARK: - Directions
+
+    private func openDirections() {
+        guard let addr = displayAddress,
+              let encoded = addr.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "http://maps.apple.com/?daddr=\(encoded)") else { return }
+        UIApplication.shared.open(url)
     }
 }
