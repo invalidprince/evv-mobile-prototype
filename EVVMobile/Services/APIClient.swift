@@ -4,6 +4,7 @@ import Foundation
 
 struct LoginRequest: Encodable {
     let email: String
+    let password: String
 }
 
 struct GoogleLoginRequest: Encodable {
@@ -450,12 +451,12 @@ actor APIClient {
 
     // MARK: - Login
 
-    func login(email: String) async throws -> LoginResponse {
+    func login(email: String, password: String) async throws -> LoginResponse {
         let url = URL(string: "\(baseURL)/login")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(LoginRequest(email: email))
+        request.httpBody = try JSONEncoder().encode(LoginRequest(email: email, password: password))
         request.timeoutInterval = 15
 
         let (data, response) = try await performRequest(request)

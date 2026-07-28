@@ -701,8 +701,8 @@ final class AppState: ObservableObject {
         LocationManager.shared.requestPermission()
     }
 
-    func loginWithServer(email: String) async throws {
-        let response = try await APIClient.shared.login(email: email)
+    func loginWithServer(email: String, password: String) async throws {
+        let response = try await APIClient.shared.login(email: email, password: password)
         await MainActor.run {
             self.serverStaff = response.staff
             self.serverToken = response.token
