@@ -128,6 +128,11 @@ struct TodayView: View {
             }
             .background(Theme.screenBackground.ignoresSafeArea())
             .navigationBarHidden(true)
+            .onAppear {
+                // Warm up GPS as soon as the Today screen shows so a clock-in
+                // moments later can use the cached fix instead of waiting.
+                LocationManager.shared.warmUp()
+            }
             .sheet(item: $clockInTarget) { visit in
                 if visit.evvRequired {
                     ClockInConfirmSheet(visit: visit)
@@ -206,10 +211,20 @@ struct TodayView: View {
 
     private var otherActions: some View {
         VStack(spacing: 12) {
+            // One active visit at a time: block starting an unscheduled visit
+            // while any visit is running (scheduled or unscheduled).
             Button(action: { showUnscheduled = true }) {
                 Label("Start Unscheduled Visit", systemImage: "plus.circle.fill")
             }
             .buttonStyle(SecondaryButtonStyle())
+            .disabled(appState.hasActiveVisit)
+            .opacity(appState.hasActiveVisit ? 0.5 : 1)
+
+            if appState.hasActiveVisit {
+                Text("Clock out of your current visit first.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
 
             Button(action: { showNonBillable = true }) {
                 Label("Non-Billable Time", systemImage: "briefcase.fill")

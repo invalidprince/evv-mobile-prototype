@@ -13,7 +13,7 @@ struct UpNextCard: View {
 
     /// Live punches are blocked while another visit is running. Manual time
     /// entry (non-EVV) never starts a running visit, so it's never blocked.
-    private var isBlocked: Bool { visit.evvRequired && appState.activeVisit != nil }
+    private var isBlocked: Bool { visit.evvRequired && appState.hasActiveVisit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -69,6 +69,12 @@ struct UpNextCard: View {
             }
             .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: !isBlocked))
             .disabled(isBlocked)
+
+            if isBlocked {
+                Text("Clock out of your current visit first.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
         .cardStyle()
     }

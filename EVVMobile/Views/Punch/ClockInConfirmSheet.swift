@@ -29,9 +29,13 @@ struct ClockInConfirmSheet: View {
         !manualZip.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// One active visit at a time — no new clock-in while a visit is running.
+    private var punchBlocked: Bool { appState.hasActiveVisit }
+
     // Block confirm while a GPS fix is still being acquired so the punch
-    // carries real coordinates (acquisition is bounded by a 15s timeout).
-    private var canConfirm: Bool { !isAcquiringLocation && (!gpsUnavailable || manualAddressValid) }
+    // carries real coordinates (acquisition is bounded by a 10s timeout),
+    // and always block while another visit is running.
+    private var canConfirm: Bool { !punchBlocked && !isAcquiringLocation && (!gpsUnavailable || manualAddressValid) }
 
     init(visit: Visit) {
         self.visit = visit
@@ -102,8 +106,19 @@ struct ClockInConfirmSheet: View {
                 .cardStyle()
                 .padding(.horizontal)
 
-                if gpsUnavailable {
+                if gpsUnavailable && !punchBlocked {
                     manualAddressCard
+                }
+
+                if punchBlocked {
+                    Label("Clock out of your current visit first.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(Theme.danger)
+                        .padding(10)
+                        .frame(maxWidth: .infinity)
+                        .background(Theme.danger.opacity(0.1))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
                 }
 
                 Spacer(minLength: 12)
@@ -200,6 +215,11 @@ struct ClockInConfirmSheet: View {
     }
 
     private func confirm() {
+        // Guard against stale UI: never start while another visit is running.
+        guard !appState.hasActiveVisit else {
+            appState.surfacePunchBlocked()
+            return
+        }
         var location: ManualLocation?
         if gpsUnavailable {
             guard manualAddressValid else { return }

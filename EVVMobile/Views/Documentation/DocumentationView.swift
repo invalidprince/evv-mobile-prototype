@@ -735,7 +735,7 @@ struct DocumentationView: View {
                 visitId: svid,
                 outcomes: outcomePayload,
                 additionalComments: note.additionalComments,
-                transportReviewedGoals: note.transportReviewedGoals ?? false,
+                transportReviewedGoals: note.transportReviewedGoals ?? true,
                 aiAssisted: aiDraftApplied,
                 aiInputText: aiInputText,
                 aiModel: aiModel

@@ -82,6 +82,25 @@ final class AppState: ObservableObject {
         todayVisits.first { $0.status == .inProgress }
     }
 
+    /// True while ANY visit is running (clocked in, not clocked out) —
+    /// scheduled or unscheduled. One active visit at a time is the rule:
+    /// every other clock-in entry point must be blocked while this is true.
+    /// Checks all local visit lists so a date-filter or refresh race can't
+    /// hide a running visit from the guard.
+    var hasActiveVisit: Bool {
+        todayVisits.contains { $0.status == .inProgress }
+            || pastVisits.contains { $0.status == .inProgress }
+            || historyVisits.contains { $0.status == .inProgress }
+    }
+
+    /// Surface the blocked-punch message (also haptic-fails) when a clock-in
+    /// is attempted while another visit is running.
+    func surfacePunchBlocked() {
+        serverError = "Clock out of your current visit first."
+        showServerError = true
+        haptic(.error)
+    }
+
     /// Shifts scheduled for today only (server mode: filters the 7-day window
     /// to just today's date; mock mode: returns all todayVisits).
     var todayOnlyVisits: [Visit] {
@@ -240,8 +259,14 @@ final class AppState: ObservableObject {
 
     // MARK: - Punch actions
     func clockIn(visitId: UUID, manualLocation: ManualLocation? = nil) {
-        guard activeVisit == nil else { return }
+        // Hard guard: never start a second visit, even if a stale UI let the
+        // tap through. Surfaces an explanation instead of failing silently.
+        guard !hasActiveVisit else {
+            surfacePunchBlocked()
+            return
+        }
         guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else { return }
+        let manualAddress = manualLocation?.display
 
         if mode == .server, let shiftId = todayVisits[idx].serverShiftId {
             // Server mode: optimistic update + API call
@@ -253,7 +278,7 @@ final class AppState: ObservableObject {
             if !effectivelyOnline {
                 // Offline: queue and keep the optimistic update
                 todayVisits[idx].syncState = .pending
-                enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId)
+                enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
                 DiagnosticLogger.shared.logOffline("Clock-in queued offline for shift \(shiftId)")
                 scheduleAutoSync()
                 return
@@ -268,11 +293,19 @@ final class AppState: ObservableObject {
                         _ = await LocationManager.shared.acquireLocation()
                         coords = LocationManager.shared.currentCoordinates
                     }
+                    // GPS-unavailable fallback: send the manually entered
+                    // address so the punch never lands with no location AND
+                    // no address.
+                    let fallbackAddress = coords == nil ? manualAddress : nil
+                    if coords == nil && fallbackAddress == nil {
+                        DiagnosticLogger.shared.logAPI("WARNING: clock-in for shift \(shiftId) has no GPS and no address")
+                    }
                     let visitInfo = try await APIClient.shared.clockIn(
                         shiftId: shiftId,
                         lat: coords?.lat,
                         lng: coords?.lng,
-                        accuracy: coords?.accuracy
+                        accuracy: coords?.accuracy,
+                        address: fallbackAddress
                     )
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].serverVisitId = visitInfo.id
@@ -285,7 +318,7 @@ final class AppState: ObservableObject {
                         if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                             self.todayVisits[i].syncState = .pending
                         }
-                        self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId)
+                        self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
                         DiagnosticLogger.shared.logOffline("Clock-in queued (network error) for shift \(shiftId)")
                         self.scheduleAutoSync()
                     } else {
@@ -571,8 +604,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false) {
-        guard activeVisit == nil else { return }
+    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil) {
+        // Hard guard: never start a second visit, even if a stale UI let the
+        // tap through. Surfaces an explanation instead of failing silently.
+        guard !hasActiveVisit else {
+            surfacePunchBlocked()
+            return
+        }
 
         if mode == .server {
             // Server mode: POST to server, then refresh
@@ -601,7 +639,8 @@ final class AppState: ObservableObject {
                                      unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
                                      unschedService: apiServiceName,
                                      unschedClientName: unlistedName,
-                                     localVisitId: localVisitId)
+                                     localVisitId: localVisitId,
+                                     punchAddress: manualAddress)
                 DiagnosticLogger.shared.logOffline("Unscheduled visit queued offline")
                 scheduleAutoSync()
                 return
@@ -614,12 +653,20 @@ final class AppState: ObservableObject {
                         _ = await LocationManager.shared.acquireLocation()
                         coords = LocationManager.shared.currentCoordinates
                     }
+                    // GPS-unavailable fallback: send the manually entered
+                    // address so the punch never lands with no location AND
+                    // no address.
+                    let fallbackAddress = coords == nil ? manualAddress : nil
+                    if coords == nil && fallbackAddress == nil {
+                        DiagnosticLogger.shared.logAPI("WARNING: unscheduled clock-in has no GPS and no address")
+                    }
                     let response = try await APIClient.shared.createUnscheduledVisit(
                         clientIds: serverClientIds,
                         service: apiServiceName,
                         lat: coords?.lat,
                         lng: coords?.lng,
                         accuracy: coords?.accuracy,
+                        address: fallbackAddress,
                         unlistedName: unlistedName
                     )
                     // Update the local visit with server IDs so clock-out works
@@ -646,7 +693,8 @@ final class AppState: ObservableObject {
                                                   unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
                                                   unschedService: apiServiceName,
                                                   unschedClientName: unlistedName,
-                                                  localVisitId: localVisitId)
+                                                  localVisitId: localVisitId,
+                                                  punchAddress: manualAddress)
                         DiagnosticLogger.shared.logOffline("Unscheduled visit queued (network error)")
                         self.scheduleAutoSync()
                     } else {
@@ -674,10 +722,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startUnscheduledVisitWithoutService(clients: [Client]) {
-        guard activeVisit == nil else { return }
+    func startUnscheduledVisitWithoutService(clients: [Client], manualAddress: String? = nil) {
         // Reuse the same offline-capable flow but with noService=true
-        startUnscheduledVisit(clients: clients, service: .inHomeSupport, serviceName: nil, unlistedName: nil, noService: true)
+        // (active-visit guard lives inside startUnscheduledVisit)
+        startUnscheduledVisit(clients: clients, service: .inHomeSupport, serviceName: nil, unlistedName: nil, noService: true, manualAddress: manualAddress)
     }
 
     func acceptOpenShift(_ shift: OpenShift) {
@@ -1172,7 +1220,8 @@ final class AppState: ObservableObject {
                                         signatureSkipReason: String? = nil,
                                         timeFixNewIn: String? = nil, timeFixNewOut: String? = nil,
                                         timeFixReason: String? = nil,
-                                        manualStart: String? = nil, manualEnd: String? = nil) {
+                                        manualStart: String? = nil, manualEnd: String? = nil,
+                                        punchAddress: String? = nil) {
         // DEDUP: clock-out — keep first per server visitId
         if type == .clockOut, let vid = visitId,
            offlineQueue.contains(where: { $0.type == .clockOut && $0.visitId == vid }) {
@@ -1205,6 +1254,7 @@ final class AppState: ObservableObject {
             lat: coords?.lat,
             lng: coords?.lng,
             accuracy: coords?.accuracy,
+            address: coords == nil ? punchAddress : nil,
             createdAt: Date(),
             noteText: noteText,
             nbCategory: nbCategory,
@@ -1301,7 +1351,7 @@ final class AppState: ObservableObject {
                 switch action.type {
                 case .clockIn:
                     if let shiftId = action.shiftId {
-                        let visitInfo = try await APIClient.shared.clockIn(shiftId: shiftId, lat: action.lat, lng: action.lng, accuracy: action.accuracy)
+                        let visitInfo = try await APIClient.shared.clockIn(shiftId: shiftId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, address: action.address)
                         // Update local visit with server visit ID
                         if let localId = action.localVisitId {
                             localToServerVisitId[localId] = visitInfo.id
@@ -1319,7 +1369,7 @@ final class AppState: ObservableObject {
                             ?? todayVisits.first(where: { $0.id == localId })?.serverVisitId
                     }
                     if let visitId = resolvedVisitId {
-                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signatureSkipReason: action.signatureSkipReason)
+                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signatureSkipReason: action.signatureSkipReason, address: action.address)
                     } else {
                         // Can't resolve yet — keep for next sync
                         remaining.append(action)
@@ -1364,6 +1414,7 @@ final class AppState: ObservableObject {
                         let response = try await APIClient.shared.createUnscheduledVisit(
                             clientIds: action.unschedClientIds ?? [], service: action.unschedService,
                             lat: action.lat, lng: action.lng, accuracy: action.accuracy,
+                            address: action.address,
                             unlistedName: action.unschedClientName,
                             startTime: action.manualStart, endTime: action.manualEnd)
                         // Update local visit with real server IDs

@@ -32,8 +32,39 @@ struct ServerUnscheduledContent: View {
     // Manual time entry (non-EVV services)
     @State private var manualStart: Date = Date().addingTimeInterval(-3600)
     @State private var manualEnd: Date = Date()
+    // Location state (GPS-unavailable address fallback)
+    @ObservedObject private var locationManager = LocationManager.shared
+    @State private var fallbackAddress = ""
 
     private let maxIndividuals = 2  // 1:2 group visits are the max
+
+    /// One active visit at a time — no new clock-in while a visit is running.
+    private var punchBlocked: Bool { appState.hasActiveVisit }
+
+    /// GPS could not be obtained (denied, restricted, or timed out) and no
+    /// usable coordinates are available for the punch.
+    private var gpsFailed: Bool {
+        !locationManager.isAcquiring
+            && locationManager.currentCoordinates == nil
+            && (locationManager.locationError != nil
+                || locationManager.authorizationStatus == .denied
+                || locationManager.authorizationStatus == .restricted)
+    }
+
+    private var trimmedFallbackAddress: String? {
+        let t = fallbackAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
+    /// A live EVV punch needs GPS or, failing that, a manually entered address.
+    private var locationRequirementMet: Bool {
+        !gpsFailed || trimmedFallbackAddress != nil
+    }
+
+    /// Combined enable check for the live clock-in buttons.
+    private var clockInAllowed: Bool {
+        !punchBlocked && !locationManager.isAcquiring && locationRequirementMet
+    }
 
     /// True when the currently selected service does not require live EVV
     /// punches — staff enter the visit start/end times manually instead.
@@ -302,6 +333,35 @@ struct ServerUnscheduledContent: View {
                     }
                 }
 
+                // Active-visit block + GPS status for live EVV punches
+                if !manualEntryActive {
+                    if punchBlocked {
+                        Section {
+                            Label("Clock out of your current visit first.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline)
+                                .foregroundColor(Theme.danger)
+                        }
+                    } else if locationManager.isAcquiring {
+                        Section(header: Text("Location")) {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("Getting your location\u{2026}")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    } else if gpsFailed {
+                        Section(header: Text("Location"),
+                                footer: Text("GPS couldn't be captured. Enter the address where this service is being provided \u{2014} the visit will be flagged for manager review.")) {
+                            Label("Location unavailable", systemImage: "location.slash.fill")
+                                .font(.subheadline)
+                                .foregroundColor(Theme.danger)
+                            TextField("Service address (street, city, state)", text: $fallbackAddress)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+
                 Section {
                     if isUnlisted {
                         if unlistedServiceIsNonEvv {
@@ -314,10 +374,10 @@ struct ServerUnscheduledContent: View {
                         } else {
                             // F2: Unlisted clock-in
                             Button(action: startUnlistedVisit) {
-                                Label("Clock In Now", systemImage: "play.circle.fill")
+                                Label(punchBlocked ? "Clock out first" : "Clock In Now", systemImage: "play.circle.fill")
                                     .frame(maxWidth: .infinity)
                             }
-                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty)
+                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty || !clockInAllowed)
                         }
                     } else if selectedServiceIsNonEvv {
                         // Non-EVV service: manual time entry
@@ -328,18 +388,19 @@ struct ServerUnscheduledContent: View {
                         .disabled(selectedIndividualIds.isEmpty || !manualTimesValid)
                     } else {
                         Button(action: startVisit) {
-                            Label("Clock In Now", systemImage: "play.circle.fill")
+                            Label(punchBlocked ? "Clock out first" : "Clock In Now", systemImage: "play.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
-                        .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty)
+                        .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty || !clockInAllowed)
 
                         // "Clock In Without Service" fallback
                         if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
                             Button(action: startVisitWithoutService) {
-                                Label("Clock In Without Service", systemImage: "exclamationmark.triangle.fill")
+                                Label(punchBlocked ? "Clock out first" : "Clock In Without Service", systemImage: "exclamationmark.triangle.fill")
                                     .frame(maxWidth: .infinity)
                                     .foregroundColor(.orange)
                             }
+                            .disabled(!clockInAllowed)
                         }
                     }
                 }
@@ -377,6 +438,11 @@ struct ServerUnscheduledContent: View {
     }
 
     private func startVisit() {
+        // Guard against stale UI: never start while another visit is running.
+        guard !appState.hasActiveVisit else {
+            appState.surfacePunchBlocked()
+            return
+        }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
         guard !selectedIndividuals.isEmpty, !selectedServiceName.isEmpty else { return }
 
@@ -391,11 +457,17 @@ struct ServerUnscheduledContent: View {
         }
         // Map selected service description to a ServiceType for backward compat
         let serviceType = mapServiceNameToType(selectedServiceName)
-        appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: selectedServiceName)
+        appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: selectedServiceName,
+                                       manualAddress: trimmedFallbackAddress)
         showSuccess = true
     }
 
     private func startVisitWithoutService() {
+        // Guard against stale UI: never start while another visit is running.
+        guard !appState.hasActiveVisit else {
+            appState.surfacePunchBlocked()
+            return
+        }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
         guard !selectedIndividuals.isEmpty else { return }
 
@@ -407,7 +479,7 @@ struct ServerUnscheduledContent: View {
                 city: ""
             )
         }
-        appState.startUnscheduledVisitWithoutService(clients: clients)
+        appState.startUnscheduledVisitWithoutService(clients: clients, manualAddress: trimmedFallbackAddress)
         showSuccess = true
     }
 
@@ -446,6 +518,11 @@ struct ServerUnscheduledContent: View {
 
     // F2: Start visit for unlisted individual
     private func startUnlistedVisit() {
+        // Guard against stale UI: never start while another visit is running.
+        guard !appState.hasActiveVisit else {
+            appState.surfacePunchBlocked()
+            return
+        }
         let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !unlistedServiceName.isEmpty else { return }
 
@@ -453,7 +530,8 @@ struct ServerUnscheduledContent: View {
         let client = Client(id: UUID(), name: name, address: "", city: "")
         let serviceType = mapServiceNameToType(unlistedServiceName)
         appState.startUnscheduledVisit(clients: [client], service: serviceType,
-                                       serviceName: unlistedServiceName, unlistedName: name)
+                                       serviceName: unlistedServiceName, unlistedName: name,
+                                       manualAddress: trimmedFallbackAddress)
         showSuccess = true
     }
 
@@ -529,17 +607,18 @@ struct MockUnscheduledContent: View {
                     .labelsHidden()
                 }
 
-                Section {
+                Section(footer: appState.hasActiveVisit ? Text("Clock out of your current visit first.").foregroundColor(Theme.danger) : nil) {
                     Button(action: startVisit) {
-                        Label("Clock In Now", systemImage: "play.circle.fill")
+                        Label(appState.hasActiveVisit ? "Clock out first" : "Clock In Now", systemImage: "play.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .disabled(selectedClients.isEmpty)
+                    .disabled(selectedClients.isEmpty || appState.hasActiveVisit)
 
                     Button(action: quickPunch) {
                         Label("Quick Punch (details later)", systemImage: "bolt.fill")
                             .frame(maxWidth: .infinity)
                     }
+                    .disabled(appState.hasActiveVisit)
                 }
             }
             .navigationTitle("Unscheduled Visit")
@@ -565,11 +644,19 @@ struct MockUnscheduledContent: View {
     }
 
     private func startVisit() {
+        guard !appState.hasActiveVisit else {
+            appState.surfacePunchBlocked()
+            return
+        }
         appState.startUnscheduledVisit(clients: chosenClients, service: service)
         showSuccess = true
     }
 
     private func quickPunch() {
+        guard !appState.hasActiveVisit else {
+            appState.surfacePunchBlocked()
+            return
+        }
         let client = chosenClients.isEmpty ? [MockData.clients[0]] : chosenClients
         appState.startUnscheduledVisit(clients: client, service: service)
         showSuccess = true

@@ -87,6 +87,8 @@ struct ClockInRequest: Encodable {
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
+    /// Manually entered service address (GPS-unavailable fallback punch).
+    let address: String?
 }
 
 struct ClockOutRequest: Encodable {
@@ -94,6 +96,8 @@ struct ClockOutRequest: Encodable {
     let lng: Double?
     let accuracy: Double?
     let signatureSkipReason: String?
+    /// Manually entered service address (GPS-unavailable fallback punch).
+    let address: String?
 }
 
 struct ClockInResponse: Decodable {
@@ -179,11 +183,59 @@ struct NoteResponse: Decodable {
 
 // MARK: - Structured Documentation
 
+/// Wrapper that swallows per-element decode failures so one malformed item
+/// never kills an entire array (`[FailableDecodable<T>]` + compactMap).
+struct FailableDecodable<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
+/// Decode a JSON value that the server may emit as either a single string or
+/// an array of strings (legacy records store e.g. `diagnosis` as one string).
+private func decodeStringOrArray<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ key: K) -> [String]? {
+    if let arr = try? c.decodeIfPresent([String].self, forKey: key) { return arr }
+    if let arr = try? c.decodeIfPresent([FailableDecodable<String>].self, forKey: key) {
+        return arr.compactMap { $0.value }
+    }
+    if let str = try? c.decodeIfPresent(String.self, forKey: key) {
+        let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? [] : [trimmed]
+    }
+    return nil
+}
+
 struct ServerOutcome: Decodable, Identifiable {
     let id: Int
     let title: String
     let goal: String?
     let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, goal, status
+        case text          // some endpoints emit the outcome text as "text"
+        case description   // dashboard stores the goal detail as "description"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // id: tolerate a numeric string
+        if let i = try? c.decode(Int.self, forKey: .id) {
+            id = i
+        } else if let s = try? c.decode(String.self, forKey: .id), let i = Int(s) {
+            id = i
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Outcome id missing or not an integer")
+        }
+        // title: fall back to "text" if "title" is absent/null
+        let titleVal = ((try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil)
+        title = titleVal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        goal = ((try? c.decodeIfPresent(String.self, forKey: .goal)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .description)) ?? nil)
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil
+    }
 }
 
 struct ServerHealthInfo: Decodable {
@@ -195,6 +247,25 @@ struct ServerHealthInfo: Decodable {
     let communicationUnderstood: String?
     let adaptiveEquipment: String?
     let supervisionLevel: String?
+
+    enum CodingKeys: String, CodingKey {
+        case allergies, safetyAlerts, protocols, diagnosis
+        case healthNotes, communicationUnderstood, adaptiveEquipment, supervisionLevel
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // These fields vary between string and [String] depending on how the
+        // client record was entered — accept both.
+        allergies = decodeStringOrArray(c, .allergies)
+        safetyAlerts = decodeStringOrArray(c, .safetyAlerts)
+        protocols = decodeStringOrArray(c, .protocols)
+        diagnosis = decodeStringOrArray(c, .diagnosis)
+        healthNotes = (try? c.decodeIfPresent(String.self, forKey: .healthNotes)) ?? nil
+        communicationUnderstood = (try? c.decodeIfPresent(String.self, forKey: .communicationUnderstood)) ?? nil
+        adaptiveEquipment = (try? c.decodeIfPresent(String.self, forKey: .adaptiveEquipment)) ?? nil
+        supervisionLevel = (try? c.decodeIfPresent(String.self, forKey: .supervisionLevel)) ?? nil
+    }
 }
 
 struct ServerOutcomeEntry: Decodable {
@@ -218,6 +289,28 @@ struct ServerExistingNote: Decodable {
     let goals: [String]?
     /// Transport review question answer
     let transportReviewedGoals: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case type, outcomes, additionalComments, submittedAt, submittedBy
+        case comments, goals, transportReviewedGoals
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? nil
+        // Per-element lenient decode — one malformed entry doesn't kill the note
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerOutcomeEntry>].self, forKey: .outcomes) {
+            outcomes = raw.compactMap { $0.value }
+        } else {
+            outcomes = nil
+        }
+        additionalComments = (try? c.decodeIfPresent(String.self, forKey: .additionalComments)) ?? nil
+        submittedAt = (try? c.decodeIfPresent(String.self, forKey: .submittedAt)) ?? nil
+        submittedBy = (try? c.decodeIfPresent(String.self, forKey: .submittedBy)) ?? nil
+        comments = (try? c.decodeIfPresent(String.self, forKey: .comments)) ?? nil
+        goals = decodeStringOrArray(c, .goals)
+        transportReviewedGoals = (try? c.decodeIfPresent(Bool.self, forKey: .transportReviewedGoals)) ?? nil
+    }
 }
 
 struct DocumentationTemplateResponse: Decodable {
@@ -226,6 +319,27 @@ struct DocumentationTemplateResponse: Decodable {
     let healthInfo: ServerHealthInfo?
     let existingNote: ServerExistingNote?
     let aiAssistEnabled: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        visitId = (try? c.decodeIfPresent(String.self, forKey: .visitId)) ?? nil
+        // Per-element lenient decode — a single malformed outcome is dropped
+        // instead of failing the whole template ("Data error" bug).
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerOutcome>].self, forKey: .outcomes) {
+            outcomes = raw.compactMap { $0.value }
+        } else {
+            outcomes = nil
+        }
+        // Health info / existing note are best-effort: server data shapes vary
+        // (legacy notes can be plain strings) and must never block the form.
+        healthInfo = (try? c.decodeIfPresent(ServerHealthInfo.self, forKey: .healthInfo)) ?? nil
+        existingNote = (try? c.decodeIfPresent(ServerExistingNote.self, forKey: .existingNote)) ?? nil
+        aiAssistEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aiAssistEnabled)) ?? nil
+    }
 }
 
 struct DocumentationSubmitResponse: Decodable {
@@ -284,6 +398,8 @@ struct UnscheduledVisitRequest: Encodable {
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
+    /// Manually entered service address (GPS-unavailable fallback punch).
+    let address: String?
     let unlistedName: String?
     /// Manual time entry (non-EVV services): "H:MM AM/PM" strings
     let startTime: String?
@@ -356,6 +472,8 @@ struct QueuedAction: Identifiable, Codable {
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
+    /// Manually entered service address (GPS-unavailable fallback punch).
+    let address: String?
     let createdAt: Date
     // Note fields (for offline note queuing)
     let noteText: String?
@@ -392,7 +510,7 @@ struct QueuedAction: Identifiable, Codable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, type, shiftId, visitId, lat, lng, accuracy, createdAt
+        case id, type, shiftId, visitId, lat, lng, accuracy, address, createdAt
         case noteText, nbCategory, nbMinutes, nbNote, nbDate
         case unschedClientIds, unschedService, unschedClientName, localVisitId
         case signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
@@ -400,7 +518,7 @@ struct QueuedAction: Identifiable, Codable {
     }
 
     init(id: UUID, type: ActionType, shiftId: Int?, visitId: String?,
-         lat: Double?, lng: Double?, accuracy: Double?, createdAt: Date,
+         lat: Double?, lng: Double?, accuracy: Double?, address: String? = nil, createdAt: Date,
          noteText: String? = nil, nbCategory: String? = nil, nbMinutes: Int? = nil,
          nbNote: String? = nil, nbDate: String? = nil,
          unschedClientIds: [String]? = nil, unschedService: String? = nil,
@@ -416,6 +534,7 @@ struct QueuedAction: Identifiable, Codable {
         self.lat = lat
         self.lng = lng
         self.accuracy = accuracy
+        self.address = address
         self.createdAt = createdAt
         self.noteText = noteText
         self.nbCategory = nbCategory
@@ -444,6 +563,7 @@ struct QueuedAction: Identifiable, Codable {
         lat = try c.decodeIfPresent(Double.self, forKey: .lat)
         lng = try c.decodeIfPresent(Double.self, forKey: .lng)
         accuracy = try c.decodeIfPresent(Double.self, forKey: .accuracy)
+        address = try c.decodeIfPresent(String.self, forKey: .address)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         noteText = try c.decodeIfPresent(String.self, forKey: .noteText)
         nbCategory = try c.decodeIfPresent(String.self, forKey: .nbCategory)
@@ -577,13 +697,13 @@ actor APIClient {
 
     // MARK: - Clock In
 
-    func clockIn(shiftId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> ServerVisitInfo {
+    func clockIn(shiftId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil) async throws -> ServerVisitInfo {
         let url = URL(string: "\(baseURL)/shifts/\(shiftId)/clock-in")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(ClockInRequest(lat: lat, lng: lng, accuracy: accuracy))
+        request.httpBody = try JSONEncoder().encode(ClockInRequest(lat: lat, lng: lng, accuracy: accuracy, address: address))
         request.timeoutInterval = 15
 
         let (data, response) = try await performRequest(request)
@@ -643,13 +763,13 @@ actor APIClient {
 
     // MARK: - Clock Out
 
-    func clockOut(visitId: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, signatureSkipReason: String? = nil) async throws -> ServerVisitInfo {
+    func clockOut(visitId: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, signatureSkipReason: String? = nil, address: String? = nil) async throws -> ServerVisitInfo {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/clock-out")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(ClockOutRequest(lat: lat, lng: lng, accuracy: accuracy, signatureSkipReason: signatureSkipReason))
+        request.httpBody = try JSONEncoder().encode(ClockOutRequest(lat: lat, lng: lng, accuracy: accuracy, signatureSkipReason: signatureSkipReason, address: address))
         request.timeoutInterval = 15
 
         let (data, response) = try await performRequest(request)
@@ -1066,14 +1186,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, unlistedName: unlistedName, startTime: startTime, endTime: endTime)
+            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime)
         )
         request.timeoutInterval = 15
 

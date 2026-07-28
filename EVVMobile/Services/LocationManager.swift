@@ -23,9 +23,13 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     private var continuation: CheckedContinuation<CLLocation?, Never>?
 
     /// Hard cap on how long a one-shot fix may take before resolving nil.
-    private static let fixTimeout: TimeInterval = 15
+    private static let fixTimeout: TimeInterval = 10
     /// How long to wait for the user to answer the permission dialog.
     private static let authTimeout: TimeInterval = 30
+    /// A cached fix younger than this is accepted without waiting for GPS.
+    private static let cachedFixMaxAge: TimeInterval = 60
+    /// Maximum horizontal accuracy (meters) for an acceptable cached fix.
+    private static let cachedFixMaxAccuracy: CLLocationAccuracy = 150
 
     override init() {
         super.init()
@@ -39,8 +43,37 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     private func setupManager() {
         manager = CLLocationManager()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBest
+        // Ten-meter accuracy resolves much faster than kCLLocationAccuracyBest
+        // and is far tighter than any geofence we check against (~300 ft).
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         authorizationStatus = manager.authorizationStatus
+    }
+
+    /// Returns a recent, reasonably accurate cached location if one exists
+    /// (either our own last fix or the system's cached location).
+    private func recentCachedLocation() -> CLLocation? {
+        let candidates = [lastLocation, manager.location].compactMap { $0 }
+        for loc in candidates {
+            let age = Date().timeIntervalSince(loc.timestamp)
+            if age >= 0 && age < Self.cachedFixMaxAge
+                && loc.horizontalAccuracy >= 0
+                && loc.horizontalAccuracy <= Self.cachedFixMaxAccuracy {
+                return loc
+            }
+        }
+        return nil
+    }
+
+    /// Fire-and-forget warm-up: kicks off a location fix in the background so
+    /// that by the time the user reaches a punch confirmation the coordinates
+    /// are already available. Safe to call repeatedly.
+    func warmUp() {
+        let status = manager.authorizationStatus
+        guard status == .authorizedWhenInUse || status == .authorizedAlways
+            || status == .notDetermined else { return }
+        if isAcquiring { return }
+        if recentCachedLocation() != nil { return }  // already warm
+        Task { _ = await self.acquireLocation() }
     }
 
     /// Request location permission (call early, e.g. at login).
@@ -77,6 +110,18 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
                 locationError = "Location access denied"
             }
             return nil
+        }
+
+        // Fast path: accept a recent cached fix (<60s old, reasonable
+        // accuracy) instead of waiting for a brand-new GPS solution.
+        if let cached = recentCachedLocation() {
+            await MainActor.run {
+                lastLocation = cached
+                lastFixDate = Date()
+                isAcquiring = false
+                locationAcquired = true
+            }
+            return cached
         }
 
         // One-shot fix with a hard timeout.
@@ -123,6 +168,12 @@ final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelega
     // Delegate callbacks arrive on the main thread (manager created there).
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        // Always cache the newest fix — even a fix that arrives after a
+        // timeout benefits the next punch via the cached-fix fast path.
+        if let newest = locations.last {
+            lastLocation = newest
+            lastFixDate = Date()
+        }
         let cont = continuation
         continuation = nil
         cont?.resume(returning: locations.last)
