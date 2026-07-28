@@ -261,8 +261,13 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
-                    // Pass GPS coordinates if available
-                    let coords = LocationManager.shared.currentCoordinates
+                    // Pass GPS coordinates if available (acquire a fix if we
+                    // don't have one yet — graceful nil on denial/timeout)
+                    var coords = LocationManager.shared.currentCoordinates
+                    if coords == nil {
+                        _ = await LocationManager.shared.acquireLocation()
+                        coords = LocationManager.shared.currentCoordinates
+                    }
                     let visitInfo = try await APIClient.shared.clockIn(
                         shiftId: shiftId,
                         lat: coords?.lat,
@@ -353,9 +358,19 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
+                    // Capture punch location for clock-out (acquire if missing)
+                    var coords = LocationManager.shared.currentCoordinates
+                    if coords == nil {
+                        _ = await LocationManager.shared.acquireLocation()
+                        coords = LocationManager.shared.currentCoordinates
+                    }
                     // Clock out all visits (1:2 creates one visit per individual)
                     for vid in allVisitIds {
-                        _ = try await APIClient.shared.clockOut(visitId: vid, signatureSkipReason: signatureSkipReason)
+                        _ = try await APIClient.shared.clockOut(visitId: vid,
+                                                                lat: coords?.lat,
+                                                                lng: coords?.lng,
+                                                                accuracy: coords?.accuracy,
+                                                                signatureSkipReason: signatureSkipReason)
                     }
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].syncState = .synced
@@ -439,7 +454,11 @@ final class AppState: ObservableObject {
 
             Task { @MainActor in
                 do {
-                    let coords = LocationManager.shared.currentCoordinates
+                    var coords = LocationManager.shared.currentCoordinates
+                    if coords == nil {
+                        _ = await LocationManager.shared.acquireLocation()
+                        coords = LocationManager.shared.currentCoordinates
+                    }
                     let response = try await APIClient.shared.createUnscheduledVisit(
                         clientIds: serverClientIds,
                         service: apiServiceName,

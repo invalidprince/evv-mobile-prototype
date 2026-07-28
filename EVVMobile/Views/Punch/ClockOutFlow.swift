@@ -272,7 +272,13 @@ struct ClockOutFlow: View {
     private func doClockOut() {
         guard !isClockingOut else { return }
         isClockingOut = true
-        completedVisit = appState.clockOut(signatureSkipReason: signatureSkipReason)
-        step = .complete
+        Task { @MainActor in
+            // Capture best-available GPS at punch time so both the online
+            // API call and the offline queue snapshot carry coordinates.
+            // Bounded by a 15s timeout; punch proceeds even if it fails.
+            _ = await LocationManager.shared.acquireLocation()
+            completedVisit = appState.clockOut(signatureSkipReason: signatureSkipReason)
+            step = .complete
+        }
     }
 }

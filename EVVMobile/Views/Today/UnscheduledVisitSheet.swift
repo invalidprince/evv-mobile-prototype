@@ -303,6 +303,9 @@ struct ServerUnscheduledContent: View {
             .onAppear {
                 // Always attempt a refresh; refreshIndividuals handles offline fallback
                 Task { await appState.refreshIndividuals() }
+                // Warm up a GPS fix so the punch (and any offline queue
+                // snapshot) carries coordinates captured at punch time.
+                Task { _ = await LocationManager.shared.acquireLocation() }
             }
         }
     }

@@ -29,7 +29,9 @@ struct ClockInConfirmSheet: View {
         !manualZip.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    private var canConfirm: Bool { !gpsUnavailable || manualAddressValid }
+    // Block confirm while a GPS fix is still being acquired so the punch
+    // carries real coordinates (acquisition is bounded by a 15s timeout).
+    private var canConfirm: Bool { !isAcquiringLocation && (!gpsUnavailable || manualAddressValid) }
 
     init(visit: Visit) {
         self.visit = visit
