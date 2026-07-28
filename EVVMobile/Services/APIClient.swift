@@ -287,12 +287,15 @@ struct ServerExistingNote: Decodable {
     // Legacy flat note fields
     let comments: String?
     let goals: [String]?
-    /// Transport review question answer
+    /// Transport review question answer (legacy bool — new notes carry the
+    /// same info inside questionAnswers)
     let transportReviewedGoals: Bool?
+    /// Previously submitted answers to server-configured visit questions.
+    let questionAnswers: [ServerQuestionAnswer]?
 
     enum CodingKeys: String, CodingKey {
         case type, outcomes, additionalComments, submittedAt, submittedBy
-        case comments, goals, transportReviewedGoals
+        case comments, goals, transportReviewedGoals, questionAnswers
     }
 
     init(from decoder: Decoder) throws {
@@ -310,6 +313,91 @@ struct ServerExistingNote: Decodable {
         comments = (try? c.decodeIfPresent(String.self, forKey: .comments)) ?? nil
         goals = decodeStringOrArray(c, .goals)
         transportReviewedGoals = (try? c.decodeIfPresent(Bool.self, forKey: .transportReviewedGoals)) ?? nil
+        // Per-element lenient decode — one malformed answer doesn't kill prefill
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerQuestionAnswer>].self, forKey: .questionAnswers) {
+            questionAnswers = raw.compactMap { $0.value }
+        } else {
+            questionAnswers = nil
+        }
+    }
+}
+
+/// A server-configured visit documentation question (service/department/
+/// individual scoped, managed in the dashboard).
+///
+/// Wire contract (stable): all fields always present. `options` is empty for
+/// text questions. `defaultValue` is a plain string for radio/text and a
+/// JSON-ENCODED ARRAY STRING for checkbox (e.g. "[\"A\",\"B\"]") — or null.
+/// Decoding is defensive anyway: int-or-string id, unknown type falls back to
+/// "text", and a malformed element is dropped via FailableDecodable upstream.
+struct ServerDocQuestion: Decodable, Identifiable {
+    let id: Int
+    let scope: String        // "service" | "department" | "individual"
+    let text: String
+    let type: String         // "radio" | "checkbox" | "text"
+    let options: [String]
+    let defaultValue: String?
+    let required: Bool
+    let sortOrder: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, scope, text, type, options, defaultValue, required, sortOrder
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // id: tolerate a numeric string
+        if let i = try? c.decode(Int.self, forKey: .id) {
+            id = i
+        } else if let s = try? c.decode(String.self, forKey: .id), let i = Int(s) {
+            id = i
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Question id missing or not an integer")
+        }
+        let textVal = (((try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !textVal.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .text, in: c, debugDescription: "Question text missing or empty")
+        }
+        text = textVal
+        scope = ((try? c.decodeIfPresent(String.self, forKey: .scope)) ?? nil) ?? "service"
+        let t = ((try? c.decodeIfPresent(String.self, forKey: .type)) ?? nil) ?? "text"
+        type = ["radio", "checkbox", "text"].contains(t) ? t : "text"
+        options = decodeStringOrArray(c, .options) ?? []
+        defaultValue = (try? c.decodeIfPresent(String.self, forKey: .defaultValue)) ?? nil
+        required = ((try? c.decodeIfPresent(Bool.self, forKey: .required)) ?? nil) ?? true
+        sortOrder = ((try? c.decodeIfPresent(Int.self, forKey: .sortOrder)) ?? nil)
+            ?? Int((((try? c.decodeIfPresent(String.self, forKey: .sortOrder)) ?? nil) ?? "")) ?? 0
+    }
+}
+
+/// A previously submitted question answer from existingNote.questionAnswers.
+/// Used for prefill (a saved answer wins over the question's defaultValue).
+struct ServerQuestionAnswer: Decodable {
+    let questionId: Int
+    let scope: String?
+    let question: String?
+    let type: String?
+    let answer: String
+
+    enum CodingKeys: String, CodingKey {
+        case questionId, scope, question, type, answer
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // questionId: tolerate a numeric string
+        if let i = try? c.decode(Int.self, forKey: .questionId) {
+            questionId = i
+        } else if let s = try? c.decode(String.self, forKey: .questionId), let i = Int(s) {
+            questionId = i
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .questionId, in: c, debugDescription: "questionId missing or not an integer")
+        }
+        scope = (try? c.decodeIfPresent(String.self, forKey: .scope)) ?? nil
+        question = (try? c.decodeIfPresent(String.self, forKey: .question)) ?? nil
+        type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? nil
+        answer = ((try? c.decodeIfPresent(String.self, forKey: .answer)) ?? nil) ?? ""
     }
 }
 
@@ -319,9 +407,11 @@ struct DocumentationTemplateResponse: Decodable {
     let healthInfo: ServerHealthInfo?
     let existingNote: ServerExistingNote?
     let aiAssistEnabled: Bool?
+    /// Server-configured visit questions (pre-filtered + pre-sorted for this visit).
+    let questions: [ServerDocQuestion]?
 
     enum CodingKeys: String, CodingKey {
-        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled
+        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, questions
     }
 
     init(from decoder: Decoder) throws {
@@ -339,6 +429,12 @@ struct DocumentationTemplateResponse: Decodable {
         healthInfo = (try? c.decodeIfPresent(ServerHealthInfo.self, forKey: .healthInfo)) ?? nil
         existingNote = (try? c.decodeIfPresent(ServerExistingNote.self, forKey: .existingNote)) ?? nil
         aiAssistEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aiAssistEnabled)) ?? nil
+        // Per-element lenient decode — one malformed question never kills the form.
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerDocQuestion>].self, forKey: .questions) {
+            questions = raw.compactMap { $0.value }
+        } else {
+            questions = nil
+        }
     }
 }
 
@@ -931,7 +1027,7 @@ actor APIClient {
         }
     }
 
-    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, transportReviewedGoals: Bool, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
+    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, questionAnswers: [[String: Any]] = [], transportReviewedGoals: Bool? = nil, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -940,8 +1036,13 @@ actor APIClient {
         var body: [String: Any] = [
             "outcomes": outcomes,
             "additionalComments": additionalComments,
-            "transportReviewedGoals": transportReviewedGoals
+            "questionAnswers": questionAnswers
         ]
+        // Legacy compat: when the seeded transport question was answered Yes/No,
+        // also send the old bool (server maps both ways; belt-and-suspenders).
+        if let transport = transportReviewedGoals {
+            body["transportReviewedGoals"] = transport
+        }
         if aiAssisted {
             body["aiAssisted"] = true
             if let inputText = aiInputText { body["aiInputText"] = inputText }

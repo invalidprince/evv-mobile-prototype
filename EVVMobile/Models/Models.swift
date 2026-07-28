@@ -225,9 +225,16 @@ struct OutcomeEntry {
 struct VisitNote {
     var outcomeEntries: [UUID: OutcomeEntry] = [:]   // keyed by Outcome.id
     var additionalComments: String = ""
-    /// Required: "Reviewed goals, activities, and schedule during transport?"
-    /// Defaults to YES — staff only change it when transport review didn't happen.
-    var transportReviewedGoals: Bool? = true
+    /// Answers to server-configured visit questions, keyed by question ID.
+    /// Stored in wire format: radio/text answers are plain strings; checkbox
+    /// answers are JSON-encoded array strings (e.g. "[\"A\",\"B\"]") — the
+    /// same encoding the API uses for defaultValue and submission.
+    /// Lives on the note so drafts/offline persistence carry it automatically.
+    var questionAnswers: [Int: String] = [:]
+    /// Legacy transport review bool. The transport question is now a dynamic
+    /// server question; this is kept for AI-draft responses and old saved
+    /// notes, and is still sent alongside questionAnswers for compat.
+    var transportReviewedGoals: Bool?
 
     func isComplete(for outcomes: [Outcome]) -> Bool {
         outcomes.allSatisfy { outcomeEntries[$0.id]?.isComplete == true }

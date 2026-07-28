@@ -12,6 +12,7 @@ struct DocumentationView: View {
 
     // Server mode state
     @State private var serverOutcomes: [ServerDocOutcome] = []
+    @State private var serverQuestions: [ServerDocQuestion] = []
     @State private var serverHealthInfo: ServerDocHealthInfo?
     @State private var isLoadingTemplate = false
     @State private var loadError: String?
@@ -62,9 +63,34 @@ struct DocumentationView: View {
         return visit.client
     }
 
+    /// The seeded service-scoped transport question, when present. Used to keep
+    /// sending the legacy transportReviewedGoals bool alongside questionAnswers.
+    private var transportQuestion: ServerDocQuestion? {
+        serverQuestions.first { q in
+            guard q.scope == "service" else { return false }
+            var t = q.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.hasSuffix("?") { t = String(t.dropLast()) }
+            return t.caseInsensitiveCompare("Reviewed goals, activities, and schedule during transport") == .orderedSame
+        }
+    }
+
+    /// True when the question has a usable answer (text: non-empty trimmed;
+    /// checkbox: at least one selection; radio: an option chosen).
+    private func isAnswered(_ q: ServerDocQuestion) -> Bool {
+        guard let raw = note.questionAnswers[q.id] else { return false }
+        if q.type == "checkbox" {
+            return !VisitQuestionCard.decodeCheckboxSelections(raw).isEmpty
+        }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var unansweredRequiredQuestions: [ServerDocQuestion] {
+        serverQuestions.filter { $0.required && !isAnswered($0) }
+    }
+
     private var noteComplete: Bool {
-        // Transport review question is always required
-        guard note.transportReviewedGoals != nil else { return false }
+        // Every required server-configured question must be answered
+        guard unansweredRequiredQuestions.isEmpty else { return false }
         // If no outcomes, just additional comments is enough (or just submittable)
         let outcomes = effectiveOutcomes
         if outcomes.isEmpty { return true }
@@ -279,64 +305,24 @@ struct DocumentationView: View {
                         }
                     }
 
-                    // Required transport review question
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "bus.fill")
-                                .foregroundColor(Theme.primary)
-                            Text("Reviewed goals, activities, and schedule during transport?")
-                                .font(.subheadline.weight(.semibold))
-                            Text("*")
-                                .foregroundColor(Theme.danger)
-                        }
-                        HStack(spacing: 12) {
-                            Button(action: { note.transportReviewedGoals = true }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: note.transportReviewedGoals == true ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(note.transportReviewedGoals == true ? Theme.success : .secondary)
-                                    Text("Yes")
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundColor(note.transportReviewedGoals == true ? Theme.success : .primary)
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(note.transportReviewedGoals == true ? Theme.success.opacity(0.10) : Color(UIColor.tertiarySystemFill))
-                                .cornerRadius(10)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(note.transportReviewedGoals == true ? Theme.success.opacity(0.4) : Color.clear, lineWidth: 1)
+                    // Server-configured visit questions (dynamic — replaces the
+                    // old hardcoded transport review question)
+                    if !serverQuestions.isEmpty {
+                        VStack(alignment: .leading, spacing: 14) {
+                            HStack {
+                                Label("Visit Questions", systemImage: "checklist")
+                                    .font(.headline)
+                                Spacer()
+                            }
+                            ForEach(serverQuestions) { question in
+                                VisitQuestionCard(
+                                    question: question,
+                                    answer: questionAnswerBinding(for: question)
                                 )
                             }
-                            .buttonStyle(.plain)
-
-                            Button(action: { note.transportReviewedGoals = false }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: note.transportReviewedGoals == false ? "xmark.circle.fill" : "circle")
-                                        .foregroundColor(note.transportReviewedGoals == false ? Theme.danger : .secondary)
-                                    Text("No")
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundColor(note.transportReviewedGoals == false ? Theme.danger : .primary)
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
-                                .background(note.transportReviewedGoals == false ? Theme.danger.opacity(0.10) : Color(UIColor.tertiarySystemFill))
-                                .cornerRadius(10)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(note.transportReviewedGoals == false ? Theme.danger.opacity(0.4) : Color.clear, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-
-                            Spacer()
                         }
-                        if note.transportReviewedGoals == nil {
-                            Text("Required — select Yes or No")
-                                .font(.caption)
-                                .foregroundColor(Theme.danger)
-                        }
+                        .cardStyle()
                     }
-                    .cardStyle()
 
                     DocSection(title: "Additional Comments", icon: "text.alignleft", expanded: $expanded) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -345,6 +331,13 @@ struct DocumentationView: View {
                                 .foregroundColor(.secondary)
                             DocTextEditor(text: $note.additionalComments, placeholder: "Anything else worth noting about this visit…", minHeight: 100)
                         }
+                    }
+
+                    if !unansweredRequiredQuestions.isEmpty {
+                        Label("Answer the required visit question\(unansweredRequiredQuestions.count == 1 ? "" : "s") before submitting (\(unansweredRequiredQuestions.count) remaining).", systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundColor(Theme.danger)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     if !effectiveOutcomes.isEmpty && !noteComplete {
@@ -465,6 +458,9 @@ struct DocumentationView: View {
             let template = try await APIClient.shared.fetchDocumentation(visitId: svid)
 
             await MainActor.run {
+                // Server-configured visit questions (pre-filtered + pre-sorted)
+                serverQuestions = template.questions ?? []
+
                 // Map outcomes — use deterministic localIds so drafts persist
                 serverOutcomes = (template.outcomes ?? []).map { so in
                     ServerDocOutcome(
@@ -497,6 +493,14 @@ struct DocumentationView: View {
                     loadExistingNote(existing)
                 }
 
+                // Apply server-side defaults to any question that still has no
+                // answer (draft answers and previously submitted answers win).
+                for q in serverQuestions where note.questionAnswers[q.id] == nil {
+                    if let dv = q.defaultValue, !dv.isEmpty {
+                        note.questionAnswers[q.id] = dv
+                    }
+                }
+
                 isLoadingTemplate = false
             }
         } catch is CancellationError {
@@ -524,9 +528,20 @@ struct DocumentationView: View {
             note.additionalComments = comments
         }
 
-        // Load transport review answer (may be nil for old records)
+        // Load previously submitted question answers (prefill wins over defaults)
+        if let answers = existing.questionAnswers {
+            for qa in answers where note.questionAnswers[qa.questionId] == nil {
+                note.questionAnswers[qa.questionId] = qa.answer
+            }
+        }
+
+        // Load legacy transport review answer (old records predate dynamic
+        // questions) — map it onto the seeded transport question when present.
         if let transportReview = existing.transportReviewedGoals {
             note.transportReviewedGoals = transportReview
+            if let tq = transportQuestion, note.questionAnswers[tq.id] == nil {
+                note.questionAnswers[tq.id] = transportReview ? "Yes" : "No"
+            }
         }
 
         // Load per-outcome entries
@@ -605,9 +620,13 @@ struct DocumentationView: View {
             note.additionalComments = comments
         }
 
-        // Apply transport review if present
+        // Apply transport review if present — also answer the dynamic
+        // transport question so the form reflects it.
         if let transportReview = draft.transportReviewedGoals {
             note.transportReviewedGoals = transportReview
+            if let tq = transportQuestion {
+                note.questionAnswers[tq.id] = transportReview ? "Yes" : "No"
+            }
         }
 
         aiDraftedOutcomeIds = draftedIds
@@ -666,9 +685,13 @@ struct DocumentationView: View {
             note.additionalComments = response.message
         }
 
-        // Apply transport review if present
+        // Apply transport review if present — also answer the dynamic
+        // transport question so the form reflects it.
         if let transportReview = response.transportReviewedGoals {
             note.transportReviewedGoals = transportReview
+            if let tq = transportQuestion {
+                note.questionAnswers[tq.id] = transportReview ? "Yes" : "No"
+            }
         }
 
         aiDraftedOutcomeIds = draftedIds
@@ -697,7 +720,7 @@ struct DocumentationView: View {
     private func loadDraft() -> VisitNote {
         if appState.mode == .server, let svid = visit.serverVisitId {
             let draft = appState.serverNoteDraft(for: svid)
-            if !draft.outcomeEntries.isEmpty || !draft.additionalComments.isEmpty {
+            if !draft.outcomeEntries.isEmpty || !draft.additionalComments.isEmpty || !draft.questionAnswers.isEmpty {
                 return draft
             }
         }
@@ -730,12 +753,33 @@ struct DocumentationView: View {
             return dict
         }
 
+        // Build question answers payload — wire format: answer is always a
+        // String (checkbox answers are JSON-encoded array strings).
+        let questionPayload: [[String: Any]] = serverQuestions.compactMap { q in
+            guard let raw = note.questionAnswers[q.id],
+                  !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return ["questionId": q.id, "answer": raw]
+        }
+
+        // Legacy compat: when the seeded transport question is present and
+        // answered Yes/No, also send the old transportReviewedGoals bool
+        // (server maps both ways; belt-and-suspenders).
+        var legacyTransport: Bool?
+        if let tq = transportQuestion, let raw = note.questionAnswers[tq.id] {
+            switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "yes": legacyTransport = true
+            case "no": legacyTransport = false
+            default: break
+            }
+        }
+
         do {
             let response = try await APIClient.shared.submitDocumentation(
                 visitId: svid,
                 outcomes: outcomePayload,
                 additionalComments: note.additionalComments,
-                transportReviewedGoals: note.transportReviewedGoals ?? true,
+                questionAnswers: questionPayload,
+                transportReviewedGoals: legacyTransport,
                 aiAssisted: aiDraftApplied,
                 aiInputText: aiInputText,
                 aiModel: aiModel
@@ -779,6 +823,19 @@ struct DocumentationView: View {
         Binding(
             get: { note.outcomeEntries[outcome.id] ?? OutcomeEntry() },
             set: { note.outcomeEntries[outcome.id] = $0 }
+        )
+    }
+
+    private func questionAnswerBinding(for question: ServerDocQuestion) -> Binding<String?> {
+        Binding(
+            get: { note.questionAnswers[question.id] },
+            set: { newValue in
+                if let v = newValue {
+                    note.questionAnswers[question.id] = v
+                } else {
+                    note.questionAnswers.removeValue(forKey: question.id)
+                }
+            }
         )
     }
 
@@ -838,6 +895,193 @@ struct ServerDocHealthInfo {
     let communicationUnderstood: String
     let adaptiveEquipment: String
     let supervisionLevel: String
+}
+
+// MARK: - Dynamic visit question card
+
+/// Renders one server-configured visit question.
+/// - radio    → single-select option buttons
+/// - checkbox → multi-select option rows (answer stored as a JSON-encoded
+///              array string — the wire format)
+/// - text     → free-text editor
+struct VisitQuestionCard: View {
+    let question: ServerDocQuestion
+    /// Wire-format answer: plain string (radio/text) or JSON-array string (checkbox).
+    @Binding var answer: String?
+
+    // MARK: Checkbox wire-format codec
+
+    static func decodeCheckboxSelections(_ raw: String) -> [String] {
+        guard let data = raw.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return arr
+    }
+
+    static func encodeCheckboxSelections(_ selections: [String]) -> String {
+        guard let data = try? JSONEncoder().encode(selections),
+              let str = String(data: data, encoding: .utf8) else { return "[]" }
+        return str
+    }
+
+    private var isAnswered: Bool {
+        guard let raw = answer else { return false }
+        if question.type == "checkbox" {
+            return !Self.decodeCheckboxSelections(raw).isEmpty
+        }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Short option sets render side by side (like the old Yes/No transport
+    /// question); longer ones stack vertically.
+    private var horizontalOptions: Bool {
+        question.options.count <= 3 && question.options.allSatisfy { $0.count <= 10 }
+    }
+
+    private func optionColor(_ option: String) -> Color {
+        switch option.lowercased() {
+        case "yes": return Theme.success
+        case "no": return Theme.danger
+        default: return Theme.primary
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 4) {
+                Text(question.text)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                if question.required {
+                    Text("*")
+                        .foregroundColor(Theme.danger)
+                }
+                Spacer(minLength: 0)
+            }
+
+            switch question.type {
+            case "radio":
+                radioOptions
+            case "checkbox":
+                checkboxOptions
+            default:
+                DocTextEditor(
+                    text: Binding(
+                        get: { answer ?? "" },
+                        set: { answer = $0 }
+                    ),
+                    placeholder: "Your answer…",
+                    minHeight: 80
+                )
+            }
+
+            if question.required && !isAnswered {
+                Text(requiredHint)
+                    .font(.caption)
+                    .foregroundColor(Theme.danger)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var requiredHint: String {
+        switch question.type {
+        case "radio": return "Required — select an option"
+        case "checkbox": return "Required — select at least one option"
+        default: return "Required — enter an answer"
+        }
+    }
+
+    // MARK: Radio (single-select)
+
+    @ViewBuilder
+    private var radioOptions: some View {
+        if horizontalOptions {
+            HStack(spacing: 12) {
+                ForEach(question.options, id: \.self) { option in
+                    radioButton(option)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(question.options, id: \.self) { option in
+                    radioButton(option)
+                }
+            }
+        }
+    }
+
+    private func radioButton(_ option: String) -> some View {
+        let selected = answer == option
+        let color = optionColor(option)
+        return Button(action: { answer = option }) {
+            HStack(spacing: 6) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(selected ? color : .secondary)
+                Text(option)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(selected ? color : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !horizontalOptions { Spacer(minLength: 0) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: horizontalOptions ? nil : .infinity, alignment: .leading)
+            .background(selected ? color.opacity(0.10) : Color(UIColor.tertiarySystemFill))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(selected ? color.opacity(0.4) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Checkbox (multi-select)
+
+    private var checkboxOptions: some View {
+        let selections = Set(Self.decodeCheckboxSelections(answer ?? ""))
+        return VStack(alignment: .leading, spacing: 8) {
+            ForEach(question.options, id: \.self) { option in
+                let selected = selections.contains(option)
+                Button(action: { toggleCheckbox(option) }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: selected ? "checkmark.square.fill" : "square")
+                            .foregroundColor(selected ? Theme.primary : .secondary)
+                        Text(option)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(selected ? Theme.primary.opacity(0.08) : Color(UIColor.tertiarySystemFill))
+                    .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(selected ? Theme.primary.opacity(0.35) : Color.clear, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func toggleCheckbox(_ option: String) {
+        var selections = Self.decodeCheckboxSelections(answer ?? "")
+        if let idx = selections.firstIndex(of: option) {
+            selections.remove(at: idx)
+        } else {
+            selections.append(option)
+        }
+        // Keep the wire ordering stable: match the question's option order.
+        selections.sort { a, b in
+            (question.options.firstIndex(of: a) ?? .max) < (question.options.firstIndex(of: b) ?? .max)
+        }
+        answer = Self.encodeCheckboxSelections(selections)
+    }
 }
 
 // MARK: - Read-only health & safety information
