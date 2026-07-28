@@ -129,7 +129,12 @@ struct TodayView: View {
             .background(Theme.screenBackground.ignoresSafeArea())
             .navigationBarHidden(true)
             .sheet(item: $clockInTarget) { visit in
-                ClockInConfirmSheet(visit: visit)
+                if visit.evvRequired {
+                    ClockInConfirmSheet(visit: visit)
+                } else {
+                    // Non-EVV service: manual time entry instead of live punch
+                    ManualTimeEntrySheet(visit: visit)
+                }
             }
             .sheet(isPresented: $showUnscheduled) {
                 UnscheduledVisitSheet()
@@ -225,6 +230,7 @@ private func queuedActionIcon(_ type: QueuedAction.ActionType) -> String {
     case .nonBillable: return "briefcase"
     case .unscheduledVisit: return "plus.circle"
     case .timeFix: return "clock.arrow.2.circlepath"
+    case .manualTime: return "pencil.circle"
     }
 }
 
@@ -240,6 +246,7 @@ private func queuedActionLabel(_ action: QueuedAction) -> String {
         }
         return "Unscheduled visit"
     case .timeFix: return "Change request"
+    case .manualTime: return "Manual time entry"
     }
 }
 

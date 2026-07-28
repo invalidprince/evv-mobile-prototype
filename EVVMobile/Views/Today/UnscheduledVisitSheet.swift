@@ -29,8 +29,33 @@ struct ServerUnscheduledContent: View {
     @State private var isUnlisted = false
     @State private var unlistedName = ""
     @State private var unlistedServiceName: String = ""
+    // Manual time entry (non-EVV services)
+    @State private var manualStart: Date = Date().addingTimeInterval(-3600)
+    @State private var manualEnd: Date = Date()
 
     private let maxIndividuals = 2  // 1:2 group visits are the max
+
+    /// True when the currently selected service does not require live EVV
+    /// punches — staff enter the visit start/end times manually instead.
+    private var selectedServiceIsNonEvv: Bool {
+        guard !selectedServiceName.isEmpty else { return false }
+        return appState.serverIndividuals
+            .filter { selectedIndividualIds.contains($0.id) }
+            .contains { ($0.nonEvvServices ?? []).contains(selectedServiceName) }
+    }
+
+    private var unlistedServiceIsNonEvv: Bool {
+        guard !unlistedServiceName.isEmpty else { return false }
+        return appState.serverIndividuals.contains { ($0.nonEvvServices ?? []).contains(unlistedServiceName) }
+    }
+
+    private var manualEntryActive: Bool {
+        isUnlisted ? unlistedServiceIsNonEvv : selectedServiceIsNonEvv
+    }
+
+    private var manualTimesValid: Bool {
+        manualEnd > manualStart && manualEnd <= Date().addingTimeInterval(5 * 60)
+    }
 
     /// Footer for the Individual(s) section — shows cache date hint when offline.
     private var cachedFooter: some View {
@@ -264,14 +289,43 @@ struct ServerUnscheduledContent: View {
                     }
                 }
 
+                if manualEntryActive {
+                    Section(header: Text("Visit Times"), footer: Text("This service doesn't use live clock in/out — enter the visit start and end times.")) {
+                        DatePicker("Start", selection: $manualStart, displayedComponents: .hourAndMinute)
+                        DatePicker("End", selection: $manualEnd, displayedComponents: .hourAndMinute)
+                        if !manualTimesValid {
+                            Label(manualEnd <= manualStart ? "End time must be after the start time." : "End time can't be in the future.",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
+                }
+
                 Section {
                     if isUnlisted {
-                        // F2: Unlisted clock-in
-                        Button(action: startUnlistedVisit) {
-                            Label("Clock In Now", systemImage: "play.circle.fill")
+                        if unlistedServiceIsNonEvv {
+                            // Non-EVV service: manual time entry
+                            Button(action: startUnlistedManualVisit) {
+                                Label("Record Time", systemImage: "pencil.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !manualTimesValid)
+                        } else {
+                            // F2: Unlisted clock-in
+                            Button(action: startUnlistedVisit) {
+                                Label("Clock In Now", systemImage: "play.circle.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty)
+                        }
+                    } else if selectedServiceIsNonEvv {
+                        // Non-EVV service: manual time entry
+                        Button(action: startManualVisit) {
+                            Label("Record Time", systemImage: "pencil.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
-                        .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty)
+                        .disabled(selectedIndividualIds.isEmpty || !manualTimesValid)
                     } else {
                         Button(action: startVisit) {
                             Label("Clock In Now", systemImage: "play.circle.fill")
@@ -298,7 +352,7 @@ struct ServerUnscheduledContent: View {
                 }
             }
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { onDismiss() }) {
-                ClockInSuccessView()
+                ClockInSuccessView(message: manualEntryActive ? "Time recorded" : nil)
             }
             .onAppear {
                 // Always attempt a refresh; refreshIndividuals handles offline fallback
@@ -354,6 +408,39 @@ struct ServerUnscheduledContent: View {
             )
         }
         appState.startUnscheduledVisitWithoutService(clients: clients)
+        showSuccess = true
+    }
+
+    // Manual time entry for a non-EVV service (listed individuals)
+    private func startManualVisit() {
+        let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
+        guard !selectedIndividuals.isEmpty, !selectedServiceName.isEmpty, manualTimesValid else { return }
+
+        let clients = selectedIndividuals.map { individual in
+            Client(
+                id: UUID(),
+                name: individual.name,
+                address: individual.id,  // server individual ID for API call
+                city: ""
+            )
+        }
+        let serviceType = mapServiceNameToType(selectedServiceName)
+        appState.startUnscheduledManualVisit(clients: clients, service: serviceType,
+                                             serviceName: selectedServiceName,
+                                             start: manualStart, end: manualEnd)
+        showSuccess = true
+    }
+
+    // Manual time entry for a non-EVV service (unlisted individual)
+    private func startUnlistedManualVisit() {
+        let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !unlistedServiceName.isEmpty, manualTimesValid else { return }
+
+        let client = Client(id: UUID(), name: name, address: "", city: "")
+        let serviceType = mapServiceNameToType(unlistedServiceName)
+        appState.startUnscheduledManualVisit(clients: [client], service: serviceType,
+                                             serviceName: unlistedServiceName, unlistedName: name,
+                                             start: manualStart, end: manualEnd)
         showSuccess = true
     }
 

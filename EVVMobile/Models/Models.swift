@@ -129,6 +129,10 @@ struct Visit: Identifiable {
     var lateDocumentation: Bool = false
     /// Free-text name for an unlisted individual (F2)
     var unlistedIndividualName: String?
+    /// Whether the shift's service requires live EVV punches. Non-EVV
+    /// services (e.g. Lifesharing per diem) use manual time entry — staff
+    /// enter start/end times instead of clocking in/out; no GPS.
+    var evvRequired: Bool = true
 
     var client: Client { clients[0] }
 

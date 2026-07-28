@@ -18,21 +18,6 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
-	<key>CFBundleVersion</key>
-	<string>12</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
-	<key>UIApplicationSceneManifest</key>
-	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key>
-		<false/>
-	</dict>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -44,15 +29,30 @@
 			</array>
 		</dict>
 	</array>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>EVV requires your location at clock in and clock out to verify visits.</string>
+	<key>CFBundleVersion</key>
+	<string>13</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to sign in quickly.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>EVV requires your location at clock in and clock out to verify visits.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>EVV uses the microphone to dictate visit notes hands-free.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>EVV uses on-device speech recognition to transcribe your voice into visit notes.</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

@@ -11,7 +11,9 @@ struct UpNextCard: View {
         return "\(f.string(from: visit.scheduledStart)) – \(f.string(from: visit.scheduledEnd))"
     }
 
-    private var isBlocked: Bool { appState.activeVisit != nil }
+    /// Live punches are blocked while another visit is running. Manual time
+    /// entry (non-EVV) never starts a running visit, so it's never blocked.
+    private var isBlocked: Bool { visit.evvRequired && appState.activeVisit != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -59,7 +61,11 @@ struct UpNextCard: View {
             }
 
             Button(action: onClockIn) {
-                Label(isBlocked ? "Clock out first" : "Clock In", systemImage: "play.circle.fill")
+                if visit.evvRequired {
+                    Label(isBlocked ? "Clock out first" : "Clock In", systemImage: "play.circle.fill")
+                } else {
+                    Label("Record Time", systemImage: "pencil.circle.fill")
+                }
             }
             .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: !isBlocked))
             .disabled(isBlocked)

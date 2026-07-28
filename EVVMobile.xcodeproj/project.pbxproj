@@ -24,6 +24,7 @@
 		39FC467AD6772FA6EB3FDCB9 /* NoteReminderCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */; };
 		3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D3E24BD9E02EC479B9857CB /* HistoryView.swift */; };
 		409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB38EF84FCABD2F0387E43A /* MoreView.swift */; };
+		435EC21574D8B09A02E118C0 /* ManualTimeEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E0254F44C15851827B14A0 /* ManualTimeEntrySheet.swift */; };
 		467435D004963F49496C6552 /* OutcomeEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */; };
 		4A6A747B079FB1628A9C55F7 /* GoogleAuthConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7A1084E030E40E8EB9A847 /* GoogleAuthConfig.swift */; };
 		4E3A4BB62AEE42E984B4CD3D /* VoiceConversationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB76D4DCDF855C821D267D9 /* VoiceConversationSheet.swift */; };
@@ -92,6 +93,7 @@
 		A3C86CD2A918321B8E58E5D8 /* SpeechRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechRecognizer.swift; sourceTree = "<group>"; };
 		AEE6D26CF44F431431C7AEB9 /* UpNextCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpNextCard.swift; sourceTree = "<group>"; };
 		B3225BEC89B0945E9D42208E /* EVVMobileUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = EVVMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B7E0254F44C15851827B14A0 /* ManualTimeEntrySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualTimeEntrySheet.swift; sourceTree = "<group>"; };
 		BCB76D4DCDF855C821D267D9 /* VoiceConversationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceConversationSheet.swift; sourceTree = "<group>"; };
 		CC841528113A66996FC21FF1 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		D800630BC97251255B955C6A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -121,6 +123,7 @@
 				1DC5F0D5661B4B523FCCFD64 /* ClockInConfirmSheet.swift */,
 				59D85001A0AB1FEC33B1F24F /* ClockInSuccessView.swift */,
 				837D6C9277FF607206D6D2E7 /* ClockOutFlow.swift */,
+				B7E0254F44C15851827B14A0 /* ManualTimeEntrySheet.swift */,
 				E7F813C89D17059CDF3507FC /* SignaturePadView.swift */,
 			);
 			path = Punch;
@@ -404,6 +407,7 @@
 				1C90215AE4AD63A2C1A60AF7 /* LocalCache.swift in Sources */,
 				9272594B07C6D7B50A5C5F1D /* LocationManager.swift in Sources */,
 				226FC9328809187AC9040CFD /* LoginView.swift in Sources */,
+				435EC21574D8B09A02E118C0 /* ManualTimeEntrySheet.swift in Sources */,
 				76E6D9568491F1450FAD8A8F /* MockData.swift in Sources */,
 				A4CAEA872281BED8E53FDAEF /* Models.swift in Sources */,
 				409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */,

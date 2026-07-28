@@ -71,6 +71,11 @@ struct ServerShift: Decodable {
     let myVisit: ServerVisitInfo?
     /// All visits for this shift (populated for 1:2 shifts)
     let myVisits: [ServerShiftVisitInfo]?
+    /// Whether the shift's service requires live EVV punches (default true).
+    /// Non-EVV services (e.g. Lifesharing per diem) use manual time entry.
+    let evvRequired: Bool?
+    /// Whether GPS capture is required on punches for this service.
+    let gpsRequired: Bool?
 }
 
 struct ShiftsResponse: Decodable {
@@ -93,6 +98,17 @@ struct ClockOutRequest: Encodable {
 
 struct ClockInResponse: Decodable {
     let visit: ServerVisitInfo
+}
+
+struct ManualTimeRequest: Encodable {
+    let start: String
+    let end: String
+}
+
+struct ManualTimeResponse: Decodable {
+    let visit: ServerVisitInfo
+    /// All created visits (one per individual for 1:2 shifts)
+    let visits: [UnscheduledVisitCreated]?
 }
 
 struct ClockOutResponse: Decodable {
@@ -251,6 +267,9 @@ struct ServerIndividualOption: Codable, Identifiable {
     let name: String
     let services: [String]?
     let serviceCodes: [String]?
+    /// Services (descriptions + codes) that do NOT require live EVV punches
+    /// — these use manual time entry instead of clock in/out.
+    let nonEvvServices: [String]?
 }
 
 struct IndividualsResponse: Decodable {
@@ -266,6 +285,9 @@ struct UnscheduledVisitRequest: Encodable {
     let lng: Double?
     let accuracy: Double?
     let unlistedName: String?
+    /// Manual time entry (non-EVV services): "H:MM AM/PM" strings
+    let startTime: String?
+    let endTime: String?
 }
 
 struct UnscheduledVisitCreated: Decodable {
@@ -353,6 +375,9 @@ struct QueuedAction: Identifiable, Codable {
     let timeFixNewIn: String?
     let timeFixNewOut: String?
     let timeFixReason: String?
+    // Manual time entry fields (non-EVV services, offline queuing)
+    let manualStart: String?
+    let manualEnd: String?
     // Retry tracking
     var retryCount: Int
 
@@ -363,6 +388,7 @@ struct QueuedAction: Identifiable, Codable {
         case nonBillable
         case unscheduledVisit
         case timeFix
+        case manualTime
     }
 
     enum CodingKeys: String, CodingKey {
@@ -370,6 +396,7 @@ struct QueuedAction: Identifiable, Codable {
         case noteText, nbCategory, nbMinutes, nbNote, nbDate
         case unschedClientIds, unschedService, unschedClientName, localVisitId
         case signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
+        case manualStart, manualEnd
     }
 
     init(id: UUID, type: ActionType, shiftId: Int?, visitId: String?,
@@ -380,6 +407,7 @@ struct QueuedAction: Identifiable, Codable {
          unschedClientName: String? = nil, localVisitId: UUID? = nil,
          signatureSkipReason: String? = nil,
          timeFixNewIn: String? = nil, timeFixNewOut: String? = nil, timeFixReason: String? = nil,
+         manualStart: String? = nil, manualEnd: String? = nil,
          retryCount: Int = 0) {
         self.id = id
         self.type = type
@@ -402,6 +430,8 @@ struct QueuedAction: Identifiable, Codable {
         self.timeFixNewIn = timeFixNewIn
         self.timeFixNewOut = timeFixNewOut
         self.timeFixReason = timeFixReason
+        self.manualStart = manualStart
+        self.manualEnd = manualEnd
         self.retryCount = retryCount
     }
 
@@ -428,6 +458,8 @@ struct QueuedAction: Identifiable, Codable {
         timeFixNewIn = try c.decodeIfPresent(String.self, forKey: .timeFixNewIn)
         timeFixNewOut = try c.decodeIfPresent(String.self, forKey: .timeFixNewOut)
         timeFixReason = try c.decodeIfPresent(String.self, forKey: .timeFixReason)
+        manualStart = try c.decodeIfPresent(String.self, forKey: .manualStart)
+        manualEnd = try c.decodeIfPresent(String.self, forKey: .manualEnd)
         retryCount = (try? c.decodeIfPresent(Int.self, forKey: .retryCount)) ?? 0
     }
 }
@@ -569,6 +601,41 @@ actor APIClient {
 
         do {
             return try JSONDecoder().decode(ClockInResponse.self, from: data).visit
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Manual Time Entry (non-EVV services)
+
+    func manualTimeEntry(shiftId: Int, start: String, end: String) async throws -> ManualTimeResponse {
+        let url = URL(string: "\(baseURL)/shifts/\(shiftId)/manual-time")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(ManualTimeRequest(start: start, end: end))
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Manual time entry not allowed"
+            throw APIError.conflict(errBody)
+        }
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Manual time entry failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+
+        do {
+            return try JSONDecoder().decode(ManualTimeResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }
@@ -999,14 +1066,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, unlistedName: String? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, unlistedName: unlistedName)
+            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, unlistedName: unlistedName, startTime: startTime, endTime: endTime)
         )
         request.timeoutInterval = 15
 

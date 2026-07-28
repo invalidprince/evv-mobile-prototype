@@ -416,6 +416,161 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Manual time entry (non-EVV services)
+
+    /// Format a Date as the server's "h:mm a" time label (agency timezone).
+    private func serverTimeLabel(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = "h:mm a"
+        return f.string(from: date)
+    }
+
+    /// Record manual start/end times for a scheduled non-EVV shift.
+    /// Creates a completed visit in one step — no live punches, no GPS.
+    func recordManualTime(visitId: UUID, start: Date, end: Date) {
+        guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else { return }
+        guard mode == .server, let shiftId = todayVisits[idx].serverShiftId else { return }
+
+        let startStr = serverTimeLabel(start)
+        let endStr = serverTimeLabel(end)
+
+        // Optimistic update — the visit is complete in one step
+        todayVisits[idx].actualStart = start
+        todayVisits[idx].actualEnd = end
+        todayVisits[idx].status = .completed
+        todayVisits[idx].syncState = .pending
+        let finished = todayVisits[idx]
+        haptic(.success)
+        NoteReminderCenter.shared.scheduleReminders(for: finished)
+
+        if !effectivelyOnline {
+            enqueueOfflineAction(.manualTime, shiftId: shiftId, visitId: nil,
+                                 localVisitId: visitId,
+                                 manualStart: startStr, manualEnd: endStr)
+            DiagnosticLogger.shared.logOffline("Manual time entry queued offline for shift \(shiftId)")
+            scheduleAutoSync()
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let response = try await APIClient.shared.manualTimeEntry(shiftId: shiftId, start: startStr, end: endStr)
+                if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                    self.todayVisits[i].serverVisitId = response.visit.id
+                    if let allVisits = response.visits, allVisits.count > 1 {
+                        self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                    } else {
+                        self.todayVisits[i].serverVisitIds = [response.visit.id]
+                    }
+                    self.todayVisits[i].syncState = .synced
+                }
+                await self.refreshServerShifts()
+            } catch let error as APIError {
+                if error.isNetworkError {
+                    self.enqueueOfflineAction(.manualTime, shiftId: shiftId, visitId: nil,
+                                              localVisitId: visitId,
+                                              manualStart: startStr, manualEnd: endStr)
+                    DiagnosticLogger.shared.logOffline("Manual time entry queued (network error) for shift \(shiftId)")
+                    self.scheduleAutoSync()
+                } else {
+                    self.surfaceServerError(error)
+                    DiagnosticLogger.shared.logAPI("Manual time entry failed: \(error.localizedDescription)")
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                        self.todayVisits[i].status = .scheduled
+                        self.todayVisits[i].actualStart = nil
+                        self.todayVisits[i].actualEnd = nil
+                        self.todayVisits[i].syncState = .synced
+                    }
+                    await self.refreshServerShifts()
+                }
+            } catch {
+                self.surfaceServerError(APIError.networkError(error))
+            }
+        }
+    }
+
+    /// Record an unscheduled visit for a non-EVV service with manual
+    /// start/end times (no live punches, no GPS).
+    func startUnscheduledManualVisit(clients: [Client], service: ServiceType, serviceName: String,
+                                     unlistedName: String? = nil, start: Date, end: Date) {
+        guard mode == .server else { return }
+
+        let startStr = serverTimeLabel(start)
+        let endStr = serverTimeLabel(end)
+        let localVisitId = UUID()
+        var visit = Visit(id: localVisitId, clients: clients, service: service,
+                          scheduledStart: start, scheduledEnd: end,
+                          actualStart: start, actualEnd: end,
+                          status: .completed, isGroup: clients.count > 1)
+        visit.unlistedIndividualName = unlistedName
+        visit.evvRequired = false
+        visit.syncState = .pending
+        todayVisits.append(visit)
+        haptic(.success)
+        NoteReminderCenter.shared.scheduleReminders(for: visit)
+
+        let serverClientIds = clients.map { $0.address }.filter { !$0.isEmpty }
+
+        if !effectivelyOnline {
+            enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                 unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                 unschedService: serviceName,
+                                 unschedClientName: unlistedName,
+                                 localVisitId: localVisitId,
+                                 manualStart: startStr, manualEnd: endStr)
+            DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued offline")
+            scheduleAutoSync()
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let response = try await APIClient.shared.createUnscheduledVisit(
+                    clientIds: serverClientIds,
+                    service: serviceName,
+                    unlistedName: unlistedName,
+                    startTime: startStr,
+                    endTime: endStr
+                )
+                if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                    self.todayVisits[i].serverVisitId = response.visit.id
+                    if let allVisits = response.visits, allVisits.count > 1 {
+                        self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                    } else {
+                        self.todayVisits[i].serverVisitIds = [response.visit.id]
+                    }
+                    if let shift = response.shift {
+                        self.todayVisits[i].serverShiftId = shift.id
+                    }
+                    self.todayVisits[i].syncState = .synced
+                }
+            } catch let error as APIError {
+                if error.isNetworkError {
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                        self.todayVisits[i].syncState = .pending
+                    }
+                    self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                              unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                              unschedService: serviceName,
+                                              unschedClientName: unlistedName,
+                                              localVisitId: localVisitId,
+                                              manualStart: startStr, manualEnd: endStr)
+                    DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (network error)")
+                    self.scheduleAutoSync()
+                } else {
+                    self.surfaceServerError(error)
+                    DiagnosticLogger.shared.logAPI("Unscheduled manual time entry failed: \(error.localizedDescription)")
+                    self.todayVisits.removeAll { $0.id == localVisitId }
+                }
+            } catch {
+                self.surfaceServerError(APIError.networkError(error))
+                self.todayVisits.removeAll { $0.id == localVisitId }
+            }
+        }
+    }
+
     func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false) {
         guard activeVisit == nil else { return }
 
@@ -924,6 +1079,7 @@ final class AppState: ObservableObject {
         visit.ratio = s.ratio
         visit.partners = partners
         visit.serverLocation = s.location
+        visit.evvRequired = s.evvRequired ?? true
 
         // Populate all visit IDs for 1:2 clock-out
         if let myVisits = s.myVisits, myVisits.count > 1 {
@@ -1015,7 +1171,8 @@ final class AppState: ObservableObject {
                                         unschedClientName: String? = nil, localVisitId: UUID? = nil,
                                         signatureSkipReason: String? = nil,
                                         timeFixNewIn: String? = nil, timeFixNewOut: String? = nil,
-                                        timeFixReason: String? = nil) {
+                                        timeFixReason: String? = nil,
+                                        manualStart: String? = nil, manualEnd: String? = nil) {
         // DEDUP: clock-out — keep first per server visitId
         if type == .clockOut, let vid = visitId,
            offlineQueue.contains(where: { $0.type == .clockOut && $0.visitId == vid }) {
@@ -1026,6 +1183,12 @@ final class AppState: ObservableObject {
         if type == .clockIn, let sid = shiftId,
            offlineQueue.contains(where: { $0.type == .clockIn && $0.shiftId == sid }) {
             DiagnosticLogger.shared.logOffline("Duplicate clock-in for shift \(sid) skipped")
+            return
+        }
+        // DEDUP: manual time entry — keep first per shiftId
+        if type == .manualTime, let sid = shiftId,
+           offlineQueue.contains(where: { $0.type == .manualTime && $0.shiftId == sid }) {
+            DiagnosticLogger.shared.logOffline("Duplicate manual time entry for shift \(sid) skipped")
             return
         }
         // DEDUP: time fix — keep LAST per localVisitId (replace existing)
@@ -1055,7 +1218,9 @@ final class AppState: ObservableObject {
             signatureSkipReason: signatureSkipReason,
             timeFixNewIn: timeFixNewIn,
             timeFixNewOut: timeFixNewOut,
-            timeFixReason: timeFixReason
+            timeFixReason: timeFixReason,
+            manualStart: manualStart,
+            manualEnd: manualEnd
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
@@ -1083,7 +1248,7 @@ final class AppState: ObservableObject {
         // STEP 1: Sort by action type priority (clock-in/unscheduled first,
         // clock-out next, then notes/time-fixes/non-billable last).
         let priorityOrder: [QueuedAction.ActionType] = [
-            .clockIn, .unscheduledVisit, .clockOut, .addNote, .timeFix, .nonBillable
+            .clockIn, .unscheduledVisit, .manualTime, .clockOut, .addNote, .timeFix, .nonBillable
         ]
         let sorted = offlineQueue.sorted { a, b in
             let pa = priorityOrder.firstIndex(of: a.type) ?? priorityOrder.count
@@ -1177,12 +1342,30 @@ final class AppState: ObservableObject {
                         _ = try await APIClient.shared.createNonBillable(
                             date: action.nbDate, category: cat, minutes: mins, note: action.nbNote ?? "")
                     }
+                case .manualTime:
+                    if let shiftId = action.shiftId, let ms = action.manualStart, let me = action.manualEnd {
+                        let response = try await APIClient.shared.manualTimeEntry(shiftId: shiftId, start: ms, end: me)
+                        if let localId = action.localVisitId {
+                            localToServerVisitId[localId] = response.visit.id
+                            if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                                todayVisits[i].serverVisitId = response.visit.id
+                                if let allVisits = response.visits, allVisits.count > 1 {
+                                    todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                                } else {
+                                    todayVisits[i].serverVisitIds = [response.visit.id]
+                                }
+                                todayVisits[i].syncState = .synced
+                            }
+                        }
+                    }
                 case .unscheduledVisit:
-                    if let clientIds = action.unschedClientIds {
+                    // clientIds may be nil for unlisted-individual visits (F2)
+                    if action.unschedClientIds != nil || action.unschedClientName != nil {
                         let response = try await APIClient.shared.createUnscheduledVisit(
-                            clientIds: clientIds, service: action.unschedService,
+                            clientIds: action.unschedClientIds ?? [], service: action.unschedService,
                             lat: action.lat, lng: action.lng, accuracy: action.accuracy,
-                            unlistedName: action.unschedClientName)
+                            unlistedName: action.unschedClientName,
+                            startTime: action.manualStart, endTime: action.manualEnd)
                         // Update local visit with real server IDs
                         if let localId = action.localVisitId {
                             localToServerVisitId[localId] = response.visit.id

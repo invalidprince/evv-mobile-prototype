@@ -4,6 +4,10 @@ struct ClockInSuccessView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 0.4
 
+    /// Optional custom message (e.g. "Time recorded" for manual entries).
+    /// Defaults to the clock-in confirmation.
+    var message: String? = nil
+
     private var timeText: String {
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
@@ -18,7 +22,7 @@ struct ClockInSuccessView: View {
                     .font(.system(size: 110))
                     .foregroundColor(.white)
                     .scaleEffect(scale)
-                Text("Clocked in \(timeText)")
+                Text(message ?? "Clocked in \(timeText)")
                     .font(.title.bold())
                     .foregroundColor(.white)
             }
