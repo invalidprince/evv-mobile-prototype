@@ -852,6 +852,13 @@ struct HealthSafetyInfoView: View {
                 .foregroundColor(.secondary)
 
             infoBlock(title: "Allergies", icon: "allergens", color: Theme.danger, items: client.allergies)
+
+            // Supervision Level sits directly alongside allergies — both are
+            // the critical at-a-glance safety facts for the visit.
+            if !client.supervisionLevel.isEmpty {
+                singleInfoBlock(title: "Supervision Level", icon: "eye.fill", color: Theme.warning, text: client.supervisionLevel)
+            }
+
             infoBlock(title: "Safety Alerts", icon: "exclamationmark.triangle.fill", color: Theme.warning, items: client.safetyAlerts)
             infoBlock(title: "Protocols", icon: "list.clipboard.fill", color: Theme.primary, items: client.protocols)
 
@@ -860,9 +867,6 @@ struct HealthSafetyInfoView: View {
             }
             if !client.adaptiveEquipment.isEmpty {
                 singleInfoBlock(title: "Adaptive Equipment", icon: "figure.roll", color: Theme.success, text: client.adaptiveEquipment)
-            }
-            if !client.supervisionLevel.isEmpty {
-                singleInfoBlock(title: "Supervision Level", icon: "eye.fill", color: Theme.warning, text: client.supervisionLevel)
             }
 
             if client.allergies.isEmpty && client.safetyAlerts.isEmpty && client.protocols.isEmpty
