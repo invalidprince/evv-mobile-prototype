@@ -12,6 +12,18 @@ struct ActiveVisitCard: View {
             .first
     }
 
+    /// True when the active visit already has documentation content — either a
+    /// note submitted mid-shift (hasNote) or a locally saved draft. Drives the
+    /// Add vs Edit label on the mid-visit documentation button.
+    private func hasDocContent(for visit: Visit) -> Bool {
+        if visit.hasNote { return true }
+        if appState.mode == .server, let svid = visit.serverVisitId,
+           appState.serverNoteDraft(for: svid).hasContent {
+            return true
+        }
+        return appState.noteDraft(for: visit.id).hasContent
+    }
+
     var body: some View {
         if let visit = appState.activeVisit {
             VStack(alignment: .leading, spacing: 14) {
@@ -85,13 +97,27 @@ struct ActiveVisitCard: View {
                 }
                 .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
 
-                HStack(spacing: 12) {
-                    Button(action: { showDocumentation = true }) {
-                        Label("Add Note", systemImage: "square.and.pencil")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    Spacer()
-                    if nextVisit != nil {
+                // Mid-visit documentation: write (or keep editing) the visit
+                // note without clocking out. Everything entered here persists
+                // as a draft and prefills the clock-out documentation step.
+                Button(action: { showDocumentation = true }) {
+                    Label(
+                        hasDocContent(for: visit) ? "Edit Documentation" : "Add Documentation",
+                        systemImage: hasDocContent(for: visit) ? "doc.text.fill" : "square.and.pencil"
+                    )
+                }
+                .buttonStyle(SecondaryButtonStyle())
+
+                if visit.hasNote {
+                    Label("Note submitted — you can update it until clock-out.", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(Theme.success)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+
+                if nextVisit != nil {
+                    HStack {
+                        Spacer()
                         Button(action: {
                             clockOutAndNext = true
                             showClockOut = true

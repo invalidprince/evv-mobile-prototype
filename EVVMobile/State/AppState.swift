@@ -408,6 +408,12 @@ final class AppState: ObservableObject {
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                         self.todayVisits[i].syncState = .synced
                     }
+                    // Documentation submitted mid-shift? Clock-out just reset
+                    // the server's doc flag — re-finalize the stored note so
+                    // the visit ends doc-complete.
+                    for vid in allVisitIds where self.midShiftDocSubmitted.contains(vid) {
+                        await self.finalizeSubmittedDocumentation(serverVisitId: vid)
+                    }
                     await self.refreshServerShifts()
                 } catch let error as APIError {
                     if error.isNetworkError {
@@ -758,11 +764,81 @@ final class AppState: ObservableObject {
         NoteReminderCenter.shared.cancelReminders(for: visitId)
     }
 
+    /// Server visit IDs whose structured documentation was submitted while the
+    /// visit was still in progress (mid-shift). The server stores the note but
+    /// leaves doc status 'in progress', then resets it to 'incomplete' at
+    /// clock-out — so these visits get one automatic re-submit after clock-out
+    /// to finish doc-complete without nagging staff who already wrote the note.
+    private var midShiftDocSubmitted: Set<String> = []
+
+    /// Re-submit a visit's already-stored documentation right after clock-out.
+    /// Best-effort: any failure just leaves the normal (prefilled)
+    /// incomplete-note card as the fallback path.
+    @MainActor
+    private func finalizeSubmittedDocumentation(serverVisitId: String) async {
+        do {
+            let template = try await APIClient.shared.fetchDocumentation(visitId: serverVisitId)
+            guard let existing = template.existingNote,
+                  existing.outcomes != nil || existing.questionAnswers != nil else {
+                midShiftDocSubmitted.remove(serverVisitId)
+                return
+            }
+            let outcomePayload: [[String: Any]] = (existing.outcomes ?? []).compactMap { e in
+                guard let oid = e.outcomeId else { return nil }
+                var dict: [String: Any] = [
+                    "outcomeId": oid,
+                    "title": e.title ?? "",
+                    "frequency": e.frequency ?? 0,
+                    "goalOpportunity": e.goalOpportunity ?? false,
+                    "behaviorObserved": e.behaviorObserved ?? false,
+                    "narrative": e.narrative ?? ""
+                ]
+                if let pl = e.promptLevel { dict["promptLevel"] = pl }
+                return dict
+            }
+            let questionPayload: [[String: Any]] = (existing.questionAnswers ?? []).map {
+                ["questionId": $0.questionId, "answer": $0.answer]
+            }
+            let response = try await APIClient.shared.submitDocumentation(
+                visitId: serverVisitId,
+                outcomes: outcomePayload,
+                additionalComments: existing.additionalComments ?? existing.comments ?? "",
+                questionAnswers: questionPayload,
+                transportReviewedGoals: existing.transportReviewedGoals
+            )
+            let docStatus = response.docStatus ?? "complete"
+            let isComplete = docStatus.lowercased() == "complete"
+            if isComplete { midShiftDocSubmitted.remove(serverVisitId) }
+            if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                historyVisits[i].hasNote = true
+                historyVisits[i].serverDocStatus = docStatus
+                if isComplete { historyVisits[i].docComplete = true }
+            }
+            if let i = todayVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                todayVisits[i].hasNote = true
+                todayVisits[i].serverDocStatus = docStatus
+                if isComplete { markDocComplete(visitId: todayVisits[i].id) }
+            }
+            DiagnosticLogger.shared.logAPI("Mid-shift doc finalized after clock-out for \(serverVisitId): \(docStatus)")
+        } catch {
+            DiagnosticLogger.shared.logAPI("Doc finalize after clock-out failed for \(serverVisitId): \(error.localizedDescription)")
+        }
+    }
+
     /// Mark documentation complete for a server visit (structured documentation flow).
     /// Updates hasNote, serverDocStatus, and docComplete on matching visits across
     /// todayVisits and historyVisits arrays so the UI reflects completion immediately.
     func markServerDocComplete(visitId: UUID, serverVisitId: String, docStatus: String) {
         let isComplete = docStatus.lowercased() == "complete"
+        // A structured submit that doesn't come back "complete" means the visit
+        // was still in progress (mid-shift documentation). Remember it so
+        // clock-out can re-finalize the note — the server keeps the note
+        // content but resets the doc flag to 'incomplete' at clock-out.
+        if isComplete {
+            midShiftDocSubmitted.remove(serverVisitId)
+        } else {
+            midShiftDocSubmitted.insert(serverVisitId)
+        }
         if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
             historyVisits[i].hasNote = true
             historyVisits[i].serverDocStatus = docStatus
@@ -1370,6 +1446,11 @@ final class AppState: ObservableObject {
                     }
                     if let visitId = resolvedVisitId {
                         _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signatureSkipReason: action.signatureSkipReason, address: action.address)
+                        // Mid-shift-submitted note: re-finalize after the
+                        // replayed clock-out (server reset the doc flag).
+                        if midShiftDocSubmitted.contains(visitId) {
+                            await finalizeSubmittedDocumentation(serverVisitId: visitId)
+                        }
                     } else {
                         // Can't resolve yet — keep for next sync
                         remaining.append(action)

@@ -239,6 +239,14 @@ struct VisitNote {
     func isComplete(for outcomes: [Outcome]) -> Bool {
         outcomes.allSatisfy { outcomeEntries[$0.id]?.isComplete == true }
     }
+
+    /// True when the note carries anything worth prefilling — used to decide
+    /// whether a mid-visit entry point should read "Add" or "Edit".
+    var hasContent: Bool {
+        !outcomeEntries.isEmpty
+            || !additionalComments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !questionAnswers.isEmpty
+    }
 }
 
 struct Credential: Identifiable {
