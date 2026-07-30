@@ -13,7 +13,7 @@ struct UpNextCard: View {
 
     /// Live punches are blocked while another visit is running. Manual time
     /// entry (non-EVV) never starts a running visit, so it's never blocked.
-    private var isBlocked: Bool { visit.evvRequired && appState.hasActiveVisit }
+    private var isBlocked: Bool { visit.requiresClockIn && appState.hasActiveVisit }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -61,7 +61,7 @@ struct UpNextCard: View {
             }
 
             Button(action: onClockIn) {
-                if visit.evvRequired {
+                if visit.requiresClockIn {
                     Label(isBlocked ? "Clock out first" : "Clock In", systemImage: "play.circle.fill")
                 } else {
                     Label("Record Time", systemImage: "pencil.circle.fill")

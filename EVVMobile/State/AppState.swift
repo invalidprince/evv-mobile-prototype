@@ -539,6 +539,7 @@ final class AppState: ObservableObject {
                           status: .completed, isGroup: clients.count > 1)
         visit.unlistedIndividualName = unlistedName
         visit.evvRequired = false
+        visit.requiresClockIn = false
         visit.syncState = .pending
         todayVisits.append(visit)
         haptic(.success)
@@ -1128,6 +1129,7 @@ final class AppState: ObservableObject {
         visit.partners = partners
         visit.serverLocation = s.location
         visit.evvRequired = s.evvRequired ?? true
+        visit.requiresClockIn = s.requiresClockIn ?? (s.evvRequired ?? true)
 
         // Populate all visit IDs for 1:2 clock-out
         if let myVisits = s.myVisits, myVisits.count > 1 {

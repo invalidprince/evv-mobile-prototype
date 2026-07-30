@@ -134,10 +134,10 @@ struct TodayView: View {
                 LocationManager.shared.warmUp()
             }
             .sheet(item: $clockInTarget) { visit in
-                if visit.evvRequired {
+                if visit.requiresClockIn {
                     ClockInConfirmSheet(visit: visit)
                 } else {
-                    // Non-EVV service: manual time entry instead of live punch
+                    // Service doesn't require clock-in: manual time entry
                     ManualTimeEntrySheet(visit: visit)
                 }
             }

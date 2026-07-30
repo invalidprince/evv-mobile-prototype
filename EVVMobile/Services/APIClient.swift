@@ -74,6 +74,10 @@ struct ServerShift: Decodable {
     /// Whether the shift's service requires live EVV punches (default true).
     /// Non-EVV services (e.g. Lifesharing per diem) use manual time entry.
     let evvRequired: Bool?
+    /// Whether the service requires live clock in/out punches (default true).
+    /// When false, staff can manually enter start/end times instead of punching.
+    /// Decoupled from evvRequired — a service can be non-EVV but still require clock-in.
+    let requiresClockIn: Bool?
     /// Whether GPS capture is required on punches for this service.
     let gpsRequired: Bool?
 }

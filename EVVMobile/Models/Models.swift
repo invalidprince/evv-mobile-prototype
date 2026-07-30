@@ -133,6 +133,9 @@ struct Visit: Identifiable {
     /// services (e.g. Lifesharing per diem) use manual time entry — staff
     /// enter start/end times instead of clocking in/out; no GPS.
     var evvRequired: Bool = true
+    /// Whether the service requires live clock in/out (decoupled from EVV).
+    /// When false, staff can manually enter start/end times.
+    var requiresClockIn: Bool = true
 
     var client: Client { clients[0] }
 
