@@ -700,7 +700,7 @@ actor APIClient {
 
     private var token: String?
 
-    init(baseURL: String = "https://evv-poc-production.up.railway.app/api") {
+    init(baseURL: String = "https://d2hmfpgqkgeyu.cloudfront.net/api") {
         self.baseURL = baseURL
     }
 
