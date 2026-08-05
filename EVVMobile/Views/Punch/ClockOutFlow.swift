@@ -13,6 +13,7 @@ struct ClockOutFlow: View {
     @State private var step: Step = .docGate
     @State private var showDocumentation = false
     @State private var completedVisit: Visit?
+    @State private var signature: String?
     @State private var signatureSkipReason: String?
     @State private var showTimeFix = false
     @State private var timeFixWasSubmitted = false
@@ -31,8 +32,16 @@ struct ClockOutFlow: View {
                 case .docGate: docGateView
                 case .signature:
                     SignatureStepView(
-                        onDone: { signatureSkipReason = nil; step = .confirm },
-                        onSkip: { reason in signatureSkipReason = reason; step = .confirm }
+                        onDone: { capturedSignature in
+                            signature = capturedSignature
+                            signatureSkipReason = nil
+                            step = .confirm
+                        },
+                        onSkip: { reason in
+                            signature = nil
+                            signatureSkipReason = reason
+                            step = .confirm
+                        }
                     )
                 case .confirm: confirmView
                 case .complete: completeView
@@ -130,7 +139,10 @@ struct ClockOutFlow: View {
                         Divider().padding(.horizontal)
                         summaryRow(icon: "mappin.and.ellipse", label: "Location", value: loc)
                     }
-                    if let skipReason = signatureSkipReason {
+                    if signature != nil {
+                        Divider().padding(.horizontal)
+                        summaryRow(icon: "signature", label: "Signature", value: "✓ captured")
+                    } else if let skipReason = signatureSkipReason {
                         Divider().padding(.horizontal)
                         summaryRow(icon: "signature", label: "Signature", value: "Skipped: \(skipReason)")
                     }
@@ -277,7 +289,7 @@ struct ClockOutFlow: View {
             // API call and the offline queue snapshot carry coordinates.
             // Bounded by a 15s timeout; punch proceeds even if it fails.
             _ = await LocationManager.shared.acquireLocation()
-            completedVisit = appState.clockOut(signatureSkipReason: signatureSkipReason)
+            completedVisit = appState.clockOut(signature: signature, signatureSkipReason: signatureSkipReason)
             step = .complete
         }
     }

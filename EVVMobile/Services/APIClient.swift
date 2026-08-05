@@ -99,6 +99,7 @@ struct ClockOutRequest: Encodable {
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
+    let signature: String?
     let signatureSkipReason: String?
     /// Manually entered service address (GPS-unavailable fallback punch).
     let address: String?
@@ -411,11 +412,12 @@ struct DocumentationTemplateResponse: Decodable {
     let healthInfo: ServerHealthInfo?
     let existingNote: ServerExistingNote?
     let aiAssistEnabled: Bool?
+    let signatureCaptured: Bool?
     /// Server-configured visit questions (pre-filtered + pre-sorted for this visit).
     let questions: [ServerDocQuestion]?
 
     enum CodingKeys: String, CodingKey {
-        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, questions
+        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, signatureCaptured, questions
     }
 
     init(from decoder: Decoder) throws {
@@ -433,6 +435,7 @@ struct DocumentationTemplateResponse: Decodable {
         healthInfo = (try? c.decodeIfPresent(ServerHealthInfo.self, forKey: .healthInfo)) ?? nil
         existingNote = (try? c.decodeIfPresent(ServerExistingNote.self, forKey: .existingNote)) ?? nil
         aiAssistEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aiAssistEnabled)) ?? nil
+        signatureCaptured = (try? c.decodeIfPresent(Bool.self, forKey: .signatureCaptured)) ?? nil
         // Per-element lenient decode — one malformed question never kills the form.
         if let raw = try? c.decodeIfPresent([FailableDecodable<ServerDocQuestion>].self, forKey: .questions) {
             questions = raw.compactMap { $0.value }
@@ -588,6 +591,7 @@ struct QueuedAction: Identifiable, Codable {
     let unschedClientName: String?   // F2 unlisted individual name
     let localVisitId: UUID?          // Links to the optimistic local Visit
     // Clock-out fields
+    let signature: String?           // Base64 PNG for offline clock-out
     let signatureSkipReason: String? // Signature skip reason for offline clock-out
     // Time fix fields (offline time-fix queuing)
     let timeFixNewIn: String?
@@ -613,7 +617,7 @@ struct QueuedAction: Identifiable, Codable {
         case id, type, shiftId, visitId, lat, lng, accuracy, address, createdAt
         case noteText, nbCategory, nbMinutes, nbNote, nbDate
         case unschedClientIds, unschedService, unschedClientName, localVisitId
-        case signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
+        case signature, signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
         case manualStart, manualEnd
     }
 
@@ -623,6 +627,7 @@ struct QueuedAction: Identifiable, Codable {
          nbNote: String? = nil, nbDate: String? = nil,
          unschedClientIds: [String]? = nil, unschedService: String? = nil,
          unschedClientName: String? = nil, localVisitId: UUID? = nil,
+         signature: String? = nil,
          signatureSkipReason: String? = nil,
          timeFixNewIn: String? = nil, timeFixNewOut: String? = nil, timeFixReason: String? = nil,
          manualStart: String? = nil, manualEnd: String? = nil,
@@ -645,6 +650,7 @@ struct QueuedAction: Identifiable, Codable {
         self.unschedService = unschedService
         self.unschedClientName = unschedClientName
         self.localVisitId = localVisitId
+        self.signature = signature
         self.signatureSkipReason = signatureSkipReason
         self.timeFixNewIn = timeFixNewIn
         self.timeFixNewOut = timeFixNewOut
@@ -674,6 +680,7 @@ struct QueuedAction: Identifiable, Codable {
         unschedService = try c.decodeIfPresent(String.self, forKey: .unschedService)
         unschedClientName = try c.decodeIfPresent(String.self, forKey: .unschedClientName)
         localVisitId = try c.decodeIfPresent(UUID.self, forKey: .localVisitId)
+        signature = try c.decodeIfPresent(String.self, forKey: .signature)
         signatureSkipReason = try c.decodeIfPresent(String.self, forKey: .signatureSkipReason)
         timeFixNewIn = try c.decodeIfPresent(String.self, forKey: .timeFixNewIn)
         timeFixNewOut = try c.decodeIfPresent(String.self, forKey: .timeFixNewOut)
@@ -863,13 +870,13 @@ actor APIClient {
 
     // MARK: - Clock Out
 
-    func clockOut(visitId: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, signatureSkipReason: String? = nil, address: String? = nil) async throws -> ServerVisitInfo {
+    func clockOut(visitId: String, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, signature: String? = nil, signatureSkipReason: String? = nil, address: String? = nil) async throws -> ServerVisitInfo {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/clock-out")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(ClockOutRequest(lat: lat, lng: lng, accuracy: accuracy, signatureSkipReason: signatureSkipReason, address: address))
+        request.httpBody = try JSONEncoder().encode(ClockOutRequest(lat: lat, lng: lng, accuracy: accuracy, signature: signature, signatureSkipReason: signatureSkipReason, address: address))
         request.timeoutInterval = 15
 
         let (data, response) = try await performRequest(request)

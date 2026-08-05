@@ -349,7 +349,7 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
-    func clockOut(signatureSkipReason: String? = nil) -> Visit? {
+    func clockOut(signature: String? = nil, signatureSkipReason: String? = nil) -> Visit? {
         guard let idx = todayVisits.firstIndex(where: { $0.status == .inProgress }) else { return nil }
         let visitId = todayVisits[idx].id
 
@@ -377,12 +377,14 @@ final class AppState: ObservableObject {
                 if allVisitIds.isEmpty {
                     // Visit was created offline; queue with local ID for resolution during replay
                     enqueueOfflineAction(.clockOut, shiftId: nil, visitId: nil,
-                                         localVisitId: visitId, signatureSkipReason: signatureSkipReason)
+                                         localVisitId: visitId, signature: signature,
+                                         signatureSkipReason: signatureSkipReason)
                     DiagnosticLogger.shared.logOffline("Clock-out queued (no server visit ID yet)")
                 } else {
                     for vid in allVisitIds {
                         enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid,
-                                             localVisitId: visitId, signatureSkipReason: signatureSkipReason)
+                                             localVisitId: visitId, signature: signature,
+                                             signatureSkipReason: signatureSkipReason)
                     }
                 }
                 scheduleAutoSync()
@@ -403,6 +405,7 @@ final class AppState: ObservableObject {
                                                                 lat: coords?.lat,
                                                                 lng: coords?.lng,
                                                                 accuracy: coords?.accuracy,
+                                                                signature: signature,
                                                                 signatureSkipReason: signatureSkipReason)
                     }
                     if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
@@ -414,7 +417,8 @@ final class AppState: ObservableObject {
                         // Enqueue each visit for offline sync
                         for vid in allVisitIds {
                             self.enqueueOfflineAction(.clockOut, shiftId: nil, visitId: vid,
-                                                     localVisitId: visitId, signatureSkipReason: signatureSkipReason)
+                                                     localVisitId: visitId, signature: signature,
+                                                     signatureSkipReason: signatureSkipReason)
                         }
                         self.scheduleAutoSync()
                         DiagnosticLogger.shared.logOffline("Clock-out queued (network error)")
@@ -1219,6 +1223,7 @@ final class AppState: ObservableObject {
                                         nbNote: String? = nil, nbDate: String? = nil,
                                         unschedClientIds: [String]? = nil, unschedService: String? = nil,
                                         unschedClientName: String? = nil, localVisitId: UUID? = nil,
+                                        signature: String? = nil,
                                         signatureSkipReason: String? = nil,
                                         timeFixNewIn: String? = nil, timeFixNewOut: String? = nil,
                                         timeFixReason: String? = nil,
@@ -1267,6 +1272,7 @@ final class AppState: ObservableObject {
             unschedService: unschedService,
             unschedClientName: unschedClientName,
             localVisitId: localVisitId,
+            signature: signature,
             signatureSkipReason: signatureSkipReason,
             timeFixNewIn: timeFixNewIn,
             timeFixNewOut: timeFixNewOut,
@@ -1371,7 +1377,7 @@ final class AppState: ObservableObject {
                             ?? todayVisits.first(where: { $0.id == localId })?.serverVisitId
                     }
                     if let visitId = resolvedVisitId {
-                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signatureSkipReason: action.signatureSkipReason, address: action.address)
+                        _ = try await APIClient.shared.clockOut(visitId: visitId, lat: action.lat, lng: action.lng, accuracy: action.accuracy, signature: action.signature, signatureSkipReason: action.signatureSkipReason, address: action.address)
                     } else {
                         // Can't resolve yet — keep for next sync
                         remaining.append(action)

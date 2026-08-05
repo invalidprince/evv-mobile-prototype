@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct SignatureStepView: View {
-    let onDone: () -> Void
+    let onDone: (String) -> Void
     let onSkip: (String) -> Void  // skip reason passed back
     @State private var lines: [[CGPoint]] = []
     @State private var currentLine: [CGPoint] = []
+    @State private var padSize = CGSize(width: 600, height: 240)
     @State private var showSkipReason = false
 
     var body: some View {
@@ -16,7 +18,11 @@ struct SignatureStepView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
-            SignaturePad(lines: $lines, currentLine: $currentLine)
+            GeometryReader { geometry in
+                SignaturePad(lines: $lines, currentLine: $currentLine)
+                    .onAppear { padSize = geometry.size }
+                    .onChange(of: geometry.size) { padSize = $0 }
+            }
                 .frame(height: 240)
                 .background(Theme.cardBackground)
                 .cornerRadius(14)
@@ -36,7 +42,11 @@ struct SignatureStepView: View {
             Spacer()
 
             VStack(spacing: 12) {
-                Button("Accept Signature") { onDone() }
+                Button("Accept Signature") {
+                    if let signature = renderedSignatureBase64() {
+                        onDone(signature)
+                    }
+                }
                     .buttonStyle(PrimaryButtonStyle(enabled: !lines.isEmpty))
                     .disabled(lines.isEmpty)
                 Button("Skip Signature") { showSkipReason = true }
@@ -52,6 +62,44 @@ struct SignatureStepView: View {
                 onSkip(reason)
             })
         }
+    }
+
+    /// Renders the captured SwiftUI canvas points into a compact, standard
+    /// base64 PNG. A fixed 600x240, 1x opaque image keeps payloads small while
+    /// preserving enough detail for a readable signature.
+    private func renderedSignatureBase64() -> String? {
+        guard padSize.width > 0, padSize.height > 0, !lines.isEmpty else { return nil }
+
+        let outputSize = CGSize(width: 600, height: 240)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: outputSize, format: format)
+        let image = renderer.image { rendererContext in
+            let bounds = CGRect(origin: .zero, size: outputSize)
+            UIColor.white.setFill()
+            rendererContext.fill(bounds)
+
+            let context = rendererContext.cgContext
+            context.setStrokeColor(UIColor.black.cgColor)
+            context.setLineWidth(2.5)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+
+            let scaleX = outputSize.width / padSize.width
+            let scaleY = outputSize.height / padSize.height
+            for line in lines where line.count > 1 {
+                context.beginPath()
+                context.move(to: CGPoint(x: line[0].x * scaleX, y: line[0].y * scaleY))
+                for point in line.dropFirst() {
+                    context.addLine(to: CGPoint(x: point.x * scaleX, y: point.y * scaleY))
+                }
+                context.strokePath()
+            }
+        }
+
+        return image.pngData()?.base64EncodedString()
     }
 }
 
