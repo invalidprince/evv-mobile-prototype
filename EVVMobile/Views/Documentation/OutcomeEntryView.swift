@@ -1,5 +1,85 @@
 import SwiftUI
 
+/// One compact counter row: label · − · value · +.
+/// The value itself is tappable for keyboard entry — steppers stay because
+/// they're field-friendly (gloves / cold hands), but typing 12 shouldn't take
+/// 12 taps.
+private struct CountRow: View {
+    let label: String
+    @Binding var value: Int?
+    var disabled: Bool
+
+    @State private var editing = false
+    @State private var typed = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.secondary)
+            Spacer()
+            Button(action: {
+                let v = value ?? 0
+                if v > 0 { value = v - 1 }
+            }) {
+                Image(systemName: "minus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor((value ?? 0) > 0 && !disabled ? Theme.primary : .secondary.opacity(0.4))
+            }
+            .disabled(disabled)
+            .buttonStyle(.plain)
+
+            if editing {
+                TextField("", text: $typed)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .font(.title3.bold())
+                    .frame(minWidth: 56)
+                    .focused($focused)
+                    .onSubmit { commit() }
+                    // Single-argument onChange — the iOS 17 two-argument form
+                    // does not compile against this target (deployment 15.0).
+                    .onChange(of: focused) { isFocused in
+                        if !isFocused { commit() }
+                    }
+            } else {
+                // "—" means not measured; 0 is a real measurement.
+                Text(value.map(String.init) ?? "—")
+                    .font(.title3.bold())
+                    .foregroundColor(disabled ? .secondary.opacity(0.5) : .primary)
+                    .frame(minWidth: 56, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard !disabled else { return }
+                        typed = value.map(String.init) ?? ""
+                        editing = true
+                        focused = true
+                    }
+            }
+
+            Button(action: { value = (value ?? 0) + 1 }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(disabled ? .secondary.opacity(0.4) : Theme.primary)
+            }
+            .disabled(disabled)
+            .buttonStyle(.plain)
+        }
+        .opacity(disabled ? 0.5 : 1)
+    }
+
+    private func commit() {
+        let trimmed = typed.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            value = nil
+        } else if let n = Int(trimmed) {
+            value = max(0, n)
+        }
+        editing = false
+    }
+}
+
 struct OutcomeEntryView: View {
     let outcome: Outcome
     @Binding var entry: OutcomeEntry
@@ -20,70 +100,40 @@ struct OutcomeEntryView: View {
                     .font(.title3)
             }
 
-            // Data point — 4 big buttons (required)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Data Point *")
+            // Data points — three counts + N/A (v0.4.152).
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Data Points")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
-                ForEach(DataPoint.allCases) { dp in
-                    Button(action: {
-                        entry.dataPoint = dp
-                        // When N/A is selected, auto-fill narrative if empty
-                        if dp == .notApplicable && entry.narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            entry.narrative = "We did not work on this outcome today."
-                        }
-                    }) {
-                        HStack {
-                            Text(dp.rawValue)
-                                .font(.subheadline.weight(.medium))
-                            Spacer()
-                            if entry.dataPoint == dp {
-                                Image(systemName: "checkmark.circle.fill")
+                CountRow(label: "Prompts", value: $entry.prompts, disabled: entry.na)
+                CountRow(label: "Successes", value: $entry.successes, disabled: entry.na)
+                CountRow(label: "Opportunities", value: $entry.opportunities, disabled: entry.na)
+
+                Toggle("N/A", isOn: Binding(
+                    get: { entry.na },
+                    set: { on in
+                        entry.na = on
+                        if on {
+                            // N/A wins — never leave numbers behind it.
+                            entry.prompts = nil
+                            entry.successes = nil
+                            entry.opportunities = nil
+                            if entry.narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                entry.narrative = "We did not work on this outcome today."
                             }
                         }
-                        .padding(.horizontal, 14)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                        .background(entry.dataPoint == dp ? (dp == .notApplicable ? Color.secondary : Theme.primary) : Theme.screenBackground)
-                        .foregroundColor(entry.dataPoint == dp ? .white : .primary)
-                        .cornerRadius(10)
                     }
-                }
+                ))
+                .font(.subheadline.weight(.semibold))
             }
-
-            // Frequency counter
-            HStack {
-                Text("Frequency")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button(action: { if entry.frequency > 0 { entry.frequency -= 1 } }) {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(entry.frequency > 0 ? Theme.primary : .secondary.opacity(0.4))
-                }
-                Text("\(entry.frequency)")
-                    .font(.title3.bold())
-                    .frame(minWidth: 44)
-                Button(action: { entry.frequency += 1 }) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(Theme.primary)
-                }
-            }
-
-            // Yes/No toggles
-            Toggle("Goal opportunity provided", isOn: $entry.goalOpportunity)
-                .font(.subheadline)
-            Toggle("Target behavior observed", isOn: $entry.behaviorObserved)
-                .font(.subheadline)
 
             // Per-goal narrative (required unless N/A)
             VStack(alignment: .leading, spacing: 6) {
-                Text(entry.dataPoint == .notApplicable ? "Narrative" : "Narrative *")
+                Text(entry.na ? "Narrative" : "Narrative *")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
                 DocTextEditor(text: $entry.narrative,
-                              placeholder: entry.dataPoint == .notApplicable
+                              placeholder: entry.na
                                   ? "Optional — add details if needed"
                                   : "Describe how \(outcome.title.lowercased()) went during this visit…",
                               minHeight: 80)

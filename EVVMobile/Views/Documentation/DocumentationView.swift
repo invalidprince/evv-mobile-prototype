@@ -551,23 +551,13 @@ struct DocumentationView: View {
                 if let outcomeId = entry.outcomeId,
                    let match = serverOutcomes.first(where: { $0.serverId == outcomeId }) {
                     var oe = OutcomeEntry()
-                    if let pl = entry.promptLevel {
-                        // Try new DataPoint values first, then fall back to legacy
-                        oe.dataPoint = DataPoint.allCases.first(where: { $0.rawValue == pl })
-                        if oe.dataPoint == nil {
-                            // Legacy prompt level — map to closest new data point
-                            if let legacy = LegacyPromptLevel(rawValue: pl) {
-                                switch legacy {
-                                case .independent: oe.dataPoint = .successes
-                                case .verbal, .gestural: oe.dataPoint = .prompts
-                                case .partialPhysical, .fullPhysical: oe.dataPoint = .prompts
-                                }
-                            }
-                        }
-                    }
-                    oe.frequency = entry.frequency ?? 0
-                    oe.goalOpportunity = entry.goalOpportunity ?? false
-                    oe.behaviorObserved = entry.behaviorObserved ?? false
+                    // v0.4.152 shape first; legacy promptLevel/frequency only
+                    // fills in when the new fields are absent (old notes).
+                    oe.prompts = entry.prompts
+                    oe.successes = entry.successes
+                    oe.opportunities = entry.opportunities
+                    oe.na = entry.na ?? false
+                    oe.applyLegacy(promptLevel: entry.promptLevel, frequency: entry.frequency)
                     oe.narrative = entry.narrative ?? ""
                     note.outcomeEntries[match.localId] = oe
                 }
@@ -595,21 +585,11 @@ struct DocumentationView: View {
             if narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
 
             var oe = OutcomeEntry()
-            if let pl = draftOutcome.promptLevel {
-                oe.dataPoint = DataPoint.allCases.first(where: { $0.rawValue == pl })
-                // Fall back: legacy prompt level values from AI
-                if oe.dataPoint == nil {
-                    if let legacy = LegacyPromptLevel(rawValue: pl) {
-                        switch legacy {
-                        case .independent: oe.dataPoint = .successes
-                        case .verbal, .gestural, .partialPhysical, .fullPhysical: oe.dataPoint = .prompts
-                        }
-                    }
-                }
-            }
-            oe.frequency = draftOutcome.frequency ?? 0
-            oe.goalOpportunity = draftOutcome.goalOpportunity ?? false
-            oe.behaviorObserved = draftOutcome.behaviorObserved ?? false
+            oe.prompts = draftOutcome.prompts
+            oe.successes = draftOutcome.successes
+            oe.opportunities = draftOutcome.opportunities
+            oe.na = draftOutcome.na ?? false
+            oe.applyLegacy(promptLevel: draftOutcome.promptLevel, frequency: draftOutcome.frequency)
             oe.narrative = narrative
             note.outcomeEntries[match.localId] = oe
             draftedIds.insert(match.localId)
@@ -656,21 +636,11 @@ struct DocumentationView: View {
                 if narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
 
                 var oe = OutcomeEntry()
-                if let pl = voiceOutcome.promptLevel {
-                    oe.dataPoint = DataPoint.allCases.first(where: { $0.rawValue == pl })
-                    // Fall back: legacy prompt level values from AI
-                    if oe.dataPoint == nil {
-                        if let legacy = LegacyPromptLevel(rawValue: pl) {
-                            switch legacy {
-                            case .independent: oe.dataPoint = .successes
-                            case .verbal, .gestural, .partialPhysical, .fullPhysical: oe.dataPoint = .prompts
-                            }
-                        }
-                    }
-                }
-                oe.frequency = voiceOutcome.frequency ?? 0
-                oe.goalOpportunity = voiceOutcome.goalOpportunity ?? false
-                oe.behaviorObserved = voiceOutcome.behaviorObserved ?? false
+                oe.prompts = voiceOutcome.prompts
+                oe.successes = voiceOutcome.successes
+                oe.opportunities = voiceOutcome.opportunities
+                oe.na = voiceOutcome.na ?? false
+                oe.applyLegacy(promptLevel: voiceOutcome.promptLevel, frequency: voiceOutcome.frequency)
                 oe.narrative = narrative
                 note.outcomeEntries[match.localId] = oe
                 draftedIds.insert(match.localId)
@@ -741,15 +711,14 @@ struct DocumentationView: View {
             var dict: [String: Any] = [
                 "outcomeId": so.serverId,
                 "title": so.title,
-                "frequency": entry.frequency,
-                "goalOpportunity": entry.goalOpportunity,
-                "behaviorObserved": entry.behaviorObserved,
+                "na": entry.na,
                 "narrative": entry.narrative
             ]
-            if let dp = entry.dataPoint {
-                // Send as promptLevel key for backward compat with server
-                dict["promptLevel"] = dp.rawValue
-            }
+            // nil means "not measured" — omit the key rather than sending 0,
+            // which the server reads as an explicit zero measurement.
+            if let v = entry.prompts { dict["prompts"] = v }
+            if let v = entry.successes { dict["successes"] = v }
+            if let v = entry.opportunities { dict["opportunities"] = v }
             return dict
         }
 

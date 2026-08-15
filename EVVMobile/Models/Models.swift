@@ -210,18 +210,60 @@ struct Outcome: Identifiable {
 
 // MARK: - Visit note (per-goal data + narrative)
 
+/// v0.4.152 — an outcome carries three counts plus an N/A flag. The old
+/// `dataPoint` category + single `frequency` + goalOpportunity/behaviorObserved
+/// booleans are GONE; `applyLegacy` maps old server/AI payloads onto this shape.
+///
+/// nil count = "not measured". 0 = "measured zero". They are different.
 struct OutcomeEntry {
-    var dataPoint: DataPoint?
-    var frequency: Int = 0
-    var goalOpportunity = false
-    var behaviorObserved = false
+    var prompts: Int?
+    var successes: Int?
+    var opportunities: Int?
+    var na = false
     var narrative: String = ""
 
-    /// When N/A is selected, the outcome is complete without a narrative
-    /// (the staff didn't work on this goal today).
+    var hasCount: Bool { prompts != nil || successes != nil || opportunities != nil }
+
+    /// When N/A is checked, the outcome is complete without numbers or a
+    /// narrative (the staff didn't work on this goal today). Otherwise it needs
+    /// a count or a narrative — same rule the server enforces in visit-core.
     var isComplete: Bool {
-        if dataPoint == .notApplicable { return true }
-        return dataPoint != nil && !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if na { return true }
+        return hasCount || !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// N/A wins: clearing counts keeps the stored state unambiguous, matching
+    /// the server normalizer.
+    mutating func setNa(_ on: Bool) {
+        na = on
+        if on { prompts = nil; successes = nil; opportunities = nil }
+    }
+
+    /// Map a legacy `promptLevel` (+ frequency) payload onto the new fields.
+    /// Used when decoding an existing note or an AI draft written before
+    /// v0.4.152. Never overwrites values already set from the new shape.
+    mutating func applyLegacy(promptLevel: String?, frequency: Int?) {
+        guard !na, !hasCount, let pl = promptLevel?.trimmingCharacters(in: .whitespaces), !pl.isEmpty else { return }
+        let freq = frequency ?? 0
+        switch pl {
+        case DataPoint.notApplicable.rawValue:
+            setNa(true)
+        case DataPoint.prompts.rawValue:
+            prompts = freq
+        case DataPoint.successes.rawValue:
+            successes = freq
+        case DataPoint.opportunities.rawValue:
+            opportunities = freq
+        default:
+            // Pre-2026 prompt scale (Independent/Verbal/…) — fold onto the
+            // closest count so the note still reads sensibly.
+            if let legacy = LegacyPromptLevel(rawValue: pl) {
+                switch legacy {
+                case .independent: successes = freq
+                case .verbal, .gestural, .partialPhysical, .fullPhysical: prompts = freq
+                }
+            }
+        }
     }
 }
 

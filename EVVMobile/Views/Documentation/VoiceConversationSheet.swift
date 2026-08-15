@@ -725,9 +725,13 @@ struct DocConversationResponse: Decodable {
 
 struct DocConversationOutcome: Decodable {
     let title: String?
+    // v0.4.152 shape
+    let prompts: Int?
+    let successes: Int?
+    let opportunities: Int?
+    let na: Bool?
+    // Legacy shape — kept so an older server response still decodes.
     let promptLevel: String?
     let frequency: Int?
-    let goalOpportunity: Bool?
-    let behaviorObserved: Bool?
     let narrative: String?
 }

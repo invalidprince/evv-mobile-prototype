@@ -276,10 +276,14 @@ struct ServerHealthInfo: Decodable {
 struct ServerOutcomeEntry: Decodable {
     let outcomeId: Int?
     let title: String?
+    // v0.4.152 shape — three counts + N/A.
+    let prompts: Int?
+    let successes: Int?
+    let opportunities: Int?
+    let na: Bool?
+    // Legacy shape — notes submitted before v0.4.152 still carry these.
     let promptLevel: String?
     let frequency: Int?
-    let goalOpportunity: Bool?
-    let behaviorObserved: Bool?
     let narrative: String?
 }
 
