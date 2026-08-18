@@ -142,6 +142,17 @@ struct OutcomeEntryView: View {
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                     )
             }
+
+            // Per Nick 2026-08-17: a non-N/A outcome needs a data point AND a
+            // narrative. Say WHICH half is still missing rather than leaving the
+            // grey dashed circle as the only signal.
+            if let missing = entry.missingPart {
+                Label("Needs \(missing.label) — or check N/A if this wasn’t worked on.",
+                      systemImage: "exclamationmark.circle")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(12)
         .background(Theme.screenBackground)

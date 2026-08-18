@@ -224,12 +224,46 @@ struct OutcomeEntry {
 
     var hasCount: Bool { prompts != nil || successes != nil || opportunities != nil }
 
+    var hasNarrative: Bool {
+        !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Three explicit 0s with no narrative means "not worked on" and counts as
+    /// N/A — mirrors visit-core.normalizeOutcomeEntry (Nick 2026-08-15). With a
+    /// narrative present the zeros are real measurements and stay as typed.
+    var effectivelyNa: Bool {
+        if na { return true }
+        return !hasNarrative && prompts == 0 && successes == 0 && opportunities == 0
+    }
+
     /// When N/A is checked, the outcome is complete without numbers or a
     /// narrative (the staff didn't work on this goal today). Otherwise it needs
-    /// a count or a narrative — same rule the server enforces in visit-core.
+    /// a count AND a narrative — per Nick 2026-08-17, data alone is no longer
+    /// enough. Same rule the server enforces in visit-core.outcomeEntryMissing.
     var isComplete: Bool {
-        if na { return true }
-        return hasCount || !narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if effectivelyNa { return true }
+        return hasCount && hasNarrative
+    }
+
+    /// Which half is missing, for inline UI copy. nil when complete.
+    var missingPart: MissingPart? {
+        if effectivelyNa { return nil }
+        if !hasCount && !hasNarrative { return .both }
+        if !hasCount { return .data }
+        if !hasNarrative { return .narrative }
+        return nil
+    }
+
+    enum MissingPart {
+        case data, narrative, both
+
+        var label: String {
+            switch self {
+            case .data: return "a data point"
+            case .narrative: return "a narrative"
+            case .both: return "a data point and a narrative"
+            }
+        }
     }
 
     /// N/A wins: clearing counts keeps the stored state unambiguous, matching
