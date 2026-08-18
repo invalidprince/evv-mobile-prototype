@@ -530,6 +530,30 @@ struct APIErrorResponse: Decodable {
     let error: String
 }
 
+// MARK: - Staff Documents (v0.4.194 — compliance vault, no offline support)
+
+struct StaffDocumentSlot: Decodable, Identifiable {
+    let typeId: Int
+    let name: String
+    let category: String
+    let statusKey: String
+    let statusLabel: String
+    let chip: String
+    let expiresOn: String?
+    let rejectReason: String?
+    let fileName: String?
+    var id: Int { typeId }
+}
+
+struct StaffDocumentsResponse: Decodable {
+    let documents: [StaffDocumentSlot]
+}
+
+struct StaffDocumentUploadResponse: Decodable {
+    let ok: Bool
+    let message: String?
+}
+
 // MARK: - API Errors
 
 enum APIError: LocalizedError {
@@ -1372,6 +1396,61 @@ actor APIClient {
     }
 
     // MARK: - Helpers
+
+    // MARK: - Staff Documents (compliance vault — live only, never queued)
+
+    func fetchMyDocuments() async throws -> [StaffDocumentSlot] {
+        let url = URL(string: "\(baseURL)/me/documents")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch documents"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(StaffDocumentsResponse.self, from: data).documents
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    func uploadStaffDocument(typeId: Int, fileData: Data, filename: String, mimeType: String) async throws -> StaffDocumentUploadResponse {
+        let url = URL(string: "\(baseURL)/me/documents/\(typeId)/upload")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuth(&request)
+        request.timeoutInterval = 60
+
+        let boundary = "evv-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Upload failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(StaffDocumentUploadResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
 
     private func addAuth(_ request: inout URLRequest) {
         if let token = token {

@@ -38,7 +38,20 @@ struct MoreView: View {
                     .padding(.vertical, 4)
                 }
 
-                // Credentials
+                // Documents (server mode): the real compliance vault — the
+                // staff member's own requirement slots + live upload. Lives in
+                // the profile area per Nick 2026-08-18 (no separate tab, no
+                // offline support). Mock mode keeps the demo credentials list.
+                if appState.mode == .server {
+                    Section(header: Text("Documents")) {
+                        NavigationLink(destination: MyDocumentsView()) {
+                            Label("My Documents", systemImage: "doc.badge.ellipsis")
+                        }
+                    }
+                }
+
+                // Credentials (mock demo data only)
+                if appState.mode == .mock {
                 Section(header: Text("Credentials")) {
                     ForEach(MockData.credentials) { cred in
                         HStack {
@@ -51,6 +64,7 @@ struct MoreView: View {
                             }
                         }
                     }
+                }
                 }
 
                 // Sync Status (passive — auto-sync handles everything)

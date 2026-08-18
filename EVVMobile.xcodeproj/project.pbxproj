@@ -24,6 +24,7 @@
 		39FC467AD6772FA6EB3FDCB9 /* NoteReminderCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */; };
 		3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D3E24BD9E02EC479B9857CB /* HistoryView.swift */; };
 		409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB38EF84FCABD2F0387E43A /* MoreView.swift */; };
+		197C77B7E3264DCE4E41A48A /* MyDocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9B0053227B7767FBF1CE1F /* MyDocumentsView.swift */; };
 		435EC21574D8B09A02E118C0 /* ManualTimeEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E0254F44C15851827B14A0 /* ManualTimeEntrySheet.swift */; };
 		467435D004963F49496C6552 /* OutcomeEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */; };
 		4A6A747B079FB1628A9C55F7 /* GoogleAuthConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7A1084E030E40E8EB9A847 /* GoogleAuthConfig.swift */; };
@@ -62,6 +63,7 @@
 
 /* Begin PBXFileReference section */
 		0BB38EF84FCABD2F0387E43A /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
+		2D9B0053227B7767FBF1CE1F /* MyDocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyDocumentsView.swift; sourceTree = "<group>"; };
 		0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
 		0CABA5A108F36DC92A278BCD /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EVVMobileApp.swift; sourceTree = "<group>"; };
@@ -274,6 +276,7 @@
 			isa = PBXGroup;
 			children = (
 				0BB38EF84FCABD2F0387E43A /* MoreView.swift */,
+				2D9B0053227B7767FBF1CE1F /* MyDocumentsView.swift */,
 			);
 			path = More;
 			sourceTree = "<group>";
@@ -411,6 +414,7 @@
 				76E6D9568491F1450FAD8A8F /* MockData.swift in Sources */,
 				A4CAEA872281BED8E53FDAEF /* Models.swift in Sources */,
 				409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */,
+				197C77B7E3264DCE4E41A48A /* MyDocumentsView.swift in Sources */,
 				615EA70CC51666385E28D72B /* NonBillableSheet.swift in Sources */,
 				39FC467AD6772FA6EB3FDCB9 /* NoteReminderCenter.swift in Sources */,
 				467435D004963F49496C6552 /* OutcomeEntryView.swift in Sources */,
