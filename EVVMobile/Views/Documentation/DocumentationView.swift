@@ -609,6 +609,24 @@ struct DocumentationView: View {
             }
         }
 
+        // Visit question answers from the draft (build 25 / server v0.4.212 —
+        // Nick: "I would like visit questions in BOTH EVV and the desktop to
+        // reflect what is generated from AI"). The server only returns answers
+        // it validated against the question's own options, and the wire shape
+        // is exactly what questionAnswers already stores (checkbox = JSON-encoded
+        // array string), so this is a straight assignment. Questions the AI
+        // didn't answer are LEFT ALONE — never cleared.
+        for qa in draft.visitQuestions ?? [] {
+            guard let qid = qa.questionId, let answer = qa.answer,
+                  serverQuestions.contains(where: { $0.id == qid }) else { continue }
+            note.questionAnswers[qid] = answer
+            // Keep the legacy transport bool in sync when the AI answered the
+            // transport question directly.
+            if let tq = transportQuestion, tq.id == qid {
+                note.transportReviewedGoals = (answer == "Yes")
+            }
+        }
+
         aiDraftedOutcomeIds = draftedIds
         aiDraftApplied = true
 

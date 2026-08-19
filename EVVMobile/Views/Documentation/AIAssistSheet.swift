@@ -175,11 +175,22 @@ struct AIDraftOutcome: Decodable {
     let narrative: String?
 }
 
+/// A validated visit-question answer from the AI draft (build 25 / server
+/// v0.4.212). The server only returns answers it could match against the
+/// question's own options; `answer` uses the same wire shape the submit
+/// contract uses — plain string for radio/text, JSON-encoded array string
+/// for checkbox.
+struct AIDraftQuestionAnswer: Decodable {
+    let questionId: Int?
+    let answer: String?
+}
+
 struct AIDraftPayload: Decodable {
     let outcomes: [AIDraftOutcome]?
     let additionalComments: String?
     let unaddressed: [Int]?
     let transportReviewedGoals: Bool?
+    let visitQuestions: [AIDraftQuestionAnswer]?
 }
 
 struct AIDraftResponse: Decodable {
