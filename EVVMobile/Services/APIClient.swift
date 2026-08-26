@@ -16,6 +16,10 @@ struct LoginResponse: Decodable {
     let staff: ServerStaff
 }
 
+struct TokenRefreshResponse: Decodable {
+    let token: String
+}
+
 struct ServerStaff: Decodable {
     let id: String
     let name: String
@@ -85,6 +89,36 @@ struct ServerShift: Decodable {
 struct ShiftsResponse: Decodable {
     let shifts: [ServerShift]
     let openShifts: [ServerShift]?
+    /// Open RECURRING rules available for permanent weekday pickup
+    /// (server v0.4.276). Older servers omit the key.
+    let openRules: [ServerOpenRule]?
+}
+
+/// An active, unassigned recurring schedule a staff member can permanently
+/// claim one weekday of ("I'll take Mondays") — GET /api/me/shifts `openRules`.
+struct ServerOpenRule: Decodable, Identifiable {
+    let id: Int
+    /// Weekdays the rule covers, 0 = Sunday … 6 = Saturday (sorted).
+    let weekdays: [Int]
+    let start: String
+    let end: String
+    let service: String?
+    /// 1 = weekly, 2 = every other week, N = every N weeks.
+    let intervalWeeks: Int?
+    let individual: ServerIndividual
+    let individual2: ServerIndividual?
+}
+
+/// Success payload of POST /api/recurring/:id/claim-weekday.
+struct ClaimRuleResponse: Decodable {
+    let ok: Bool?
+    let ruleId: Int?
+    let weekday: Int?
+    let weekdayLabel: String?
+    let assigned: Int?
+    let kept: Int?
+    let conflicts: Int?
+    let remainingDays: [Int]?
 }
 
 struct ClockInRequest: Encodable {
@@ -947,6 +981,25 @@ actor APIClient {
         }
     }
 
+    // MARK: - Token refresh
+
+    /// Sliding session renewal (server v0.4.275). Tokens expire after 12h
+    /// (HIPAA automatic logoff); refreshing while the app is in active use
+    /// keeps a long shift alive without weakening the expiry.
+    func refreshToken() async {
+        guard token != nil else { return }
+        let url = URL(string: "\(baseURL)/token/refresh")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuth(&request)
+        request.timeoutInterval = 15
+        guard let (data, response) = try? await performRequest(request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let refreshed = try? JSONDecoder().decode(TokenRefreshResponse.self, from: data)
+        else { return } // best-effort: a failed refresh just leaves the current token
+        self.token = refreshed.token
+    }
+
     // MARK: - Shifts
 
     func fetchShifts() async throws -> [ServerShift] {
@@ -1104,6 +1157,40 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(ServerShift.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    /// Permanently claim one weekday of an open recurring rule (server
+    /// v0.4.276). ONLINE-ONLY by design — never enqueued in the offline queue:
+    /// a permanent claim of every future Monday must not fire silently hours
+    /// after the staff member tapped it.
+    func claimRuleWeekday(ruleId: Int, weekday: Int) async throws -> ClaimRuleResponse {
+        let url = URL(string: "\(baseURL)/recurring/\(ruleId)/claim-weekday")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["weekday": weekday])
+        request.timeoutInterval = 20
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+        if statusCode == 409 {
+            // Taken by someone else, or overlapping shifts — the server names
+            // the clashing dates in the message.
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "That schedule is no longer available"
+            throw APIError.conflict(errBody)
+        }
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to pick up the weekday"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(ClaimRuleResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

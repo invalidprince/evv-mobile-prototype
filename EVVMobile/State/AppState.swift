@@ -28,6 +28,12 @@ final class AppState: ObservableObject {
 
     // MARK: - Server open shifts (7-day window unassigned shifts)
     @Published var serverOpenShifts: [ServerShift] = []
+    /// Open recurring rules available for permanent weekday pickup (v0.4.276).
+    @Published var serverOpenRules: [ServerOpenRule] = []
+    /// "<ruleId>-<weekday>" of the pickup currently in flight, nil when idle.
+    @Published var claimingRuleKey: String?
+    /// Success message after a permanent weekday pickup (shown as an alert).
+    @Published var ruleClaimMessage: String?
 
     // MARK: - Server individuals (for unscheduled visit selection)
     @Published var serverIndividuals: [ServerIndividualOption] = []
@@ -232,6 +238,11 @@ final class AppState: ObservableObject {
     /// foreground.  In server mode this always syncs (replay queue + refresh
     /// shifts) so schedule changes made on the dashboard show up promptly.
     func handleSceneActive() {
+        // Sliding session renewal (server v0.4.275): tokens expire after 12h,
+        // so refresh whenever the app comes back to the foreground in use.
+        if mode == .server, isLoggedIn {
+            Task { await APIClient.shared.refreshToken() }
+        }
         guard effectivelyOnline, !isSyncing else { return }
         guard pendingSyncCount > 0 || mode == .server else { return }
         syncNow()
@@ -902,6 +913,7 @@ final class AppState: ObservableObject {
         historyVisits = []
         serverExceptions = []
         serverOpenShifts = []
+        serverOpenRules = []
         serverIndividuals = []
         individualsFromCacheDate = nil
         dueMedications = []      // PHI — med names must not survive sign-out
@@ -940,6 +952,7 @@ final class AppState: ObservableObject {
             self.pastVisits = []
             self.openShifts = []
             self.serverOpenShifts = []
+            self.serverOpenRules = []
             self.pendingSyncCount = 0
             self.isLoggedIn = true
         }
@@ -966,6 +979,7 @@ final class AppState: ObservableObject {
             self.pastVisits = []
             self.openShifts = []
             self.serverOpenShifts = []
+            self.serverOpenRules = []
             self.pendingSyncCount = 0
             self.isLoggedIn = true
         }
@@ -1073,6 +1087,7 @@ final class AppState: ObservableObject {
             todayVisits = newToday
             pastVisits = newPast
             serverOpenShifts = response.openShifts ?? []
+            serverOpenRules = response.openRules ?? []
             lastSync = Date()
             startTimerIfNeeded()
             // Refresh the Today-tab medications card alongside the shifts —
@@ -1234,6 +1249,36 @@ final class AppState: ObservableObject {
     // MARK: - Claim open shift (server mode)
 
     @MainActor
+    /// Permanently pick up one weekday of an open recurring rule.
+    /// ONLINE-ONLY by design: never enqueued offline — a claim of every future
+    /// Monday must not fire silently hours after the tap.
+    func claimRuleWeekday(ruleId: Int, weekday: Int) async {
+        guard effectivelyOnline else {
+            serverError = "You're offline. Picking up a permanent weekday needs a connection."
+            showServerError = true
+            return
+        }
+        claimingRuleKey = "\(ruleId)-\(weekday)"
+        defer { claimingRuleKey = nil }
+
+        do {
+            let resp = try await APIClient.shared.claimRuleWeekday(ruleId: ruleId, weekday: weekday)
+            let label = resp.weekdayLabel ?? "That weekday"
+            var msg = "\(label) are yours — every future one on this schedule is assigned to you until a manager changes it."
+            if let assigned = resp.assigned, assigned > 0 {
+                msg += " \(assigned) upcoming shift\(assigned == 1 ? "" : "s") added to your schedule."
+            }
+            ruleClaimMessage = msg
+            await refreshServerShifts()
+        } catch let error as APIError {
+            surfaceServerError(error)
+            await refreshServerShifts()
+        } catch {
+            surfaceServerError(.networkError(error))
+            await refreshServerShifts()
+        }
+    }
+
     func claimOpenShift(shiftId: Int) async {
         claimingShiftId = shiftId
         defer { claimingShiftId = nil }
@@ -1833,6 +1878,16 @@ final class AppState: ObservableObject {
         // Cancelled requests are benign (structured-task teardown,
         // network path flip, view lifecycle) — never surface them.
         if error.isCancellation { return }
+        // Session expired / revoked (server v0.4.275): the only recovery is a
+        // fresh sign-in, so return to the login screen instead of leaving the
+        // user on a dead session. Only in server mode — mock/demo never 401s.
+        if case .unauthorized = error, mode == .server, isLoggedIn {
+            DiagnosticLogger.shared.logAPI("Session expired — signing out: \(error.localizedDescription)")
+            signOut()
+            serverError = "Your session has expired — please sign in again."
+            showServerError = true
+            return
+        }
         serverError = error.localizedDescription
         showServerError = true
         DiagnosticLogger.shared.logAPI(error.localizedDescription)

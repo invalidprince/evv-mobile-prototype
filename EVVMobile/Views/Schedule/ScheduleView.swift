@@ -112,11 +112,23 @@ struct ServerScheduleContent: View {
                     }
                 }
 
+                if !appState.serverOpenRules.isEmpty {
+                    ServerOpenRulesSection()
+                }
+
                 if !appState.serverOpenShifts.isEmpty {
                     ServerOpenShiftsSection()
                 }
             }
             .padding(16)
+        }
+        .alert("You're on the schedule", isPresented: Binding(
+            get: { appState.ruleClaimMessage != nil },
+            set: { if !$0 { appState.ruleClaimMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { appState.ruleClaimMessage = nil }
+        } message: {
+            Text(appState.ruleClaimMessage ?? "")
         }
         .refreshable {
             await appState.refreshServerShifts()
@@ -126,6 +138,123 @@ struct ServerScheduleContent: View {
             // created on the dashboard show up without a re-login.
             guard appState.effectivelyOnline else { return }
             Task { await appState.refreshServerShifts() }
+        }
+    }
+}
+
+// MARK: - Server Open Recurring Rules (permanent weekday pickup)
+
+/// One card per open recurring rule — "Open · Mondays · 9:00 AM–5:00 PM ·
+/// Erik Hoover · W7061" — with a "Pick up Mondays" action per weekday.
+/// Claiming a weekday is PERMANENT: every future occurrence of that weekday
+/// is assigned to the staff member until a manager reassigns it. The
+/// confirmation dialog says so in plain words before anything is sent.
+struct ServerOpenRulesSection: View {
+    @EnvironmentObject var appState: AppState
+
+    /// Pending confirmation — which rule + weekday the staff member tapped.
+    struct PendingPickup: Identifiable {
+        let rule: ServerOpenRule
+        let weekday: Int
+        var id: String { "\(rule.id)-\(weekday)" }
+    }
+    @State private var pending: PendingPickup?
+
+    static let weekdayPlurals = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"]
+
+    private func daysLabel(_ rule: ServerOpenRule) -> String {
+        let names = rule.weekdays.compactMap { $0 >= 0 && $0 <= 6 ? Self.weekdayPlurals[$0] : nil }
+        return names.joined(separator: " / ")
+    }
+
+    private func intervalNote(_ rule: ServerOpenRule) -> String? {
+        guard let n = rule.intervalWeeks, n > 1 else { return nil }
+        return n == 2 ? "Every other week" : "Every \(n) weeks"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "repeat.circle.fill")
+                    .foregroundColor(Theme.primary)
+                Text("Open Recurring Shifts")
+                    .font(.title3.bold())
+            }
+            .padding(.top, 8)
+
+            Text("Pick up a day of the week permanently — it's yours every week going forward.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            ForEach(appState.serverOpenRules) { rule in
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        Text("Open · \(daysLabel(rule))")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(Theme.primary)
+                        if let note = intervalNote(rule) {
+                            Text("· \(note)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Text("\(rule.start) – \(rule.end)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 12) {
+                        AvatarView(name: rule.individual.name, size: 40)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(rule.individual.name)
+                                .font(.headline)
+                            if let ind2 = rule.individual2 {
+                                Text("with \(ind2.name)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(rule.service ?? "")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+
+                    ForEach(rule.weekdays, id: \.self) { wd in
+                        let key = "\(rule.id)-\(wd)"
+                        Button(action: { pending = PendingPickup(rule: rule, weekday: wd) }) {
+                            if appState.claimingRuleKey == key {
+                                HStack(spacing: 8) {
+                                    ProgressView().tint(.white)
+                                    Text("Picking up…")
+                                }
+                            } else {
+                                Label("Pick up \(Self.weekdayPlurals[wd])", systemImage: "repeat")
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle(color: Theme.success,
+                                                        enabled: appState.claimingRuleKey == nil && appState.effectivelyOnline))
+                        .disabled(appState.claimingRuleKey != nil || !appState.effectivelyOnline)
+                    }
+
+                    if !appState.effectivelyOnline {
+                        Text("Connect to the internet to pick up a permanent day.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .cardStyle()
+            }
+        }
+        .alert(item: $pending) { p in
+            let day = Self.weekdayPlurals[p.weekday]
+            return Alert(
+                title: Text("Pick up \(day) permanently?"),
+                message: Text("You'll be scheduled every \(String(day.dropLast())) \(p.rule.start) – \(p.rule.end) with \(p.rule.individual.name) from now on, until a manager reassigns it. This covers ALL future \(day), not just one date."),
+                primaryButton: .default(Text("Pick up \(day)")) {
+                    Task { await appState.claimRuleWeekday(ruleId: p.rule.id, weekday: p.weekday) }
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 }
