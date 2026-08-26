@@ -610,6 +610,47 @@ struct StaffDocumentUploadResponse: Decodable {
     let message: String?
 }
 
+// MARK: - Work tab (v0.4.273 — To-Dos + derived items, ONLINE-ONLY)
+
+/// One row on the Work tab. `kind == "todo"` is a real, checkable to-do from
+/// the `todos` table; `kind == "auto"` is a derived line that clears itself
+/// when the underlying work is done (never checkable). Most auto items carry
+/// a `webPath` into the web app; `native == "documents"` routes to the native
+/// My Documents screen instead.
+struct WorkItem: Decodable, Identifiable {
+    let key: String
+    let kind: String
+    let category: String?
+    let title: String
+    let detail: String?
+    let dueDate: String?
+    let overdue: Bool
+    var done: Bool
+    let checkable: Bool
+    let todoId: Int?
+    let webPath: String?
+    let native: String?
+    var id: String { key }
+    var isTodo: Bool { kind == "todo" }
+}
+
+struct WorkTeamRollup: Decodable {
+    let total: Int
+    let overdue: Int
+    let webPath: String?
+}
+
+struct WorkTodosResponse: Decodable {
+    let items: [WorkItem]
+    let teamRollup: WorkTeamRollup?
+    let openCount: Int
+}
+
+struct ToggleTodoResponse: Decodable {
+    let ok: Bool
+    let done: Bool
+}
+
 // MARK: - API Errors
 
 enum APIError: LocalizedError {
@@ -1509,6 +1550,53 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(StaffDocumentUploadResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Work tab (v0.4.273 — online-only, never queued)
+
+    func fetchWorkTodos() async throws -> WorkTodosResponse {
+        let url = URL(string: "\(baseURL)/me/todos")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch to-dos"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(WorkTodosResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    /// Toggle a REAL to-do (kind "todo"). Auto items are never toggleable —
+    /// they clear by doing the underlying work. ONLINE-ONLY by design: callers
+    /// must never enqueue this into the offline queue.
+    func toggleTodo(id: Int) async throws -> Bool {
+        let url = URL(string: "\(baseURL)/todos/\(id)/toggle")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not update the to-do"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(ToggleTodoResponse.self, from: data).done
         } catch {
             throw APIError.decodingError(error)
         }

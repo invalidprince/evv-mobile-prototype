@@ -38,17 +38,10 @@ struct MoreView: View {
                     .padding(.vertical, 4)
                 }
 
-                // Documents (server mode): the real compliance vault — the
-                // staff member's own requirement slots + live upload. Lives in
-                // the profile area per Nick 2026-08-18 (no separate tab, no
-                // offline support). Mock mode keeps the demo credentials list.
-                if appState.mode == .server {
-                    Section(header: Text("Documents")) {
-                        NavigationLink(destination: MyDocumentsView()) {
-                            Label("My Documents", systemImage: "doc.badge.ellipsis")
-                        }
-                    }
-                }
+                // My Documents moved to the Work tab (build 29, per Nick
+                // 2026-08-26 — "Taking out the doc uploads from more").
+                // MyDocumentsView itself is unchanged; only the entry point
+                // moved. Mock mode keeps the demo credentials list below.
 
                 // Credentials (mock demo data only)
                 if appState.mode == .mock {

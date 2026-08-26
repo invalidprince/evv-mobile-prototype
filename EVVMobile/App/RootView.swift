@@ -37,6 +37,14 @@ struct MainTabView: View {
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                 HistoryView()
                     .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                // Work (build 29, Nick 2026-08-26): to-dos + forms +
+                // acknowledgements + documents in one place, mirroring the web
+                // dashboard's To-Do card. Schedule and History deliberately
+                // stay separate (Nick rejected the Visits merge).
+                // ⚠️ 5 tabs is iOS's hard cap — there is ZERO headroom left.
+                WorkView()
+                    .tabItem { Label("Work", systemImage: "checklist") }
+                    .badge(appState.workOpenCount)
                 MoreView()
                     .tabItem { Label("More", systemImage: "ellipsis.circle.fill") }
             }

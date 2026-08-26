@@ -13,6 +13,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Mode
     @Published var mode: AppMode = .mock
+
+    // Work tab open-item count for the tab badge (build 29). Set by WorkView
+    // loads/toggles only — ONLINE-ONLY data, never cached or queued offline.
+    @Published var workOpenCount = 0
     @Published var serverStaff: ServerStaff?  // populated after server login
     @Published var serverToken: String?
 
