@@ -651,6 +651,50 @@ struct ToggleTodoResponse: Decodable {
     let done: Bool
 }
 
+// MARK: - eMAR (v0.4.274 — Today-tab medications, ONLINE-ONLY)
+
+/// One due (scheduled) administration slot for today. `recordable` is decided
+/// SERVER-side (pending/missed with nothing recorded yet). `dueTimeLabel` is a
+/// wall-clock label rendered by the server — display it as given, never run
+/// `dueTime` through a device-timezone conversion.
+struct DueMedication: Decodable, Identifiable {
+    let id: Int
+    let clientId: String
+    let clientName: String
+    let medName: String
+    let instructions: String?
+    let route: String?
+    let dueTime: String?
+    let dueTimeLabel: String?
+    let status: String
+    let late: Bool
+    let initials: String?
+    let recordable: Bool
+}
+
+/// A PRN (as-needed) medication available to record for an individual on
+/// today's shifts. Recording requires a reason; result is optional.
+struct PrnMedication: Decodable, Identifiable {
+    let id: Int
+    let clientId: String
+    let clientName: String
+    let name: String
+    let prnReason: String?
+    let instructions: String?
+    let route: String?
+}
+
+struct MedicationsResponse: Decodable {
+    let due: [DueMedication]
+    let prnMeds: [PrnMedication]
+    let enabledClientIds: [String]
+}
+
+struct RecordAdministrationResponse: Decodable {
+    let ok: Bool
+    let late: Bool?
+}
+
 // MARK: - API Errors
 
 enum APIError: LocalizedError {
@@ -1599,6 +1643,85 @@ actor APIClient {
             return try JSONDecoder().decode(ToggleTodoResponse.self, from: data).done
         } catch {
             throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - eMAR (v0.4.274 — online-only, NEVER queued)
+
+    /// Due meds + PRN meds for the authenticated staff member — the same
+    /// dueMedsForStaff payload the web My Day renders.
+    func fetchDueMedications() async throws -> MedicationsResponse {
+        let url = URL(string: "\(baseURL)/me/medications")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch medications"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(MedicationsResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    /// Record a due administration (given / refused / held / missed).
+    /// A reason is required for refused/held/missed — enforced server-side.
+    /// ⚠️ ONLINE-ONLY by design: callers must never enqueue this into the
+    /// offline queue — a med recorded at sync time instead of administration
+    /// time is a compliance problem, and a stale due list on a second device
+    /// is a double-dose risk.
+    func recordMedAdministration(id: Int, action: String, notes: String?) async throws -> Bool {
+        let url = URL(string: "\(baseURL)/emar/administrations/\(id)/record")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.timeoutInterval = 15
+        var body: [String: Any] = ["action": action]
+        if let notes = notes, !notes.isEmpty { body["notes"] = notes }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not record the administration"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(RecordAdministrationResponse.self, from: data).late ?? false
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    /// Record a PRN (as-needed) administration. Reason required; result optional.
+    /// ⚠️ ONLINE-ONLY — same rule as recordMedAdministration.
+    func recordPrnAdministration(clientId: String, medicationId: Int, reason: String, result: String?, notes: String?) async throws {
+        let url = URL(string: "\(baseURL)/individuals/\(clientId)/emar/prn")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.timeoutInterval = 15
+        var body: [String: Any] = ["medication_id": medicationId, "prn_reason": reason]
+        if let result = result, !result.isEmpty { body["prn_result"] = result }
+        if let notes = notes, !notes.isEmpty { body["notes"] = notes }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not record the PRN administration"
+            throw APIError.serverError(statusCode, errBody)
         }
     }
 

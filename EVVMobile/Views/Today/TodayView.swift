@@ -39,6 +39,15 @@ struct TodayView: View {
                         ActiveVisitCard()
                     }
 
+                    // eMAR (v0.4.274): meds are time-bound — deliberately ABOVE
+                    // the pending-sync block and incomplete notes. A missed med
+                    // is more urgent than an unsynced note. Hidden entirely when
+                    // the staff member has no eMAR-enabled individuals today.
+                    if appState.mode == .server
+                        && (!appState.dueMedications.isEmpty || !appState.prnMedications.isEmpty) {
+                        MedicationsDueCard()
+                    }
+
                     // Pending sync items shown above incomplete notes
                     if !appState.offlineQueue.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -120,6 +129,7 @@ struct TodayView: View {
             .refreshable {
                 if appState.mode == .server {
                     await appState.refreshServerShifts()
+                    await appState.refreshDueMedications()
                 } else {
                     appState.syncNow()
                     // Brief delay so the spinner is visible in mock mode

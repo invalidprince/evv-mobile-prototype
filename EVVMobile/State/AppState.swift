@@ -35,6 +35,14 @@ final class AppState: ObservableObject {
     /// Timestamp of the cached individuals data being displayed (nil = live data).
     @Published var individualsFromCacheDate: Date?
 
+    // MARK: - eMAR (server mode, v0.4.274 — ONLINE-ONLY, never cached to disk)
+    // ⚠️ PHI: medication names stay in memory only — deliberately NOT written
+    // to LocalCache, and cleared on sign-out. Offline the card renders the
+    // last in-memory list read-only with recording disabled.
+    @Published var dueMedications: [DueMedication] = []
+    @Published var prnMedications: [PrnMedication] = []
+    @Published var isLoadingMeds = false
+
     // MARK: - History (server mode)
     @Published var historyVisits: [Visit] = []           // from GET /me/visits
     @Published var serverExceptions: [ServerException] = [] // from GET /me/requests
@@ -896,6 +904,8 @@ final class AppState: ObservableObject {
         serverOpenShifts = []
         serverIndividuals = []
         individualsFromCacheDate = nil
+        dueMedications = []      // PHI — med names must not survive sign-out
+        prnMedications = []
         LocalCache.shared.clearAll()
     }
 
@@ -1065,6 +1075,9 @@ final class AppState: ObservableObject {
             serverOpenShifts = response.openShifts ?? []
             lastSync = Date()
             startTimerIfNeeded()
+            // Refresh the Today-tab medications card alongside the shifts —
+            // fire-and-forget so a slow meds query never delays the punch UI.
+            Task { await self.refreshDueMedications() }
         } catch is CancellationError {
             // Silently ignore task cancellation
         } catch {
@@ -1073,6 +1086,29 @@ final class AppState: ObservableObject {
                 scheduleLoadError = apiErr.localizedDescription
             }
             surfaceServerError(apiErr)
+        }
+    }
+
+    /// eMAR due list for the Today tab (v0.4.274). ONLINE-ONLY: never queued,
+    /// never persisted — a stale cached due list on a second device is a
+    /// double-dose risk, so offline we only show what's already in memory,
+    /// read-only.
+    @MainActor
+    func refreshDueMedications() async {
+        guard mode == .server, effectivelyOnline else { return }
+        isLoadingMeds = true
+        defer { isLoadingMeds = false }
+        do {
+            let response = try await APIClient.shared.fetchDueMedications()
+            dueMedications = response.due
+            prnMedications = response.prnMeds
+        } catch {
+            // Non-fatal: keep the previous in-memory list. The card's own
+            // refresh path surfaces errors when the user acts on it.
+            let apiErr = error as? APIError ?? .networkError(error)
+            if !apiErr.isCancellation {
+                DiagnosticLogger.shared.logOffline("Med refresh failed: \(apiErr.localizedDescription)")
+            }
         }
     }
 
