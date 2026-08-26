@@ -14,6 +14,9 @@ struct DocumentationView: View {
     @State private var serverOutcomes: [ServerDocOutcome] = []
     @State private var serverQuestions: [ServerDocQuestion] = []
     @State private var serverHealthInfo: ServerDocHealthInfo?
+    // Service Location (CMS Place of Service) — build 28 / server v0.4.241+
+    @State private var serviceLocation: ServerServiceLocation?
+    @State private var selectedServiceLocation: String?
     @State private var isLoadingTemplate = false
     @State private var loadError: String?
     @State private var isSubmitting = false
@@ -88,7 +91,19 @@ struct DocumentationView: View {
         serverQuestions.filter { $0.required && !isAnswered($0) }
     }
 
+    /// Service Location gate — mirrors the server's requiredFor(): the field is
+    /// required whenever the visit has pickable options. Locked services and
+    /// visits with no configured location types never block.
+    private var serviceLocationSatisfied: Bool {
+        guard appState.mode == .server, let sl = serviceLocation else { return true }
+        if sl.locked == true { return true }
+        guard let opts = sl.options, !opts.isEmpty else { return true }
+        return selectedServiceLocation != nil
+    }
+
     private var noteComplete: Bool {
+        // Where the service was delivered is a required billing fact
+        guard serviceLocationSatisfied else { return false }
         // Every required server-configured question must be answered
         guard unansweredRequiredQuestions.isEmpty else { return false }
         // If no outcomes, just additional comments is enough (or just submittable)
@@ -240,6 +255,13 @@ struct DocumentationView: View {
                         .cornerRadius(10)
                     }
 
+                    // Service Location — where the service was delivered (CMS
+                    // Place of Service). Locked services render a static label.
+                    if appState.mode == .server, let sl = serviceLocation,
+                       let slOpts = sl.options, !slOpts.isEmpty {
+                        serviceLocationCard(sl, slOpts)
+                    }
+
                     // Read-only health & safety info about the individual
                     DocSection(title: "Health & Safety", icon: "cross.case", expanded: $expanded) {
                         HealthSafetyInfoView(client: effectiveClient)
@@ -331,6 +353,13 @@ struct DocumentationView: View {
                                 .foregroundColor(.secondary)
                             DocTextEditor(text: $note.additionalComments, placeholder: "Anything else worth noting about this visit…", minHeight: 100)
                         }
+                    }
+
+                    if !serviceLocationSatisfied {
+                        Label("Select where this service was delivered before submitting.", systemImage: "mappin.and.ellipse")
+                            .font(.caption)
+                            .foregroundColor(Theme.danger)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     if !unansweredRequiredQuestions.isEmpty {
@@ -488,6 +517,16 @@ struct DocumentationView: View {
                 // Capture AI Assist feature flag
                 aiAssistEnabled = template.aiAssistEnabled ?? false
 
+                // Service Location — preselect the server's answer: a locked
+                // code, the value already stored on the visit, the service's
+                // default, or the single-option auto-apply. Never clobber a
+                // pick the staff already made in this session.
+                serviceLocation = template.serviceLocation
+                if selectedServiceLocation == nil {
+                    selectedServiceLocation = template.serviceLocation?.selected
+                        ?? template.serviceLocation?.autoApplied
+                }
+
                 // Load existing structured note if present and draft is empty
                 if let existing = template.existingNote, note.additionalComments.isEmpty && note.outcomeEntries.isEmpty {
                     loadExistingNote(existing)
@@ -627,6 +666,15 @@ struct DocumentationView: View {
             }
         }
 
+        // Service Location from the draft (build 28 / server v0.4.267 — Nick:
+        // "Make sure the AI rules fill the visit location as well"). The server
+        // only returns a code it validated against THIS visit's allowed set,
+        // and a locked service never gets one. Null leaves the pick alone.
+        if let loc = draft.serviceLocation, let sl = serviceLocation, sl.locked != true,
+           sl.options?.contains(where: { $0.code == loc }) == true {
+            selectedServiceLocation = loc
+        }
+
         aiDraftedOutcomeIds = draftedIds
         aiDraftApplied = true
 
@@ -680,6 +728,13 @@ struct DocumentationView: View {
             if let tq = transportQuestion {
                 note.questionAnswers[tq.id] = transportReview ? "Yes" : "No"
             }
+        }
+
+        // Service Location from the interview (build 28 / server v0.4.267) —
+        // validated server-side against this visit's allowed set.
+        if let loc = response.serviceLocation, let sl = serviceLocation, sl.locked != true,
+           sl.options?.contains(where: { $0.code == loc }) == true {
+            selectedServiceLocation = loc
         }
 
         aiDraftedOutcomeIds = draftedIds
@@ -760,6 +815,14 @@ struct DocumentationView: View {
             }
         }
 
+        // Service Location: a locked service sends its pinned code; otherwise
+        // the staff's pick. Nil (no configured types / older server) omits the
+        // key entirely — the server treats a present key as "validate me".
+        var svcLocToSend: String?
+        if let sl = serviceLocation, let opts = sl.options, !opts.isEmpty {
+            svcLocToSend = (sl.locked == true) ? (sl.selected ?? opts.first?.code) : selectedServiceLocation
+        }
+
         do {
             let response = try await APIClient.shared.submitDocumentation(
                 visitId: svid,
@@ -767,6 +830,7 @@ struct DocumentationView: View {
                 additionalComments: note.additionalComments,
                 questionAnswers: questionPayload,
                 transportReviewedGoals: legacyTransport,
+                serviceLocation: svcLocToSend,
                 aiAssisted: aiDraftApplied,
                 aiInputText: aiInputText,
                 aiModel: aiModel
@@ -824,6 +888,60 @@ struct DocumentationView: View {
                 }
             }
         )
+    }
+
+    // MARK: - Service Location card
+
+    @ViewBuilder
+    private func serviceLocationCard(_ sl: ServerServiceLocation, _ opts: [ServerServiceLocationOption]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Service Location", systemImage: "mappin.and.ellipse")
+                    .font(.headline)
+                Spacer()
+                if sl.locked != true && opts.count > 1 {
+                    Text("Required")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+            }
+            if sl.locked == true {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(opts.first(where: { $0.code == (sl.selected ?? "") })?.label ?? sl.selected ?? opts.first?.label ?? "—")
+                        .font(.subheadline.weight(.semibold))
+                    if let svc = sl.lockedByService, !svc.isEmpty {
+                        Text("set by service \(svc)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+            } else {
+                ForEach(opts) { opt in
+                    Button(action: { selectedServiceLocation = opt.code }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: selectedServiceLocation == opt.code ? "largecircle.fill.circle" : "circle")
+                                .foregroundColor(selectedServiceLocation == opt.code ? Theme.primary : .secondary)
+                            Text(opt.label)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if opts.count == 1 {
+                    Text("Only one location is available for this individual's department, so it is applied automatically.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .cardStyle()
     }
 
     private var header: some View {

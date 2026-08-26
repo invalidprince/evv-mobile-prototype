@@ -721,6 +721,9 @@ struct DocConversationResponse: Decodable {
     let additionalComments: String?
     /// Transport review question answer (only present when done=true)
     let transportReviewedGoals: Bool?
+    /// Where the service happened (build 28 / server v0.4.267). The server
+    /// only returns a code it validated against this visit's allowed set.
+    let serviceLocation: String?
 }
 
 struct DocConversationOutcome: Decodable {

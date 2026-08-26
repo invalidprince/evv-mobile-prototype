@@ -410,6 +410,57 @@ struct ServerQuestionAnswer: Decodable {
     }
 }
 
+// MARK: - Service Location (CMS Place of Service) — build 28 / server v0.4.241+
+
+/// One allowed service-location option for this visit (already scoped to the
+/// individual's departments by the server — the picker can never offer a value
+/// the submit validator would refuse).
+struct ServerServiceLocationOption: Decodable, Identifiable {
+    let code: String
+    let label: String
+    let posCode: String?
+    var id: String { code }
+
+    enum CodingKeys: String, CodingKey { case code, label, posCode }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        code = (try? c.decode(String.self, forKey: .code)) ?? ""
+        label = ((try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil) ?? code
+        posCode = (try? c.decodeIfPresent(String.self, forKey: .posCode)) ?? nil
+    }
+}
+
+/// The visit's resolved Service Location payload from the documentation
+/// template. `locked` means the service code pins the location — render a
+/// static label and send nothing the staff can change.
+struct ServerServiceLocation: Decodable {
+    let locked: Bool?
+    let selected: String?
+    let autoApplied: String?
+    let lockedByService: String?
+    let required: Bool?
+    let options: [ServerServiceLocationOption]?
+
+    enum CodingKeys: String, CodingKey {
+        case locked, selected, autoApplied, lockedByService, required, options
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        locked = (try? c.decodeIfPresent(Bool.self, forKey: .locked)) ?? nil
+        selected = (try? c.decodeIfPresent(String.self, forKey: .selected)) ?? nil
+        autoApplied = (try? c.decodeIfPresent(String.self, forKey: .autoApplied)) ?? nil
+        lockedByService = (try? c.decodeIfPresent(String.self, forKey: .lockedByService)) ?? nil
+        required = (try? c.decodeIfPresent(Bool.self, forKey: .required)) ?? nil
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerServiceLocationOption>].self, forKey: .options) {
+            options = raw.compactMap { $0.value }.filter { !$0.code.isEmpty }
+        } else {
+            options = nil
+        }
+    }
+}
+
 struct DocumentationTemplateResponse: Decodable {
     let visitId: String?
     let outcomes: [ServerOutcome]?
@@ -419,9 +470,12 @@ struct DocumentationTemplateResponse: Decodable {
     let signatureCaptured: Bool?
     /// Server-configured visit questions (pre-filtered + pre-sorted for this visit).
     let questions: [ServerDocQuestion]?
+    /// Where the service was delivered (CMS Place of Service) — nil on older
+    /// servers or when no location types are configured.
+    let serviceLocation: ServerServiceLocation?
 
     enum CodingKeys: String, CodingKey {
-        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, signatureCaptured, questions
+        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, signatureCaptured, questions, serviceLocation
     }
 
     init(from decoder: Decoder) throws {
@@ -446,6 +500,8 @@ struct DocumentationTemplateResponse: Decodable {
         } else {
             questions = nil
         }
+        // Best-effort: a malformed serviceLocation must never block the form.
+        serviceLocation = (try? c.decodeIfPresent(ServerServiceLocation.self, forKey: .serviceLocation)) ?? nil
     }
 }
 
@@ -1066,7 +1122,7 @@ actor APIClient {
         }
     }
 
-    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, questionAnswers: [[String: Any]] = [], transportReviewedGoals: Bool? = nil, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
+    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, questionAnswers: [[String: Any]] = [], transportReviewedGoals: Bool? = nil, serviceLocation: String? = nil, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1081,6 +1137,12 @@ actor APIClient {
         // also send the old bool (server maps both ways; belt-and-suspenders).
         if let transport = transportReviewedGoals {
             body["transportReviewedGoals"] = transport
+        }
+        // Service Location (build 28): the server treats a PRESENT key as "this
+        // client knows about the field" and validates it, so the key is only
+        // sent when there is a real non-empty value to send.
+        if let loc = serviceLocation, !loc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["serviceLocation"] = loc
         }
         if aiAssisted {
             body["aiAssisted"] = true

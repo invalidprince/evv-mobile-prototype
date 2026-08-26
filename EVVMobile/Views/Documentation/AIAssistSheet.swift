@@ -191,6 +191,9 @@ struct AIDraftPayload: Decodable {
     let unaddressed: [Int]?
     let transportReviewedGoals: Bool?
     let visitQuestions: [AIDraftQuestionAnswer]?
+    /// Where the service happened (build 28 / server v0.4.267). The server
+    /// only returns a code it validated against this visit's allowed set.
+    let serviceLocation: String?
 }
 
 struct AIDraftResponse: Decodable {
