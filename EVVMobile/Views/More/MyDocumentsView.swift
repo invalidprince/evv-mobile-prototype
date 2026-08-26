@@ -19,6 +19,7 @@ struct MyDocumentsView: View {
 
     // Upload flow
     @State private var uploadTarget: StaffDocumentSlot?
+    @State private var showSourceChooser = false
     @State private var showPhotoPicker = false
     @State private var showCamera = false
     @State private var showFilePicker = false
@@ -73,6 +74,32 @@ struct MyDocumentsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
         .task { await load() }
+        // Single-button upload: one tap opens the native chooser (Camera /
+        // Photos / Files) instead of three separate buttons per row —
+        // per Nick 2026-08-26 ("single button... it says photos, camera, files").
+        .confirmationDialog(
+            uploadTarget.map { "Upload \($0.name)" } ?? "Upload document",
+            isPresented: $showSourceChooser,
+            titleVisibility: .visible
+        ) {
+            // Camera first — the fastest path when the document is in your hand.
+            // Hidden on devices without a camera (e.g. Simulator) because
+            // UIImagePickerController crashes if .camera is unavailable.
+            if CameraCapturePicker.isAvailable {
+                Button { presentAfterDialog { showCamera = true } } label: {
+                    Label("Take Photo", systemImage: "camera")
+                }
+            }
+            Button { presentAfterDialog { showPhotoPicker = true } } label: {
+                Label("Choose from Photos", systemImage: "photo")
+            }
+            Button { presentAfterDialog { showFilePicker = true } } label: {
+                Label("Browse Files (PDF)", systemImage: "folder")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("PDF, JPG, or PNG — a clear photo works.")
+        }
         .sheet(isPresented: $showPhotoPicker) {
             PhotoLibraryPicker { image in
                 if let target = uploadTarget, let data = image?.jpegData(compressionQuality: 0.85) {
@@ -141,41 +168,28 @@ struct MyDocumentsView: View {
             if isUploading && uploadingTypeId == slot.typeId {
                 HStack(spacing: 8) { ProgressView().scaleEffect(0.8); Text("Uploading…").font(.caption).foregroundColor(.secondary) }
             } else {
-                HStack(spacing: 12) {
-                    // Camera first — the fastest path when the document is in your hand.
-                    // Hidden on devices without a camera (e.g. Simulator) because
-                    // UIImagePickerController crashes if .camera is unavailable.
-                    if CameraCapturePicker.isAvailable {
-                        Button {
-                            uploadTarget = slot
-                            showCamera = true
-                        } label: {
-                            Label("Take Photo", systemImage: "camera")
-                                .font(.caption.weight(.semibold))
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    Button {
-                        uploadTarget = slot
-                        showPhotoPicker = true
-                    } label: {
-                        Label(slot.fileName == nil ? "Photos" : "Replace — Photos", systemImage: "photo")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    Button {
-                        uploadTarget = slot
-                        showFilePicker = true
-                    } label: {
-                        Label("File / PDF", systemImage: "folder")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
+                // ONE button per slot. It opens the native source chooser
+                // (Camera / Photos / Files) — see .confirmationDialog above.
+                Button {
+                    uploadTarget = slot
+                    showSourceChooser = true
+                } label: {
+                    Label(slot.fileName == nil ? "Upload" : "Replace",
+                          systemImage: "square.and.arrow.up")
+                        .font(.caption.weight(.semibold))
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(!appState.effectivelyOnline || isUploading)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Presenting a sheet/fullScreenCover straight from a confirmationDialog
+    /// action can race with the dialog's own dismissal on some iOS versions
+    /// (the presentation silently fails). Deferring one beat makes it reliable.
+    private func presentAfterDialog(_ present: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { present() }
     }
 
     private func chipColor(_ chip: String) -> Color {
