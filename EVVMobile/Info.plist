@@ -30,11 +30,13 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>25</string>
+	<string>26</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>EVV uses the camera to photograph your compliance documents (license, insurance, trainings) for upload.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID to sign in quickly.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

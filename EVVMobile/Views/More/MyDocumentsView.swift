@@ -20,6 +20,7 @@ struct MyDocumentsView: View {
     // Upload flow
     @State private var uploadTarget: StaffDocumentSlot?
     @State private var showPhotoPicker = false
+    @State private var showCamera = false
     @State private var showFilePicker = false
     @State private var isUploading = false
     @State private var uploadingTypeId: Int?
@@ -79,6 +80,16 @@ struct MyDocumentsView: View {
                 }
             }
         }
+        // Camera capture — full screen (UIImagePickerController's camera UI is
+        // designed for full screen; presenting it in a sheet clips the controls).
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraCapturePicker { image in
+                if let target = uploadTarget, let data = image?.jpegData(compressionQuality: 0.85) {
+                    Task { await upload(slot: target, data: data, filename: "camera.jpg", mime: "image/jpeg") }
+                }
+            }
+            .ignoresSafeArea()
+        }
         .fileImporter(isPresented: $showFilePicker,
                       allowedContentTypes: [.pdf, .jpeg, .png],
                       allowsMultipleSelection: false) { result in
@@ -131,11 +142,24 @@ struct MyDocumentsView: View {
                 HStack(spacing: 8) { ProgressView().scaleEffect(0.8); Text("Uploading…").font(.caption).foregroundColor(.secondary) }
             } else {
                 HStack(spacing: 12) {
+                    // Camera first — the fastest path when the document is in your hand.
+                    // Hidden on devices without a camera (e.g. Simulator) because
+                    // UIImagePickerController crashes if .camera is unavailable.
+                    if CameraCapturePicker.isAvailable {
+                        Button {
+                            uploadTarget = slot
+                            showCamera = true
+                        } label: {
+                            Label("Take Photo", systemImage: "camera")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                     Button {
                         uploadTarget = slot
                         showPhotoPicker = true
                     } label: {
-                        Label(slot.fileName == nil ? "Upload Photo" : "Replace — Photo", systemImage: "photo")
+                        Label(slot.fileName == nil ? "Photos" : "Replace — Photos", systemImage: "photo")
                             .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.bordered)
@@ -198,6 +222,47 @@ struct MyDocumentsView: View {
         }
         isUploading = false
         uploadingTypeId = nil
+    }
+}
+
+// MARK: - Camera capture wrapper (UIImagePickerController, source = .camera)
+// Used for "take a picture right there" document uploads (Nick 2026-08-26).
+// Rear camera, no editing overlay — a document photo should be the full frame.
+struct CameraCapturePicker: UIViewControllerRepresentable {
+    let onCapture: (UIImage?) -> Void
+
+    static var isAvailable: Bool {
+        UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onCapture: onCapture) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onCapture: (UIImage?) -> Void
+        init(onCapture: @escaping (UIImage?) -> Void) { self.onCapture = onCapture }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            picker.dismiss(animated: true)
+            let image = info[.originalImage] as? UIImage
+            DispatchQueue.main.async { self.onCapture(image) }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true)
+            DispatchQueue.main.async { self.onCapture(nil) }
+        }
     }
 }
 
