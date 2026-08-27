@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Medications Due card (build 30 / server v0.4.274)
+// MARK: - Medications Due card (build 33 / server v0.4.295)
 // eMAR on the Today tab: due administrations + PRN meds for eMAR-enabled
 // individuals on today's shifts (server payload = the same dueMedsForStaff
 // scoping the web My Day renders — GET /api/me/medications).
@@ -11,6 +11,21 @@ import SwiftUI
 // and a second device whose due list hasn't refreshed is a double-dose risk.
 // Offline this card is read-only with a "Reconnect to record" banner. Do NOT
 // change that. The clock-in/out punch queue is a separate, untouched system.
+//
+// 🔑 build 33 — the GIVE WINDOW (server v0.4.295: 1h before due → 1h after,
+// auto-missed at +60). Builds ≤32 rendered a plain "Record" button on every
+// unrecorded dose and staff only discovered the refusal on TAP — the server
+// has always refused it with a clean 409, so nothing was ever mis-recorded,
+// but the UI was lying about what was possible.
+//
+// ⚠️ THE CLIENT-SIDE HIDE IS A HINT, NOT THE CONTROL. `giveAllowed` &c. are
+// server-computed hints; `emar-core.recordAdministration` is the gate. Two
+// consequences that are deliberate here:
+//   1. Refused / Held / Missed stay AVAILABLE outside the window — a dose that
+//      went missed at 9 PM still has to be documented, and hiding the row's
+//      only remaining action would strand it. Only GIVEN is withheld.
+//   2. The sheet re-checks and surfaces the server's 409 prose verbatim,
+//      because a dose can tip from open → closed while the sheet is open.
 struct MedicationsDueCard: View {
     @EnvironmentObject var appState: AppState
     @State private var recordTarget: DueMedication?
@@ -135,16 +150,32 @@ struct MedicationsDueCard: View {
                             .foregroundColor(Theme.warning)
                             .cornerRadius(5)
                     }
+                    // 🔒 v0.4.295 window chip — mirrors the web's my-day.ejs
+                    //    "opens 7:00 PM" / "window closed" treatment so staff
+                    //    see WHY Given isn't on offer without tapping.
+                    if let chip = med.windowChipLabel {
+                        let closed = med.giveWindowState == "closed"
+                        Text("\u{1F512} \(chip)")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background((closed ? Theme.danger : Color.secondary).opacity(0.15))
+                            .foregroundColor(closed ? Theme.danger : .secondary)
+                            .cornerRadius(5)
+                            .accessibilityLabel(med.windowExplanation ?? chip)
+                    }
                 }
             }
             Spacer()
             if med.recordable {
-                Button("Record") {
+                // Outside the window there is nothing to GIVE, only something
+                // to DOCUMENT — say so on the button instead of dropping it.
+                Button(med.canGive ? "Record" : "Document") {
                     recordTarget = med
                 }
                 .font(.subheadline.weight(.semibold))
                 .buttonStyle(.borderedProminent)
-                .tint(Theme.primary)
+                .tint(med.canGive ? Theme.primary : Color.secondary)
                 .disabled(!online)
                 .opacity(online ? 1 : 0.5)
             } else if let initials = med.initials {
@@ -189,18 +220,33 @@ struct RecordAdministrationSheet: View {
     @State private var errorMessage: String?
     @State private var showSuccess = false
     @State private var wasLate = false
+    /// Set when the SERVER refuses on the window (409) even though the client
+    /// thought it was open — a dose can tip closed while this sheet is up.
+    @State private var windowRefusal: String?
 
-    private let actions: [(id: String, label: String, icon: String)] = [
+    private let allActions: [(id: String, label: String, icon: String)] = [
         ("given", "Given", "checkmark.circle.fill"),
         ("refused", "Refused", "hand.raised.fill"),
         ("held", "Held", "pause.circle.fill"),
         ("missed", "Missed", "xmark.circle.fill"),
     ]
 
+    /// 🔒 v0.4.295 — GIVEN is dropped outside the window; the documentation
+    /// outcomes always remain, because a dose outside its window is exactly the
+    /// one that still needs writing up. Once the server has refused on the
+    /// window we drop it too, so the same tap can't be repeated.
+    private var actions: [(id: String, label: String, icon: String)] {
+        guard med.canGive, windowRefusal == nil else {
+            return allActions.filter { $0.id != "given" }
+        }
+        return allActions
+    }
+
     /// Same rule the server enforces: refused / held / missed need a reason.
     private var reasonRequired: Bool { action != "given" }
     private var canSubmit: Bool {
         !isSubmitting && appState.effectivelyOnline
+            && actions.contains(where: { $0.id == action })
             && (!reasonRequired || !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
@@ -213,11 +259,17 @@ struct RecordAdministrationSheet: View {
                 errorSection
                 submitSection
             }
-            .navigationTitle("Record Medication")
+            .navigationTitle(med.canGive ? "Record Medication" : "Document Medication")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                }
+            }
+            .onAppear {
+                // Never open pre-selected on an outcome that isn't offered.
+                if !actions.contains(where: { $0.id == action }) {
+                    action = actions.first?.id ?? "refused"
                 }
             }
             .alert("Administration recorded", isPresented: $showSuccess) {
@@ -247,13 +299,28 @@ struct RecordAdministrationSheet: View {
                         .foregroundColor(.secondary)
                         .padding(.top, 2)
                 }
+                // 🔒 The server's own prose, shown up front — the same sentence
+                //    a 409 would have carried, before the tap instead of after.
+                if let why = windowRefusal ?? med.windowExplanation {
+                    Label(why, systemImage: "lock.fill")
+                        .font(.caption)
+                        .foregroundColor(Theme.danger)
+                        .padding(.top, 4)
+                }
             }
             .padding(.vertical, 2)
         }
     }
 
     private var outcomeSection: some View {
-        Section(header: Text("Outcome")) {
+        Section(
+            header: Text("Outcome"),
+            footer: Group {
+                if !med.canGive || windowRefusal != nil {
+                    Text("“Given” is unavailable outside the one-hour give window. Document what actually happened — a manager can correct the record on the web dashboard.")
+                }
+            }
+        ) {
             ForEach(actions, id: \.id) { a in
                 outcomeRow(a)
             }
@@ -338,7 +405,24 @@ struct RecordAdministrationSheet: View {
             showSuccess = true
         } catch {
             isSubmitting = false
-            errorMessage = (error as? APIError)?.localizedDescription ?? error.localizedDescription
+            let msg = (error as? APIError)?.localizedDescription ?? error.localizedDescription
+            // 🔒 A 409 here means the SERVER closed the window on us mid-sheet
+            //    (or this is a build racing an auto-miss). Surface its reason
+            //    verbatim, drop GIVEN from the outcomes and refresh the list —
+            //    do NOT show a generic "server error" for a rule we understand.
+            if case .conflict(let reason)? = (error as? APIError) {
+                windowRefusal = reason
+                errorMessage = nil
+                if action == "given" { action = "refused" }
+                await appState.refreshDueMedications()
+            } else if case .serverError(409, let reason)? = (error as? APIError) {
+                windowRefusal = reason
+                errorMessage = nil
+                if action == "given" { action = "refused" }
+                await appState.refreshDueMedications()
+            } else {
+                errorMessage = msg
+            }
         }
     }
 }

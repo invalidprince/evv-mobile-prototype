@@ -691,6 +691,26 @@ struct ToggleTodoResponse: Decodable {
 /// SERVER-side (pending/missed with nothing recorded yet). `dueTimeLabel` is a
 /// wall-clock label rendered by the server — display it as given, never run
 /// `dueTime` through a device-timezone conversion.
+///
+/// 🔑 build 33 / server v0.4.295 — the GIVE WINDOW fields.
+///
+///   `recordable`  = "this slot has nothing on it yet", so the DOCUMENTATION
+///                   actions (Refused / Held / Missed) are still offered. It is
+///                   deliberately NOT narrowed to the window — narrowing it
+///                   would hide the documentation on exactly the doses that
+///                   most need documenting.
+///   `giveAllowed` = the flag a client hides/disables its GIVEN option on.
+///
+/// ⚠️ THESE ARE A HINT, NOT THE CONTROL. `emar-core.recordAdministration`
+/// refuses a late `given` no matter which client sends it (clean 409 +
+/// `window` state), which is what makes the rule binding on builds ≤32 that
+/// know nothing about these fields. Never treat the client-side hide as the
+/// enforcement — always surface the server's 409 reason if a race slips
+/// through (a dose can go missed while the sheet is open).
+///
+/// All five are OPTIONAL on purpose: a server that predates v0.4.295, or the
+/// `MockData` demo payload, simply omits them and the app falls back to the
+/// pre-window behaviour instead of failing to decode the whole due list.
 struct DueMedication: Decodable, Identifiable {
     let id: Int
     let clientId: String
@@ -704,6 +724,51 @@ struct DueMedication: Decodable, Identifiable {
     let late: Bool
     let initials: String?
     let recordable: Bool
+    let giveAllowed: Bool?
+    /// 'none' (no due_at — unconstrained) | 'early' | 'open' | 'closed'
+    let giveWindowState: String?
+    let giveWindowOpensLabel: String?
+    let giveWindowClosesLabel: String?
+    let giveWindowReason: String?
+
+    /// Missing field (old server / mock data) ⇒ fall back to `recordable`, the
+    /// pre-v0.4.295 behaviour. Never default to `false`: that would hide Given
+    /// on every dose the moment the app talked to an older backend.
+    var canGive: Bool { giveAllowed ?? recordable }
+
+    /// True when the server told us the window is shut (either side of it).
+    /// 'none' is NOT a closed window — it means the dose has no due time at
+    /// all and is unconstrained.
+    var windowBlocked: Bool {
+        guard recordable, let s = giveWindowState else { return false }
+        return (s == "early" || s == "closed") && !canGive
+    }
+
+    /// Short chip text mirroring the web's my-day.ejs treatment:
+    /// early → "opens 7:00 PM", closed → "window closed".
+    var windowChipLabel: String? {
+        guard windowBlocked else { return nil }
+        if giveWindowState == "early" {
+            if let opens = giveWindowOpensLabel { return "opens \(opens)" }
+            return "not open yet"
+        }
+        if let closes = giveWindowClosesLabel { return "window closed \(closes)" }
+        return "window closed"
+    }
+
+    /// The server's own prose refusal, shown in the record sheet so staff read
+    /// the same sentence the API would have returned on a 409.
+    var windowExplanation: String? {
+        guard windowBlocked else { return nil }
+        if let reason = giveWindowReason, !reason.isEmpty { return reason }
+        if giveWindowState == "early", let opens = giveWindowOpensLabel {
+            return "Too early — this dose cannot be recorded as given until \(opens)."
+        }
+        if let closes = giveWindowClosesLabel {
+            return "This dose is past its one-hour window (it closed at \(closes)) and can no longer be recorded as given."
+        }
+        return "This dose is outside its one-hour give window."
+    }
 }
 
 /// A PRN (as-needed) medication available to record for an individual on
@@ -1780,6 +1845,13 @@ actor APIClient {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard statusCode == 200 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not record the administration"
+            // 🔒 build 33 — 409 is the GIVE-WINDOW refusal (server v0.4.295,
+            //    emar-core.recordAdministration). Surface it as .conflict like
+            //    every other route in this client so callers can branch on the
+            //    rule instead of string-matching a generic "Server error
+            //    (409)" prefix. The body carries the server's own prose, which
+            //    is what the record sheet shows verbatim.
+            if statusCode == 409 { throw APIError.conflict(errBody) }
             throw APIError.serverError(statusCode, errBody)
         }
         do {
