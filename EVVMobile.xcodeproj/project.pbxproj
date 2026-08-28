@@ -39,6 +39,7 @@
 		87CC7A1829076198FBA32C88 /* HistoryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40799C6376F8F4D66B813AA7 /* HistoryRow.swift */; };
 		9272594B07C6D7B50A5C5F1D /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 396E0ABD8D7B9E36B78889C6 /* LocationManager.swift */; };
 		A04AAFC880D0004E16536566 /* ServerModeE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD1CDAA6FDDA5B4B2A2C455 /* ServerModeE2ETests.swift */; };
+		A04AAFC880D0004E16536567 /* MyDocumentsShotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD1CDAA6FDDA5B4B2A2C456 /* MyDocumentsShotTests.swift */; };
 		A4CAEA872281BED8E53FDAEF /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A592BA84612CB09A2A4F61 /* Models.swift */; };
 		BC6517613BF8B062885D1C43 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */; };
 		C2B795D7F0DC9FF417F17D9D /* EVVMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */; };
@@ -74,6 +75,7 @@
 		15BE09C32C84B4CB482C21E2 /* ActiveVisitCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveVisitCard.swift; sourceTree = "<group>"; };
 		1A77C2BA6F8CD8A0E2A5A367 /* LocalCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCache.swift; sourceTree = "<group>"; };
 		1CD1CDAA6FDDA5B4B2A2C455 /* ServerModeE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeE2ETests.swift; sourceTree = "<group>"; };
+		1CD1CDAA6FDDA5B4B2A2C456 /* MyDocumentsShotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyDocumentsShotTests.swift; sourceTree = "<group>"; };
 		1DC5F0D5661B4B523FCCFD64 /* ClockInConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockInConfirmSheet.swift; sourceTree = "<group>"; };
 		396E0ABD8D7B9E36B78889C6 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		40799C6376F8F4D66B813AA7 /* HistoryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRow.swift; sourceTree = "<group>"; };
@@ -230,6 +232,7 @@
 			isa = PBXGroup;
 			children = (
 				1CD1CDAA6FDDA5B4B2A2C455 /* ServerModeE2ETests.swift */,
+				1CD1CDAA6FDDA5B4B2A2C456 /* MyDocumentsShotTests.swift */,
 			);
 			path = EVVMobileUITests;
 			sourceTree = "<group>";
@@ -398,6 +401,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A04AAFC880D0004E16536566 /* ServerModeE2ETests.swift in Sources */,
+				A04AAFC880D0004E16536567 /* MyDocumentsShotTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
