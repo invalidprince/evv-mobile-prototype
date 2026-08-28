@@ -165,24 +165,50 @@ struct MyDocumentsView: View {
                 Label(file, systemImage: "doc").font(.caption).foregroundColor(.secondary).lineLimit(1)
             }
 
-            if isUploading && uploadingTypeId == slot.typeId {
-                HStack(spacing: 8) { ProgressView().scaleEffect(0.8); Text("Uploading…").font(.caption).foregroundColor(.secondary) }
-            } else {
-                // ONE button per slot. It opens the native source chooser
-                // (Camera / Photos / Files) — see .confirmationDialog above.
-                Button {
-                    uploadTarget = slot
-                    showSourceChooser = true
-                } label: {
-                    Label(slot.fileName == nil ? "Upload" : "Replace",
-                          systemImage: "square.and.arrow.up")
-                        .font(.caption.weight(.semibold))
+            // UI polish per Nick 2026-08-28 ("Upload and replace buttons look
+            // a little wonky"): the old tiny caption-font prominent pill sat
+            // bottom-left and "Upload"/"Replace" rendered at different widths
+            // row to row. Now: one full-width control with identical geometry
+            // in every row and every state. Upload (nothing on file yet — an
+            // action that's actually needed) stays prominent; Replace (a file
+            // already exists — optional) is the quieter bordered style so a
+            // completed row doesn't shout. The uploading state fills the same
+            // footprint so the row doesn't jump when a send starts.
+            Group {
+                if isUploading && uploadingTypeId == slot.typeId {
+                    HStack(spacing: 8) {
+                        ProgressView().scaleEffect(0.8)
+                        Text("Uploading…").font(.subheadline).foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 32)
+                } else if slot.fileName == nil {
+                    Button {
+                        uploadTarget = slot
+                        showSourceChooser = true
+                    } label: {
+                        Label("Upload", systemImage: "square.and.arrow.up")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 24)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!appState.effectivelyOnline || isUploading)
+                } else {
+                    Button {
+                        uploadTarget = slot
+                        showSourceChooser = true
+                    } label: {
+                        Label("Replace", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 24)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Theme.primary)
+                    .disabled(!appState.effectivelyOnline || isUploading)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!appState.effectivelyOnline || isUploading)
             }
+            .padding(.top, 4)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 
     /// Presenting a sheet/fullScreenCover straight from a confirmationDialog
