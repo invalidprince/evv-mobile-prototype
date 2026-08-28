@@ -145,6 +145,19 @@ struct ServerUnscheduledContent: View {
         return appState.serverIndividuals.filter { $0.name.lowercased().contains(trimmed) }
     }
 
+    /// Section title carrying the visible count — the affordance that turns a
+    /// silent clip into a visible one (build 43 / v0.4.320).
+    private var individualsSectionTitle: String {
+        let n = filteredIndividuals.count
+        guard !isUnlisted, n > 0 else { return "Individual(s)" }
+        return "Individual(s) — \(n)"
+    }
+
+    /// Proportional cap: never clip a short roster, still bounded for long ones.
+    private var individualsListMaxHeight: CGFloat {
+        min(CGFloat(max(filteredIndividuals.count, 1)) * 56 + 8, 400)
+    }
+
     /// Message when selected individuals have no common services
     private var noCommonServicesMessage: String? {
         guard selectedIndividualIds.count > 1, authorizedServices.isEmpty else { return nil }
@@ -158,7 +171,13 @@ struct ServerUnscheduledContent: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Individual(s)"), footer: cachedFooter) {
+                // build 43 / v0.4.320 — the header carries the COUNT. Nick
+                // reported "Erik Hoover is not showing" when the server was in
+                // fact returning him: he was row 6 of 6 inside a scroll view
+                // hard-clipped to 224pt, with no scroll indicator and no count,
+                // so the list read as complete at row 4. A caregiver who can
+                // see "6" will look for the 6th.
+                Section(header: Text(individualsSectionTitle), footer: cachedFooter) {
 
                     // F2: Unlisted Individual toggle
                     Button(action: {
@@ -222,7 +241,14 @@ struct ServerUnscheduledContent: View {
                             TextField("Search…", text: $searchText)
                                 .textFieldStyle(.roundedBorder)
 
-                            // Constrained list: max ~4 visible rows (each ~56pt)
+                            // build 43 / v0.4.320 — the height cap is now
+                            // PROPORTIONAL to the row count, so a short roster
+                            // is never clipped. It used to be a flat
+                            // `.frame(maxHeight: 224)` (~4 rows), which silently
+                            // hid rows 5+ inside a Form that scrolls itself —
+                            // indistinguishable from the individual not
+                            // existing. The search field above handles genuinely
+                            // long lists.
                             ScrollView {
                                 LazyVStack(spacing: 0) {
                                     ForEach(filteredIndividuals) { individual in
@@ -255,7 +281,7 @@ struct ServerUnscheduledContent: View {
                                     }
                                 }
                             }
-                            .frame(maxHeight: 224) // ~4 rows × 56pt each
+                            .frame(maxHeight: individualsListMaxHeight)
                         }
                     }
                 }

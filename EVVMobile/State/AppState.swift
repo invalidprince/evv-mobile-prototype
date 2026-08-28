@@ -1002,10 +1002,19 @@ final class AppState: ObservableObject {
             let fetched = try await APIClient.shared.fetchIndividuals()
             serverIndividuals = fetched
             individualsFromCacheDate = nil  // live data
+            // build 43 — log the live count. When Nick reported a missing
+            // individual the first question was "did the device actually
+            // receive them?", and there was no way to answer that from a
+            // device. The roster is department-scoped as of v0.4.320, so the
+            // count is now the fastest way to tell a scoping change apart from
+            // a UI problem.
+            DiagnosticLogger.shared.logSync("Loaded \(fetched.count) individuals from server")
             // Persist to disk for offline use
             LocalCache.shared.saveIndividuals(fetched)
         } catch is CancellationError {
-            // Silently ignore task cancellation
+            // build 43 — was a silent `{ }`. A swallowed cancellation looks
+            // exactly like an empty roster from the outside.
+            DiagnosticLogger.shared.logSync("refreshIndividuals cancelled (kept \(serverIndividuals.count) in memory)")
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
             if apiErr.isCancellation { return }  // benign
