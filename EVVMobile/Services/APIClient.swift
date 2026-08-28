@@ -693,12 +693,15 @@ struct ToggleTodoResponse: Decodable {
 /// `dueTime` through a device-timezone conversion.
 ///
 /// 🔑 build 33 / server v0.4.295 — the GIVE WINDOW fields.
+/// 🔒 build 44 / server v0.4.322 — `recordable` is now NARROWED to the give
+///    window on the server (Nick 2026-08-28: "for future medications and past
+///    missed ones, you should not be able to document refused or held. It was
+///    missed, that's it."). A missed or not-yet-open dose arrives with
+///    `recordable: false`, so the Record button disappears; only the window
+///    chip + status chip explain why. Missed is final — the repair path is a
+///    manager correction on the web dashboard.
 ///
-///   `recordable`  = "this slot has nothing on it yet", so the DOCUMENTATION
-///                   actions (Refused / Held) are still offered. It is
-///                   deliberately NOT narrowed to the window — narrowing it
-///                   would hide the documentation on exactly the doses that
-///                   most need documenting.
+///   `recordable`  = "staff can write a first record on this slot RIGHT NOW"
 ///   `giveAllowed` = the flag a client hides/disables its GIVEN option on.
 ///
 /// ⚠️ THESE ARE A HINT, NOT THE CONTROL. `emar-core.recordAdministration`
@@ -739,8 +742,13 @@ struct DueMedication: Decodable, Identifiable {
     /// True when the server told us the window is shut (either side of it).
     /// 'none' is NOT a closed window — it means the dose has no due time at
     /// all and is unconstrained.
+    /// ⚠️ build 44 — keyed on "unrecorded" (status), NOT on `recordable`:
+    /// since server v0.4.322 an out-of-window dose is no longer recordable at
+    /// all, and the chip must still render on exactly those rows so staff see
+    /// WHY there is no button.
     var windowBlocked: Bool {
-        guard recordable, let s = giveWindowState else { return false }
+        guard status == "pending" || status == "missed", initials == nil,
+              let s = giveWindowState else { return false }
         return (s == "early" || s == "closed") && !canGive
     }
 

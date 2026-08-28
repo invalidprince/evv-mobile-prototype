@@ -21,14 +21,18 @@ import SwiftUI
 // ⚠️ THE CLIENT-SIDE HIDE IS A HINT, NOT THE CONTROL. `giveAllowed` &c. are
 // server-computed hints; `emar-core.recordAdministration` is the gate. Two
 // consequences that are deliberate here:
-//   1. Refused / Held stay AVAILABLE outside the window — a dose that
-//      went missed at 9 PM still has to be documented, and hiding the row's
-//      only remaining action would strand it. Only GIVEN is withheld.
+//   1. 🔒 build 44 / server v0.4.322 — NOTHING is recordable outside the
+//      window any more. Nick (2026-08-28): "for future medications and past
+//      missed ones, you should not be able to document refused or held. It
+//      was missed, that's it." The server ships those rows `recordable:
+//      false`, so the button vanishes; the window chip explains why. Missed
+//      is final for staff — a manager corrects the record on the web.
 //      (build 41 / server v0.4.315 — "Missed" is GONE as a manual outcome:
-//      missed is AUTOMATIC. The server flips an untouched slot to missed the
-//      moment its window closes and refuses a hand-picked missed with a 400.)
+//      missed is AUTOMATIC.)
 //   2. The sheet re-checks and surfaces the server's 409 prose verbatim,
-//      because a dose can tip from open → closed while the sheet is open.
+//      because a dose can tip from open → closed while the sheet is open —
+//      and since v0.4.322 that refusal is TERMINAL: every outcome is dropped
+//      and the sheet can only be dismissed.
 struct MedicationsDueCard: View {
     @EnvironmentObject var appState: AppState
     @State private var recordTarget: DueMedication?
@@ -171,8 +175,10 @@ struct MedicationsDueCard: View {
             }
             Spacer()
             if med.recordable {
-                // Outside the window there is nothing to GIVE, only something
-                // to DOCUMENT — say so on the button instead of dropping it.
+                // v0.4.322 servers only mark a dose recordable INSIDE its
+                // window, so this is normally "Record". The "Document" label
+                // survives solely for pre-v0.4.322 servers that still send
+                // recordable=true on out-of-window doses.
                 Button(med.canGive ? "Record" : "Document") {
                     recordTarget = med
                 }
@@ -238,12 +244,14 @@ struct RecordAdministrationSheet: View {
         ("held", "Held", "pause.circle.fill"),
     ]
 
-    /// 🔒 v0.4.295 — GIVEN is dropped outside the window; the documentation
-    /// outcomes always remain, because a dose outside its window is exactly the
-    /// one that still needs writing up. Once the server has refused on the
-    /// window we drop it too, so the same tap can't be repeated.
+    /// 🔒 build 44 / server v0.4.322 — once the server refuses on the window,
+    /// EVERY outcome is gone: missed is final, no late refused/held write-ups
+    /// (Nick 2026-08-28). An empty list disables Submit; the header shows the
+    /// server's own prose. `!canGive` (old servers / mid-race hints) still
+    /// drops only Given.
     private var actions: [(id: String, label: String, icon: String)] {
-        guard med.canGive, windowRefusal == nil else {
+        if windowRefusal != nil { return [] }
+        guard med.canGive else {
             return allActions.filter { $0.id != "given" }
         }
         return allActions
@@ -323,8 +331,10 @@ struct RecordAdministrationSheet: View {
         Section(
             header: Text("Outcome"),
             footer: Group {
-                if !med.canGive || windowRefusal != nil {
-                    Text("“Given” is unavailable outside the one-hour give window. Document what actually happened — a manager can correct the record on the web dashboard.")
+                if windowRefusal != nil {
+                    Text("The give window closed and this dose was automatically marked missed — missed is final and can no longer be documented. A manager can correct the record on the web dashboard.")
+                } else if !med.canGive {
+                    Text("“Given” is unavailable outside the one-hour give window. A manager can correct the record on the web dashboard.")
                 }
             }
         ) {
@@ -415,17 +425,17 @@ struct RecordAdministrationSheet: View {
             let msg = (error as? APIError)?.localizedDescription ?? error.localizedDescription
             // 🔒 A 409 here means the SERVER closed the window on us mid-sheet
             //    (or this is a build racing an auto-miss). Surface its reason
-            //    verbatim, drop GIVEN from the outcomes and refresh the list —
-            //    do NOT show a generic "server error" for a rule we understand.
+            //    verbatim and refresh the list — do NOT show a generic "server
+            //    error" for a rule we understand. Since server v0.4.322 the
+            //    refusal is terminal (missed is final): `actions` empties, the
+            //    submit button disables, and the only path is Cancel.
             if case .conflict(let reason)? = (error as? APIError) {
                 windowRefusal = reason
                 errorMessage = nil
-                if action == "given" { action = "refused" }
                 await appState.refreshDueMedications()
             } else if case .serverError(409, let reason)? = (error as? APIError) {
                 windowRefusal = reason
                 errorMessage = nil
-                if action == "given" { action = "refused" }
                 await appState.refreshDueMedications()
             } else {
                 errorMessage = msg
