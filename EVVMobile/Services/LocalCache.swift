@@ -18,6 +18,7 @@ final class LocalCache {
     // MARK: - File paths
 
     private var individualsURL: URL { cacheDir.appendingPathComponent("individuals.json") }
+    private var offlineQueueURL: URL { cacheDir.appendingPathComponent("offline-queue.json") }
 
     // MARK: - Cached envelope (data + timestamp)
 
@@ -59,10 +60,55 @@ final class LocalCache {
         return envelope.lastUpdated
     }
 
+    // MARK: - Offline queue (EVV punches must survive an app kill/restart)
+
+    private struct QueueEnvelope: Codable {
+        let staffId: String?
+        let actions: [QueuedAction]
+        let lastUpdated: Date
+    }
+
+    /// Persist the offline action queue. Written on EVERY queue mutation so a
+    /// killed/crashed app never loses a queued punch (they are legal EVV
+    /// records). The owning staff id is stored alongside so a different user
+    /// signing in on the same device can never replay someone else's punches
+    /// under their own token.
+    func saveOfflineQueue(_ actions: [QueuedAction], staffId: String?) {
+        if actions.isEmpty {
+            try? fileManager.removeItem(at: offlineQueueURL)
+            return
+        }
+        let envelope = QueueEnvelope(staffId: staffId, actions: actions, lastUpdated: Date())
+        do {
+            let data = try JSONEncoder().encode(envelope)
+            try data.write(to: offlineQueueURL, options: .atomic)
+        } catch {
+            DiagnosticLogger.shared.logAPI("Failed to persist offline queue: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load the persisted offline queue for this staff member. Returns nil if
+    /// nothing was saved or the saved queue belongs to a different staff id
+    /// (in which case it is deliberately left on disk untouched — the owner
+    /// may sign back in).
+    func loadOfflineQueue(matching staffId: String) -> [QueuedAction]? {
+        guard let data = try? Data(contentsOf: offlineQueueURL),
+              let envelope = try? JSONDecoder().decode(QueueEnvelope.self, from: data) else {
+            return nil
+        }
+        guard envelope.staffId == staffId else {
+            DiagnosticLogger.shared.logSync("Persisted offline queue belongs to another staff id — not restoring")
+            return nil
+        }
+        DiagnosticLogger.shared.logSync("Restored \(envelope.actions.count) offline action(s) from disk")
+        return envelope.actions
+    }
+
     // MARK: - Clear (e.g. on sign-out)
 
     func clearAll() {
         try? fileManager.removeItem(at: individualsURL)
+        try? fileManager.removeItem(at: offlineQueueURL)
         DiagnosticLogger.shared.logSync("Local cache cleared")
     }
 }

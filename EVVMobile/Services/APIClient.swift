@@ -811,6 +811,11 @@ enum APIError: LocalizedError {
     case networkError(Error)
     case serverError(Int, String)
     case decodingError(Error)
+    /// The server returned 2xx — the write SUCCEEDED — but the response body
+    /// couldn't be decoded. This must never be treated as "the write failed":
+    /// the V-2032 incident (2026-08-28) was a saved punch the app deleted
+    /// because the 201 body was unreadable.
+    case responseUnreadable(Error)
 
     var errorDescription: String? {
         switch self {
@@ -822,11 +827,24 @@ enum APIError: LocalizedError {
             return "Connection error: \(err.localizedDescription)"
         case .serverError(let code, let msg): return "Server error (\(code)): \(msg)"
         case .decodingError(let err): return "Data error: \(err.localizedDescription)"
+        case .responseUnreadable:
+            return "Your punch was recorded but the app couldn't read the response \u{2014} it will re-sync automatically."
         }
     }
 
     var isNetworkError: Bool {
         if case .networkError = self { return true }
+        return false
+    }
+
+    /// True when the local record must be RETAINED and queued for re-sync:
+    /// either the request may never have reached the server (network error) or
+    /// it provably DID and succeeded (2xx with an unreadable body). A punch the
+    /// user physically made must never vanish from the UI on these — the
+    /// server-side idempotency check makes the replay safe.
+    var isRetainable: Bool {
+        if case .networkError = self { return true }
+        if case .responseUnreadable = self { return true }
         return false
     }
 
@@ -878,6 +896,16 @@ struct QueuedAction: Identifiable, Codable {
     let manualEnd: String?
     // Retry tracking
     var retryCount: Int
+
+    /// EVV punches are the legal record — these action types are NEVER
+    /// silently discarded from the offline queue, no matter how many times
+    /// the server rejects them.
+    var isPunch: Bool {
+        switch type {
+        case .clockIn, .clockOut, .unscheduledVisit, .manualTime: return true
+        case .addNote, .nonBillable, .timeFix: return false
+        }
+    }
 
     enum ActionType: String, Codable {
         case clockIn
@@ -1124,7 +1152,9 @@ actor APIClient {
         do {
             return try JSONDecoder().decode(ClockInResponse.self, from: data).visit
         } catch {
-            throw APIError.decodingError(error)
+            // 2xx reached: the punch is COMMITTED server-side. Never report
+            // this as a failed write — see APIError.responseUnreadable.
+            throw APIError.responseUnreadable(error)
         }
     }
 
@@ -1654,7 +1684,9 @@ actor APIClient {
         do {
             return try JSONDecoder().decode(UnscheduledVisitResponse.self, from: data)
         } catch {
-            throw APIError.decodingError(error)
+            // 2xx reached: the visit is COMMITTED server-side. Never report
+            // this as a failed write — see APIError.responseUnreadable.
+            throw APIError.responseUnreadable(error)
         }
     }
 

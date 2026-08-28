@@ -65,7 +65,11 @@ final class AppState: ObservableObject {
     @Published var serverNoteDrafts: [String: VisitNote] = [:]
 
     // MARK: - Offline queue (server mode)
-    @Published var offlineQueue: [QueuedAction] = []
+    // Persisted to disk on EVERY mutation — queued punches are legal EVV
+    // records and must survive an app kill/crash/restart (build 45).
+    @Published var offlineQueue: [QueuedAction] = [] {
+        didSet { LocalCache.shared.saveOfflineQueue(offlineQueue, staffId: serverStaff?.id) }
+    }
 
     // MARK: - Demo settings
     @Published var simulateGPSUnavailable = false
@@ -336,15 +340,28 @@ final class AppState: ObservableObject {
                     }
                     await self.refreshServerShifts()
                 } catch let error as APIError {
-                    if error.isNetworkError {
-                        // Keep the optimistic update, queue for later
+                    if error.isRetainable {
+                        // Network error OR a 2xx whose body couldn't be read
+                        // (.responseUnreadable — the punch IS committed
+                        // server-side). Either way: keep the optimistic
+                        // update, queue for re-sync. NEVER revert a punch the
+                        // user physically made on an unreadable response —
+                        // that was the V-2032 incident.
                         if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
                             self.todayVisits[i].syncState = .pending
                         }
                         self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
-                        DiagnosticLogger.shared.logOffline("Clock-in queued (network error) for shift \(shiftId)")
+                        if case .responseUnreadable = error {
+                            self.surfaceServerError(error)
+                            DiagnosticLogger.shared.logAPI("Clock-in response unreadable for shift \(shiftId) — punch retained and queued")
+                        } else {
+                            DiagnosticLogger.shared.logOffline("Clock-in queued (network error) for shift \(shiftId)")
+                        }
                         self.scheduleAutoSync()
                     } else {
+                        // Genuine server rejection (4xx): nothing was
+                        // persisted, so reverting the optimistic update is
+                        // correct here.
                         self.surfaceServerError(error)
                         DiagnosticLogger.shared.logAPI("Clock-in failed: \(error.localizedDescription)")
                         if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
@@ -355,7 +372,16 @@ final class AppState: ObservableObject {
                         await self.refreshServerShifts()
                     }
                 } catch {
+                    // Unknown error type — most likely a transport-layer
+                    // throw. Treat like a network error: keep the punch,
+                    // queue it (build 45 — previously this silently dropped
+                    // the optimistic update).
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
+                        self.todayVisits[i].syncState = .pending
+                    }
+                    self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
                     self.surfaceServerError(APIError.networkError(error))
+                    self.scheduleAutoSync()
                 }
             }
         } else {
@@ -608,7 +634,9 @@ final class AppState: ObservableObject {
                     self.todayVisits[i].syncState = .synced
                 }
             } catch let error as APIError {
-                if error.isNetworkError {
+                if error.isRetainable {
+                    // Network error or unreadable 2xx (entry committed
+                    // server-side) — keep the local record, queue for re-sync.
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
                         self.todayVisits[i].syncState = .pending
                     }
@@ -618,16 +646,33 @@ final class AppState: ObservableObject {
                                               unschedClientName: unlistedName,
                                               localVisitId: localVisitId,
                                               manualStart: startStr, manualEnd: endStr)
-                    DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (network error)")
+                    if case .responseUnreadable = error {
+                        self.surfaceServerError(error)
+                        DiagnosticLogger.shared.logAPI("Unscheduled manual time entry response unreadable — entry retained and queued")
+                    } else {
+                        DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (network error)")
+                    }
                     self.scheduleAutoSync()
                 } else {
+                    // Genuine server rejection: nothing persisted, removal OK.
                     self.surfaceServerError(error)
                     DiagnosticLogger.shared.logAPI("Unscheduled manual time entry failed: \(error.localizedDescription)")
                     self.todayVisits.removeAll { $0.id == localVisitId }
                 }
             } catch {
+                // Unknown error — treat like network: keep + queue (build 45;
+                // previously this deleted the local entry).
+                if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                    self.todayVisits[i].syncState = .pending
+                }
+                self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                          unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                          unschedService: serviceName,
+                                          unschedClientName: unlistedName,
+                                          localVisitId: localVisitId,
+                                          manualStart: startStr, manualEnd: endStr)
                 self.surfaceServerError(APIError.networkError(error))
-                self.todayVisits.removeAll { $0.id == localVisitId }
+                self.scheduleAutoSync()
             }
         }
     }
@@ -712,8 +757,12 @@ final class AppState: ObservableObject {
                         self.todayVisits[i].syncState = .synced
                     }
                 } catch let error as APIError {
-                    if error.isNetworkError {
-                        // Keep local visit, queue for later
+                    if error.isRetainable {
+                        // Network error OR unreadable 2xx (.responseUnreadable
+                        // — the visit IS committed server-side; this exact
+                        // case deleted Nick's V-2032 Erik Hoover punch).
+                        // Keep the local visit, queue for re-sync — the
+                        // server-side idempotency check dedups the replay.
                         if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
                             self.todayVisits[i].syncState = .pending
                         }
@@ -723,18 +772,37 @@ final class AppState: ObservableObject {
                                                   unschedClientName: unlistedName,
                                                   localVisitId: localVisitId,
                                                   punchAddress: manualAddress)
-                        DiagnosticLogger.shared.logOffline("Unscheduled visit queued (network error)")
+                        if case .responseUnreadable = error {
+                            self.surfaceServerError(error)
+                            DiagnosticLogger.shared.logAPI("Unscheduled visit response unreadable — punch retained and queued")
+                        } else {
+                            DiagnosticLogger.shared.logOffline("Unscheduled visit queued (network error)")
+                        }
                         self.scheduleAutoSync()
                     } else {
+                        // Genuine server rejection (4xx): nothing persisted,
+                        // so removing the optimistic visit is correct — a
+                        // retained phantom would block future punches via
+                        // hasActiveVisit.
                         self.surfaceServerError(error)
                         DiagnosticLogger.shared.logAPI("Unscheduled visit failed: \(error.localizedDescription)")
                         self.todayVisits.removeAll { $0.id == localVisitId }
                         self.startTimerIfNeeded()
                     }
                 } catch {
+                    // Unknown error — treat like network: keep + queue
+                    // (build 45; previously this deleted the punch).
+                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                        self.todayVisits[i].syncState = .pending
+                    }
+                    self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                              unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                              unschedService: apiServiceName,
+                                              unschedClientName: unlistedName,
+                                              localVisitId: localVisitId,
+                                              punchAddress: manualAddress)
                     self.surfaceServerError(APIError.networkError(error))
-                    self.todayVisits.removeAll { $0.id == localVisitId }
-                    self.startTimerIfNeeded()
+                    self.scheduleAutoSync()
                 }
             }
         } else {
@@ -878,8 +946,13 @@ final class AppState: ObservableObject {
                 self.isSyncing = false
                 self.pendingSyncCount = offlineQueue.count
                 self.lastSync = Date()
+                // Only mark a pending visit synced when its queued action is
+                // actually GONE from the queue — blanket-marking everything
+                // synced hid punches whose replay had just failed (build 45).
                 for i in self.todayVisits.indices where self.todayVisits[i].syncState == .pending {
-                    self.todayVisits[i].syncState = .synced
+                    let localId = self.todayVisits[i].id
+                    let stillQueued = self.offlineQueue.contains { $0.localVisitId == localId }
+                    if !stillQueued { self.todayVisits[i].syncState = .synced }
                 }
             }
         } else {
@@ -899,6 +972,14 @@ final class AppState: ObservableObject {
     }
 
     func signOut() {
+        // Queued EVV punches are legal records — preserve them on disk across
+        // sign-out, keyed to the owning staff id (only the SAME person signing
+        // back in restores them; see LocalCache.loadOfflineQueue). This matters
+        // because an expired session force-signs-out via surfaceServerError —
+        // pre-build-45 that destroyed every queued punch.
+        let preservedPunches = offlineQueue.filter { $0.isPunch }
+        let queueOwner = serverStaff?.id
+
         isLoggedIn = false
         isDemoMode = false
         mode = .mock
@@ -919,6 +1000,10 @@ final class AppState: ObservableObject {
         dueMedications = []      // PHI — med names must not survive sign-out
         prnMedications = []
         LocalCache.shared.clearAll()
+        if let owner = queueOwner, !preservedPunches.isEmpty {
+            LocalCache.shared.saveOfflineQueue(preservedPunches, staffId: owner)
+            DiagnosticLogger.shared.logOffline("Preserved \(preservedPunches.count) queued punch(es) across sign-out for staff \(owner)")
+        }
     }
 
     // MARK: - Demo login (TestFlight review)
@@ -955,6 +1040,7 @@ final class AppState: ObservableObject {
             self.serverOpenRules = []
             self.pendingSyncCount = 0
             self.isLoggedIn = true
+            self.restoreOfflineQueue()
         }
         await refreshServerShifts()
         // Pre-load cached individuals so they're available immediately (even offline)
@@ -982,6 +1068,7 @@ final class AppState: ObservableObject {
             self.serverOpenRules = []
             self.pendingSyncCount = 0
             self.isLoggedIn = true
+            self.restoreOfflineQueue()
         }
         await refreshServerShifts()
         // Pre-load cached individuals so they're available immediately (even offline)
@@ -989,6 +1076,20 @@ final class AppState: ObservableObject {
         // Then try a live refresh (updates cache if online)
         await refreshIndividuals()
         LocationManager.shared.requestPermission()
+    }
+
+    /// Restore any offline actions persisted for THIS staff member (queued
+    /// punches survive app kills and sign-outs — build 45). A queue saved by a
+    /// different staff id is never restored under this session's token.
+    @MainActor
+    private func restoreOfflineQueue() {
+        guard let staffId = serverStaff?.id,
+              let saved = LocalCache.shared.loadOfflineQueue(matching: staffId),
+              !saved.isEmpty else { return }
+        offlineQueue = saved
+        pendingSyncCount = saved.count
+        DiagnosticLogger.shared.logOffline("Restored \(saved.count) queued action(s) from disk for staff \(staffId)")
+        scheduleAutoSync()
     }
 
     // MARK: - Server individuals fetch
@@ -1561,15 +1662,38 @@ final class AppState: ObservableObject {
                     }
                 }
             } catch let error as APIError {
-                if error.isNetworkError {
+                if error.isRetainable {
+                    // Network error, or a 2xx whose body couldn't be read —
+                    // the write may well have succeeded server-side. Retry
+                    // WITHOUT burning a rejection-retry: the server-side
+                    // idempotency check makes the replay safe, and counting
+                    // these toward maxQueueRetries is exactly the loss mode
+                    // that discarded a committed punch (build 45).
                     remaining.append(action)
+                    if case .responseUnreadable = error {
+                        DiagnosticLogger.shared.logSync("Replay of \(action.type.rawValue) got an unreadable 2xx — kept for re-sync")
+                    }
                 } else {
                     // Server rejected this action (4xx/5xx) — increment retry count
                     action.retryCount += 1
                     if action.retryCount >= Self.maxQueueRetries {
-                        // Permanently discard after max retries
-                        failedPermanently.append(action)
-                        DiagnosticLogger.shared.logSync("Permanently failed \(action.type.rawValue) after \(action.retryCount) retries: \(error.localizedDescription)")
+                        if action.isPunch {
+                            // EVV punches are legal records — NEVER discard
+                            // them (build 45). Keep queued; alert by name the
+                            // first time the cap is hit so the user knows a
+                            // specific punch is stuck, not a generic count.
+                            remaining.append(action)
+                            if action.retryCount == Self.maxQueueRetries {
+                                serverError = "\(punchDescription(action)) could not be saved — the app will keep retrying. Server said: \(error.localizedDescription)"
+                                showServerError = true
+                            }
+                            DiagnosticLogger.shared.logSync("Punch \(action.type.rawValue) still rejected after \(action.retryCount) tries — retained (punches are never discarded): \(error.localizedDescription)")
+                        } else {
+                            // Permanently discard after max retries (non-punch
+                            // actions only: notes, time fixes, non-billable)
+                            failedPermanently.append(action)
+                            DiagnosticLogger.shared.logSync("Permanently failed \(action.type.rawValue) after \(action.retryCount) retries: \(error.localizedDescription)")
+                        }
                     } else {
                         // Keep for retry with incremented count
                         remaining.append(action)
@@ -1604,6 +1728,29 @@ final class AppState: ObservableObject {
 
         offlineQueue = remaining
         pendingSyncCount = remaining.count
+    }
+
+    /// Human-readable description of a queued punch, for alerts that must
+    /// name the punch ("Clock-in for Erik Hoover at 8:57 AM") — a generic
+    /// "1 action failed" is how a lost punch goes unnoticed.
+    private func punchDescription(_ action: QueuedAction) -> String {
+        let time = DateFormatter.localizedString(from: action.createdAt, dateStyle: .none, timeStyle: .short)
+        var who = action.unschedClientName
+        if who == nil, let localId = action.localVisitId,
+           let v = todayVisits.first(where: { $0.id == localId }) {
+            who = v.unlistedIndividualName ?? v.clients.first?.name
+        }
+        let kind: String
+        switch action.type {
+        case .clockIn, .unscheduledVisit: kind = "Clock-in"
+        case .clockOut: kind = "Clock-out"
+        case .manualTime: kind = "Manual time entry"
+        default: kind = "Action"
+        }
+        if let name = who, !name.isEmpty {
+            return "\(kind) for \(name) at \(time)"
+        }
+        return "\(kind) at \(time)"
     }
 
     // MARK: - Server History Fetch
