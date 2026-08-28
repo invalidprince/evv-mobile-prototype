@@ -178,6 +178,31 @@ final class AppState: ObservableObject {
         }
         setupConnectivityMonitor()
         setupAutoSyncPipeline()
+        // Central session-expiry handling (build 46): APIClient posts this
+        // after a 401 survives its refresh-and-retry. Observed HERE — not
+        // per-screen — so every authenticated call inherits the clean
+        // sign-out, including screens that render their errors inline
+        // (My Documents was the observed dead-end: a red card whose "Try
+        // Again" retried the same dead token forever).
+        NotificationCenter.default.addObserver(
+            forName: .evvSessionExpired, object: nil, queue: .main
+        ) { [weak self] note in
+            self?.handleSessionExpired(serverReason: note.userInfo?["reason"] as? String)
+        }
+    }
+
+    /// A 401 survived the API client's token-refresh retry: the session is
+    /// genuinely over. Sign out CLEANLY — signOut() preserves queued punches
+    /// on disk keyed to the staff id (build 45), so an unsynced punch
+    /// survives the re-auth round trip — and land on the login screen with a
+    /// plain explanation. The server's developer copy never reaches the user.
+    func handleSessionExpired(serverReason: String?) {
+        // First notification of a 401 burst wins; demo/mock never 401s.
+        guard mode == .server, isLoggedIn else { return }
+        DiagnosticLogger.shared.logAPI("Session ended (server said: \(serverReason ?? "-")) — signing out, punch queue preserved")
+        signOut()
+        serverError = "Your session ended — please sign in again."
+        showServerError = true
     }
 
     // MARK: - Connectivity monitor
@@ -1546,10 +1571,18 @@ final class AppState: ObservableObject {
         var remaining: [QueuedAction] = []
         var failedPermanently: [QueuedAction] = []
         var localToServerVisitId: [UUID: String] = [:]
+        // Set when a replay call comes back .unauthorized (session expired
+        // mid-sync, build 46): stop throwing the rest of the queue at a dead
+        // token — everything left is kept untouched.
+        var sessionDead = false
 
         DiagnosticLogger.shared.logSync("Replaying \(deduplicated.count) offline action(s) (from \(offlineQueue.count) queued)")
 
         for var action in deduplicated {
+            if sessionDead {
+                remaining.append(action)
+                continue
+            }
             do {
                 switch action.type {
                 case .clockIn:
@@ -1662,6 +1695,19 @@ final class AppState: ObservableObject {
                     }
                 }
             } catch let error as APIError {
+                if case .unauthorized = error {
+                    // Session expired mid-sync (build 46): the server refused
+                    // the CREDENTIAL, not the action — it never evaluated the
+                    // punch. Not a rejection: keep everything left (punches
+                    // AND notes/time-fixes) without burning a retry, and stop
+                    // replaying against a dead token. The central session-
+                    // expiry handler signs out and preserves the queue on
+                    // disk; it replays after the same staff signs back in.
+                    sessionDead = true
+                    remaining.append(action)
+                    DiagnosticLogger.shared.logSync("Replay hit an expired session — \(action.type.rawValue) kept without burning a retry, replay stopped")
+                    continue
+                }
                 if error.isRetainable {
                     // Network error, or a 2xx whose body couldn't be read —
                     // the write may well have succeeded server-side. Retry
@@ -1705,6 +1751,16 @@ final class AppState: ObservableObject {
                 remaining.append(action)
             }
         }
+
+        // Session died mid-replay → the expiry handler's signOut() has (or is
+        // about to) preserve the queued punches on disk keyed to the OWNER's
+        // staff id. Writing offlineQueue below would re-persist it with a nil
+        // staff id (serverStaff is cleared by signOut) and CLOBBER that
+        // envelope — the punches would never be restored on re-login. And the
+        // "synced late" alert would stomp the session-ended explanation.
+        // Leave state alone; restoreOfflineQueue reloads everything the next
+        // time the same staff member signs in.
+        if sessionDead || !isLoggedIn { return }
 
         let synced = offlineQueue.count - remaining.count - failedPermanently.count
         if synced > 0 {
@@ -2034,14 +2090,13 @@ final class AppState: ObservableObject {
         // Cancelled requests are benign (structured-task teardown,
         // network path flip, view lifecycle) — never surface them.
         if error.isCancellation { return }
-        // Session expired / revoked (server v0.4.275): the only recovery is a
-        // fresh sign-in, so return to the login screen instead of leaving the
-        // user on a dead session. Only in server mode — mock/demo never 401s.
+        // Session expired / revoked: the central .evvSessionExpired path
+        // (build 46) normally handles this before the error even surfaces —
+        // this branch is the backstop for callers that route through here
+        // first. Same behaviour, same copy. Only in server mode — mock/demo
+        // never 401s.
         if case .unauthorized = error, mode == .server, isLoggedIn {
-            DiagnosticLogger.shared.logAPI("Session expired — signing out: \(error.localizedDescription)")
-            signOut()
-            serverError = "Your session has expired — please sign in again."
-            showServerError = true
+            handleSessionExpired(serverReason: error.localizedDescription)
             return
         }
         serverError = error.localizedDescription

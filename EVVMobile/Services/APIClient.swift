@@ -995,6 +995,19 @@ struct QueuedAction: Identifiable, Codable {
     }
 }
 
+// MARK: - Session-expiry notification (build 46)
+
+extension Notification.Name {
+    /// Posted by APIClient when an authenticated call got a 401 that SURVIVED
+    /// a token-refresh attempt — the session is genuinely over. AppState
+    /// observes this centrally and performs the clean sign-out (queued
+    /// punches preserved on disk, build 45) + returns to the login screen
+    /// with a plain explanation. Handled here — in the shared networking
+    /// layer — so every call inherits it, including screens that render
+    /// their errors inline and never touch surfaceServerError.
+    static let evvSessionExpired = Notification.Name("EVVSessionExpired")
+}
+
 // MARK: - API Client
 
 actor APIClient {
@@ -1003,6 +1016,10 @@ actor APIClient {
     let baseURL: String
 
     private var token: String?
+
+    /// True while a 401-triggered token refresh is in flight — parallel 401s
+    /// wait for it instead of stampeding the refresh endpoint.
+    private var refreshingAfter401 = false
 
     init(baseURL: String = "https://d2hmfpgqkgeyu.cloudfront.net/api") {
         self.baseURL = baseURL
@@ -1087,6 +1104,7 @@ actor APIClient {
     /// Sliding session renewal (server v0.4.275). Tokens expire after 12h
     /// (HIPAA automatic logoff); refreshing while the app is in active use
     /// keeps a long shift alive without weakening the expiry.
+    /// Also the recovery path for a 401 (build 46) — see refreshAfter401.
     func refreshToken() async {
         guard token != nil else { return }
         let url = URL(string: "\(baseURL)/token/refresh")!
@@ -1933,7 +1951,80 @@ actor APIClient {
         }
     }
 
+    /// CENTRAL 401 HANDLING (build 46) — inherited by every authenticated
+    /// call because they all funnel through here. On a 401:
+    ///   1. Attempt ONE token refresh (single-flight — parallel 401s share it).
+    ///   2. If the token was actually replaced, retry the original request
+    ///      once with the new token. A 401 means the server refused the
+    ///      request before evaluating it, so the retry can never double-write.
+    ///   3. If the refresh failed or the retry still 401s, the session is
+    ///      over: post .evvSessionExpired (AppState signs out cleanly —
+    ///      queued punches survive) and return the 401 so the caller's
+    ///      checkAuth throws the human-copy error.
+    /// EXEMPT: requests with no Authorization header (login endpoints — their
+    /// 401 means "wrong credentials", not "dead session") and the refresh
+    /// call itself (must never recurse).
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let (data, response) = try await transportRequest(request)
+        guard (response as? HTTPURLResponse)?.statusCode == 401,
+              let authHeader = request.value(forHTTPHeaderField: "Authorization"),
+              let path = request.url?.path,
+              !path.hasSuffix("/token/refresh")
+        else { return (data, response) }
+
+        let failedToken = authHeader.hasPrefix("Bearer ") ? String(authHeader.dropFirst(7)) : authHeader
+        if await refreshAfter401(failedToken: failedToken), let newToken = token {
+            var retry = request
+            retry.setValue("Bearer \(newToken)", forHTTPHeaderField: "Authorization")
+            // A transport failure here throws .networkError — correct: the
+            // caller queues/retains, and the session is NOT declared dead on
+            // a flaky connection.
+            let (retryData, retryResponse) = try await transportRequest(retry)
+            if (retryResponse as? HTTPURLResponse)?.statusCode != 401 {
+                return (retryData, retryResponse)
+            }
+            announceSessionEnded(path: path, data: retryData)
+            return (retryData, retryResponse)
+        }
+
+        announceSessionEnded(path: path, data: data)
+        return (data, response)
+    }
+
+    /// Single-flight refresh triggered by a 401. Returns true only when the
+    /// stored token was actually REPLACED with one newer than the credential
+    /// that just failed — a refresh that itself 401s (revoked/expired token)
+    /// leaves the old token in place and returns false, so the caller goes
+    /// straight to session-ended instead of replaying a dead credential.
+    private func refreshAfter401(failedToken: String) async -> Bool {
+        // Someone else already refreshed since this request was signed.
+        if let current = token, current != failedToken { return true }
+        var waited = 0
+        while refreshingAfter401 && waited < 200 { // cap ~20s (refresh timeout is 15s)
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            waited += 1
+            if let current = token, current != failedToken { return true }
+        }
+        if let current = token, current != failedToken { return true }
+        refreshingAfter401 = true
+        defer { refreshingAfter401 = false }
+        let before = token
+        await refreshToken()
+        return token != nil && token != before
+    }
+
+    /// The session is over: log the server's developer copy (never shown to
+    /// the user) and tell AppState to sign out cleanly.
+    private func announceSessionEnded(path: String, data: Data) {
+        let serverReason = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "no reason given"
+        DiagnosticLogger.shared.logAPI("401 on \(path) survived token refresh — session ended (server said: \(serverReason))")
+        NotificationCenter.default.post(name: .evvSessionExpired, object: nil,
+                                        userInfo: ["reason": serverReason])
+    }
+
+    /// One transport call with a single retry on transient cancellation.
+    /// (Pre-build-46 this WAS performRequest — the 401 handling now wraps it.)
+    private func transportRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await URLSession.shared.data(for: request)
         } catch let error as URLError where error.code == .cancelled {
@@ -1960,8 +2051,14 @@ actor APIClient {
     private func checkAuth(_ response: URLResponse, data: Data) throws {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         if statusCode == 401 {
-            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Session expired"
-            throw APIError.unauthorized(errBody)
+            // performRequest already tried a refresh + retry and announced the
+            // session end. The raw server string ("Unknown staff id", "Token
+            // revoked", …) is developer copy — it goes to the diagnostic log,
+            // NEVER to a caregiver's screen (the v0.4.321 lesson).
+            if let raw = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error {
+                DiagnosticLogger.shared.logAPI("401 body: \(raw)")
+            }
+            throw APIError.unauthorized("Your session ended — please sign in again.")
         }
     }
 }
