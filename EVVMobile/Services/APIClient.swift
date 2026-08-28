@@ -650,7 +650,11 @@ struct StaffDocumentUploadResponse: Decodable {
 /// the `todos` table; `kind == "auto"` is a derived line that clears itself
 /// when the underlying work is done (never checkable). Most auto items carry
 /// a `webPath` into the web app; `native == "documents"` routes to the native
-/// My Documents screen instead.
+/// My Documents screen, and `native == "documentation"` (server v0.4.333)
+/// routes to the native DocumentationView for `visitId` — falling back to
+/// `webPath` when the visit isn't in the app's fetched set. Treat any UNKNOWN
+/// `native` value as "use webPath": that fallback is what keeps older builds
+/// from dead-ending when the server learns a new destination.
 struct WorkItem: Decodable, Identifiable {
     let key: String
     let kind: String
@@ -664,6 +668,9 @@ struct WorkItem: Decodable, Identifiable {
     let todoId: Int?
     let webPath: String?
     let native: String?
+    /// Server visit id (e.g. "V-2027") for documentation items — used to
+    /// resolve the native DocumentationView destination.
+    let visitId: String?
     var id: String { key }
     var isTodo: Bool { kind == "todo" }
 }

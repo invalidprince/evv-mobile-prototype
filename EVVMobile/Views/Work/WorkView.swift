@@ -20,6 +20,8 @@ struct WorkView: View {
     @State private var loadError: String?
     @State private var togglingIds: Set<Int> = []
     @State private var safariItem: SafariItem?
+    /// Visit being documented natively (native == "documentation", build 47).
+    @State private var docVisit: Visit?
 
     private var online: Bool { appState.effectivelyOnline }
     private var openTodos: [WorkItem] { items.filter { $0.isTodo && !$0.done } }
@@ -40,6 +42,15 @@ struct WorkView: View {
         .navigationViewStyle(.stack)
         .sheet(item: $safariItem) { item in
             SafariView(url: item.url)
+        }
+        .sheet(item: $docVisit, onDismiss: {
+            // The doc item clears itself once documentation is complete —
+            // reload so a finished visit disappears without a manual refresh.
+            Task { await load() }
+        }) { visit in
+            NavigationView {
+                DocumentationView(visit: visit)
+            }
         }
     }
 
@@ -138,13 +149,34 @@ struct WorkView: View {
     }
 
     /// A derived line — clears automatically when the underlying work is done.
-    /// Never checkable; deep-links into the web portal (or native Documents).
+    /// Never checkable; deep-links into the web portal (or a native screen).
+    ///
+    /// build 47 (Nick 2026-08-28: "if it's available on the app, open on the
+    /// app"): `native == "documentation"` opens the SAME DocumentationView
+    /// that History's "Finish documentation" uses, for the item's visit — no
+    /// Safari sheet, no re-auth. If the visit can't be resolved from the
+    /// app's fetched set (older than the 14-day history window), fall through
+    /// to the webPath branch rather than dead-ending the tap.
     private func autoRow(_ item: WorkItem) -> some View {
         Group {
             if item.native == "documents" {
                 NavigationLink(destination: MyDocumentsView()) {
                     autoRowLabel(item)
                 }
+            } else if item.native == "documentation",
+                      let visit = resolveVisit(item.visitId) {
+                Button {
+                    docVisit = visit
+                } label: {
+                    HStack {
+                        autoRowLabel(item)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
             } else if let path = item.webPath, online {
                 Button {
                     openWeb(path)
@@ -233,6 +265,16 @@ struct WorkView: View {
         }
     }
 
+    /// Resolve a server visit id ("V-2027") to a Visit the app has already
+    /// fetched — today's visits first, then the 14-day history set. Returns
+    /// nil when the visit isn't loaded, which sends the row down the webPath
+    /// fallback instead of a tap that does nothing.
+    private func resolveVisit(_ serverVisitId: String?) -> Visit? {
+        guard let vid = serverVisitId, !vid.isEmpty else { return nil }
+        if let v = appState.todayVisits.first(where: { $0.serverVisitId == vid }) { return v }
+        return appState.historyVisits.first(where: { $0.serverVisitId == vid })
+    }
+
     private func iconFor(_ category: String?) -> String {
         switch category {
         case "ack": return "signature"
@@ -274,6 +316,16 @@ struct WorkView: View {
             items = response.items
             teamRollup = response.teamRollup
             appState.workOpenCount = response.openCount + (response.teamRollup != nil ? 1 : 0)
+            // build 47: native documentation rows resolve their visit from the
+            // app's fetched set. If any of them can't resolve yet (user came
+            // straight to Work without opening History), pull history once so
+            // the rows open natively instead of falling back to the web.
+            let needsHistory = response.items.contains {
+                $0.native == "documentation" && resolveVisit($0.visitId) == nil
+            }
+            if needsHistory {
+                await appState.refreshHistory()
+            }
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
             loadError = apiErr.errorDescription ?? "Could not load your work items."
