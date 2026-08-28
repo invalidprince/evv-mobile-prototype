@@ -695,7 +695,7 @@ struct ToggleTodoResponse: Decodable {
 /// 🔑 build 33 / server v0.4.295 — the GIVE WINDOW fields.
 ///
 ///   `recordable`  = "this slot has nothing on it yet", so the DOCUMENTATION
-///                   actions (Refused / Held / Missed) are still offered. It is
+///                   actions (Refused / Held) are still offered. It is
 ///                   deliberately NOT narrowed to the window — narrowing it
 ///                   would hide the documentation on exactly the doses that
 ///                   most need documenting.
@@ -1823,8 +1823,11 @@ actor APIClient {
         }
     }
 
-    /// Record a due administration (given / refused / held / missed).
-    /// A reason is required for refused/held/missed — enforced server-side.
+    /// Record a due administration (given / refused / held).
+    /// A reason is required for refused/held — enforced server-side.
+    /// "Missed" is NOT a manual action (build 41 / server v0.4.315): missed is
+    /// automatic — the server flips an untouched slot when its window closes
+    /// and refuses a hand-picked missed with a 400.
     /// ⚠️ ONLINE-ONLY by design: callers must never enqueue this into the
     /// offline queue — a med recorded at sync time instead of administration
     /// time is a compliance problem, and a stale due list on a second device

@@ -21,9 +21,12 @@ import SwiftUI
 // ⚠️ THE CLIENT-SIDE HIDE IS A HINT, NOT THE CONTROL. `giveAllowed` &c. are
 // server-computed hints; `emar-core.recordAdministration` is the gate. Two
 // consequences that are deliberate here:
-//   1. Refused / Held / Missed stay AVAILABLE outside the window — a dose that
+//   1. Refused / Held stay AVAILABLE outside the window — a dose that
 //      went missed at 9 PM still has to be documented, and hiding the row's
 //      only remaining action would strand it. Only GIVEN is withheld.
+//      (build 41 / server v0.4.315 — "Missed" is GONE as a manual outcome:
+//      missed is AUTOMATIC. The server flips an untouched slot to missed the
+//      moment its window closes and refuses a hand-picked missed with a 400.)
 //   2. The sheet re-checks and surfaces the server's 409 prose verbatim,
 //      because a dose can tip from open → closed while the sheet is open.
 struct MedicationsDueCard: View {
@@ -207,7 +210,7 @@ struct MedicationsDueCard: View {
     }
 }
 
-// MARK: - Record sheet (given / refused / held / missed)
+// MARK: - Record sheet (given / refused / held — missed is automatic, v0.4.315)
 
 struct RecordAdministrationSheet: View {
     let med: DueMedication
@@ -224,11 +227,15 @@ struct RecordAdministrationSheet: View {
     /// thought it was open — a dose can tip closed while this sheet is up.
     @State private var windowRefusal: String?
 
+    /// 🔒 build 41 / server v0.4.315 — NO "Missed" here, per Nick: missed is
+    /// automatic. A dose nobody records flips itself to missed when the give
+    /// window closes; staff only record what actually happened. The server
+    /// refuses a manual missed (400), so older builds' Missed button gets a
+    /// clear error rather than writing anything.
     private let allActions: [(id: String, label: String, icon: String)] = [
         ("given", "Given", "checkmark.circle.fill"),
         ("refused", "Refused", "hand.raised.fill"),
         ("held", "Held", "pause.circle.fill"),
-        ("missed", "Missed", "xmark.circle.fill"),
     ]
 
     /// 🔒 v0.4.295 — GIVEN is dropped outside the window; the documentation
@@ -242,7 +249,7 @@ struct RecordAdministrationSheet: View {
         return allActions
     }
 
-    /// Same rule the server enforces: refused / held / missed need a reason.
+    /// Same rule the server enforces: refused / held need a reason.
     private var reasonRequired: Bool { action != "given" }
     private var canSubmit: Bool {
         !isSubmitting && appState.effectivelyOnline
@@ -328,7 +335,7 @@ struct RecordAdministrationSheet: View {
     }
 
     private func outcomeRow(_ a: (id: String, label: String, icon: String)) -> some View {
-        let iconColor: Color = a.id == "given" ? Theme.success : (a.id == "missed" ? Theme.danger : Theme.warning)
+        let iconColor: Color = a.id == "given" ? Theme.success : Theme.warning
         return Button {
             action = a.id
         } label: {
