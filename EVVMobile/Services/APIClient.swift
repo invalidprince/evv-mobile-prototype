@@ -681,9 +681,28 @@ struct WorkTeamRollup: Decodable {
     let webPath: String?
 }
 
+/// My Documents status roll-up for the Work tab's Documents row (server
+/// v0.4.337). Derived SERVER-side from the same `docAlertsForStaff` builder
+/// that produces the `staffdoc` items in `items`, so the badge can never
+/// disagree with the list. Optional: older servers omit it and the row simply
+/// renders plain, exactly as it did before.
+struct WorkDocSummary: Decodable {
+    let total: Int
+    let rejected: Int
+    let expired: Int
+    let missing: Int
+    let expiring: Int
+    /// "danger" | "warn" | "ok" — decided server-side for every client.
+    let chip: String
+    let label: String
+    /// Something the staff member must actually re-upload or replace.
+    var needsAction: Bool { rejected + expired > 0 }
+}
+
 struct WorkTodosResponse: Decodable {
     let items: [WorkItem]
     let teamRollup: WorkTeamRollup?
+    let docSummary: WorkDocSummary?
     let openCount: Int
 }
 

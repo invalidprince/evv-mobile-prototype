@@ -16,6 +16,8 @@ struct WorkView: View {
 
     @State private var items: [WorkItem] = []
     @State private var teamRollup: WorkTeamRollup?
+    /// My Documents status roll-up (server v0.4.337) — badges the Documents row.
+    @State private var docSummary: WorkDocSummary?
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var togglingIds: Set<Int> = []
@@ -104,7 +106,7 @@ struct WorkView: View {
                 Section(header: Text("Documents"),
                         footer: Text("Items marked with an arrow open in the web portal. To-dos with a checkbox can be checked off right here.")) {
                     NavigationLink(destination: MyDocumentsView()) {
-                        Label("My Documents", systemImage: "doc.badge.ellipsis")
+                        myDocumentsLabel
                     }
                 }
             }
@@ -220,6 +222,55 @@ struct WorkView: View {
         }
     }
 
+    /// The Documents row carries the SAME signal the web dashboard shows
+    /// (Nick 2026-08-29: "on the work section (like the desktop), it should
+    /// show rejected documents"). The underlying `staffdoc` alert rows were
+    /// always present in the To-Dos list, but on a real roster a rejected
+    /// document sorts in behind six identical "Documentation — <name>" rows
+    /// and reads as absent. This is the surfacing fix — the status text and
+    /// its colour are BOTH decided server-side from the same builder that
+    /// produced those rows, so this can never contradict the list below.
+    private var myDocumentsLabel: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "doc.badge.ellipsis")
+                .font(.body)
+                .foregroundColor(docChipColor)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("My Documents")
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+                if let summary = docSummary {
+                    Text(summary.label)
+                        .font(.caption)
+                        .foregroundColor(summary.chip == "ok" ? .secondary : docChipColor)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            Spacer()
+            // A count badge only when something actually needs re-uploading —
+            // "missing" and "expiring" are already spelled out in the caption
+            // and do not warrant a red pill.
+            if let summary = docSummary, summary.needsAction {
+                Text("\(summary.rejected + summary.expired)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Theme.danger)
+                    .clipShape(Capsule())
+            }
+        }
+    }
+
+    private var docChipColor: Color {
+        switch docSummary?.chip {
+        case "danger": return Theme.danger
+        case "warn": return Theme.warning
+        default: return .accentColor
+        }
+    }
+
     private func teamRow(_ team: WorkTeamRollup) -> some View {
         let late = team.overdue > 0
         let title = late
@@ -315,6 +366,7 @@ struct WorkView: View {
             let response = try await APIClient.shared.fetchWorkTodos()
             items = response.items
             teamRollup = response.teamRollup
+            docSummary = response.docSummary
             appState.workOpenCount = response.openCount + (response.teamRollup != nil ? 1 : 0)
             // build 47: native documentation rows resolve their visit from the
             // app's fetched set. If any of them can't resolve yet (user came
