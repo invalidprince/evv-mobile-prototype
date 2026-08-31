@@ -1901,6 +1901,7 @@ final class AppState: ObservableObject {
         visit.deleteRequestStatus = drStatus
         visit.hasNote = sv.hasNote ?? false
         visit.serverDocStatus = sv.docStatus
+        visit.approvalStatus = sv.approvalStatus
         if let dur = sv.duration {
             // Use duration from server (minutes) to compute end if missing
             if actualEnd == nil, let start = actualStart {

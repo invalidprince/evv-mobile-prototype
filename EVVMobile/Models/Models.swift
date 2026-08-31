@@ -136,6 +136,14 @@ struct Visit: Identifiable {
     /// Whether the service requires live clock in/out (decoupled from EVV).
     /// When false, staff can manually enter start/end times.
     var requiresClockIn: Bool = true
+    /// v0.4.348 — "pending" on a staff-requested shift awaiting manager
+    /// approval; nil on every normal visit. Denied requests never appear.
+    var approvalStatus: String?
+
+    /// A staff-requested shift the manager hasn't decided yet. Unmistakable
+    /// badge everywhere it appears — a pending visit that reads as a real one
+    /// is how bad billing happens.
+    var isPendingApproval: Bool { approvalStatus == "pending" }
 
     var client: Client { clients[0] }
 

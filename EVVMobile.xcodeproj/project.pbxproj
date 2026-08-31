@@ -25,6 +25,7 @@
 		3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D3E24BD9E02EC479B9857CB /* HistoryView.swift */; };
 		409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB38EF84FCABD2F0387E43A /* MoreView.swift */; };
 		A1B2C3D4E5F6A7B8C9D00001 /* WorkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00002 /* WorkView.swift */; };
+		A1B2C3D4E5F6A7B8C9D00004 /* RequestShiftSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00005 /* RequestShiftSheet.swift */; };
 		A1B2C3D4E5F6A7B8C9D00011 /* MedicationsDueCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00012 /* MedicationsDueCard.swift */; };
 		197C77B7E3264DCE4E41A48A /* MyDocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9B0053227B7767FBF1CE1F /* MyDocumentsView.swift */; };
 		435EC21574D8B09A02E118C0 /* ManualTimeEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E0254F44C15851827B14A0 /* ManualTimeEntrySheet.swift */; };
@@ -68,6 +69,7 @@
 		0BB38EF84FCABD2F0387E43A /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
 		2D9B0053227B7767FBF1CE1F /* MyDocumentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyDocumentsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D00002 /* WorkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D00005 /* RequestShiftSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestShiftSheet.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D00012 /* MedicationsDueCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MedicationsDueCard.swift; sourceTree = "<group>"; };
 		0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
 		0CABA5A108F36DC92A278BCD /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -302,6 +304,7 @@
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F6A7B8C9D00002 /* WorkView.swift */,
+				A1B2C3D4E5F6A7B8C9D00005 /* RequestShiftSheet.swift */,
 			);
 			path = Work;
 			sourceTree = "<group>";
@@ -411,6 +414,7 @@
 			files = (
 				E8A2D5D43AD84B416633FF47 /* AIAssistSheet.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D00001 /* WorkView.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D00004 /* RequestShiftSheet.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D00011 /* MedicationsDueCard.swift in Sources */,
 				07D98E23146D0ED5C331080D /* APIClient.swift in Sources */,
 				E93360C920CECA38863C913C /* ActiveVisitCard.swift in Sources */,

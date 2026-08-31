@@ -19,6 +19,11 @@ struct HistoryRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Theme.primary)
                 Spacer()
+                // v0.4.348 — staff-requested shift awaiting manager approval.
+                // Unmistakable on the row: this is not a billable visit yet.
+                if visit.isPendingApproval {
+                    StatusBadge(text: "⏳ PENDING APPROVAL", color: Theme.warning)
+                }
                 // Same-day note rule: red "LATE" while incomplete past the
                 // service day; permanent "COMPLETED LATE" once finished late.
                 if visit.noteIsLate {
@@ -84,18 +89,27 @@ struct HistoryRow: View {
                         .foregroundColor(visit.noteIsLate ? Theme.danger : Theme.warning)
                 }
             }
-            HStack(spacing: 20) {
-                if visit.timeFixStatus == .none {
-                    Button("Request Time Fix", action: onTimeFix)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(Theme.primary)
+            // Time-fix / delete requests act on a REAL visit. A pending shift
+            // request isn't one yet — the manager approves or denies the whole
+            // thing, so those buttons are hidden until it's decided.
+            if visit.isPendingApproval {
+                Text("Awaiting manager approval — if denied, this visit and its documentation are removed.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                HStack(spacing: 20) {
+                    if visit.timeFixStatus == .none {
+                        Button("Request Time Fix", action: onTimeFix)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(Theme.primary)
+                    }
+                    if visit.deleteRequestStatus == .none {
+                        Button("Request Delete", action: onRequestDelete)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(Theme.danger)
+                    }
+                    Spacer()
                 }
-                if visit.deleteRequestStatus == .none {
-                    Button("Request Delete", action: onRequestDelete)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(Theme.danger)
-                }
-                Spacer()
             }
         }
         .cardStyle()

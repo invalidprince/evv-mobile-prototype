@@ -186,6 +186,9 @@ struct ServerHistoryVisit: Decodable, Identifiable {
     let duration: Int?
     let docStatus: String?
     let hasNote: Bool?
+    /// v0.4.348 — "pending" on a staff-requested shift awaiting manager
+    /// approval; absent/nil on every normal visit.
+    let approvalStatus: String?
 }
 
 struct HistoryVisitsResponse: Decodable {
@@ -585,6 +588,29 @@ struct ServerIndividualOption: Codable, Identifiable {
 
 struct IndividualsResponse: Decodable {
     let individuals: [ServerIndividualOption]
+}
+
+// MARK: - Shift request (staff-requested shift, server v0.4.348)
+
+struct ShiftRequestBody: Encodable {
+    let clientId: String
+    let service: String
+    let date: String        // YYYY-MM-DD, ≤14 days back, never future
+    let startTime: String   // "h:mm a"
+    let endTime: String
+    let reason: String?
+}
+
+struct ShiftRequestVisitInfo: Decodable {
+    let id: String
+    let clockIn: String?
+    let clockOut: String?
+    let date: String?
+    let approvalStatus: String?
+}
+
+struct ShiftRequestResponse: Decodable {
+    let visit: ShiftRequestVisitInfo
 }
 
 // MARK: - Unscheduled visit creation
@@ -1730,6 +1756,52 @@ actor APIClient {
         } catch {
             // 2xx reached: the visit is COMMITTED server-side. Never report
             // this as a failed write — see APIError.responseUnreadable.
+            throw APIError.responseUnreadable(error)
+        }
+    }
+
+    // MARK: - Shift request (staff-requested shift, server v0.4.348)
+
+    /// POST /api/me/shift-requests — "I worked a shift that isn't in the
+    /// system" (forgot to clock in). Creates a PENDING visit awaiting manager
+    /// approval; the caller routes straight into documentation on success.
+    /// ONLINE-ONLY by design — never queued (a retroactive record needs the
+    /// server's duplicate/overlap checks at submit time).
+    func requestShift(clientId: String, service: String, date: String,
+                      startTime: String, endTime: String, reason: String?) async throws -> ShiftRequestResponse {
+        let url = URL(string: "\(baseURL)/me/shift-requests")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(
+            ShiftRequestBody(clientId: clientId, service: service, date: date,
+                             startTime: startTime, endTime: endTime, reason: reason)
+        )
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Your role does not have shift requests enabled."
+            throw APIError.forbidden(errBody)
+        }
+        if statusCode == 409 {
+            // Overlap with an existing visit — the server names the conflict.
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "This overlaps an existing visit."
+            throw APIError.conflict(errBody)
+        }
+        // 200 = idempotent replay of an identical still-pending request —
+        // treated exactly like the 201 (same visit id comes back).
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to submit the shift request"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(ShiftRequestResponse.self, from: data)
+        } catch {
+            // 2xx reached: the pending visit is COMMITTED server-side.
             throw APIError.responseUnreadable(error)
         }
     }
