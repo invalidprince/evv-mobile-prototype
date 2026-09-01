@@ -28,6 +28,13 @@ struct MyDocumentsView: View {
     @State private var uploadMessage: String?
     @State private var uploadError: String?
 
+    // v0.4.368 — dispute + expiration confirm (HR review queue)
+    @State private var disputeTarget: StaffDocumentSlot?
+    @State private var disputeNote = ""
+    @State private var fixDateTarget: StaffDocumentSlot?
+    @State private var fixDate = Date()
+    @State private var isSubmittingAction = false
+
     var body: some View {
         List {
             if !appState.effectivelyOnline {
@@ -117,6 +124,55 @@ struct MyDocumentsView: View {
             }
             .ignoresSafeArea()
         }
+        // v0.4.368 — dispute sheet: the AI's reasoning + an optional note.
+        // Submitting sends the doc to the HR review queue — it NEVER self-accepts.
+        .sheet(item: $disputeTarget) { slot in
+            NavigationView {
+                Form {
+                    Section(header: Text("Why the AI said no")) {
+                        Text(slot.rejectReason ?? "No reason recorded.")
+                            .font(.subheadline)
+                    }
+                    Section(header: Text("Tell HR what to look at (optional)")) {
+                        TextField("e.g. the inspection sticker is the lower one", text: $disputeNote)
+                    }
+                    Section(footer: Text("A person will review it. The document is not accepted — and reminders continue — until HR approves it.")) {
+                        Button {
+                            Task { await submitDispute(slot) }
+                        } label: {
+                            if isSubmittingAction { ProgressView() } else { Text("Send to HR for review").frame(maxWidth: .infinity) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isSubmittingAction || !appState.effectivelyOnline)
+                    }
+                }
+                .navigationTitle("This is the right document")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { disputeTarget = nil } } }
+            }
+        }
+        // v0.4.368 — fix-date sheet. Earlier than the AI reading accepts freely;
+        // later routes to HR review (server decides — we show its message).
+        .sheet(item: $fixDateTarget) { slot in
+            NavigationView {
+                Form {
+                    Section(footer: Text("We read \(slot.expiresOn ?? "—")\(slot.evidence.map { " from “\($0)”" } ?? ""). An earlier date is saved right away; a later date than the one printed goes to HR for a quick check.")) {
+                        DatePicker("Expiration", selection: $fixDate, displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                    }
+                    Button {
+                        Task { await submitFixDate(slot) }
+                    } label: {
+                        if isSubmittingAction { ProgressView() } else { Text("Save date").frame(maxWidth: .infinity) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isSubmittingAction || !appState.effectivelyOnline)
+                }
+                .navigationTitle("Fix expiration")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { fixDateTarget = nil } } }
+            }
+        }
         .fileImporter(isPresented: $showFilePicker,
                       allowedContentTypes: [.pdf, .jpeg, .png],
                       allowsMultipleSelection: false) { result in
@@ -159,7 +215,48 @@ struct MyDocumentsView: View {
                 Text("Checking the document type and expiration date…").font(.caption).foregroundColor(.secondary)
             }
             if slot.statusKey == "needs_review" {
-                Text("Accepted pending review — an administrator will confirm the details.").font(.caption).foregroundColor(.secondary)
+                Text((slot.reviewReason == "disputed" || slot.reviewReason == "date-extend")
+                     ? "In review with HR — you’ll see the result here."
+                     : "Accepted pending review — an administrator will confirm the details.")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+            // v0.4.368 — dispute an AI rejection ("This is the right document").
+            if slot.statusKey == "rejected", slot.canDispute == true, slot.docId != nil {
+                Button {
+                    disputeNote = ""
+                    disputeTarget = slot
+                } label: {
+                    Label("This is the right document", systemImage: "hand.raised")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .disabled(!appState.effectivelyOnline || isSubmittingAction)
+            }
+            // v0.4.368 — expiration confirm on an AI-read date.
+            if slot.needsConfirm == true, slot.docId != nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("We read expiration \(slot.expiresOn ?? "—")\(slot.evidence.map { " from “\($0)”" } ?? "") — is that right?")
+                        .font(.caption)
+                    HStack {
+                        Button {
+                            Task { await confirmDate(slot) }
+                        } label: {
+                            Label("Looks right", systemImage: "checkmark").font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button {
+                            fixDate = Self.isoFormatter.date(from: slot.expiresOnIso ?? "") ?? Date()
+                            fixDateTarget = slot
+                        } label: {
+                            Text("Fix date").font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(8)
+                .background(Theme.primary.opacity(0.08))
+                .cornerRadius(8)
+                .disabled(!appState.effectivelyOnline || isSubmittingAction)
             }
             if let file = slot.fileName, !file.isEmpty {
                 Label(file, systemImage: "doc").font(.caption).foregroundColor(.secondary).lineLimit(1)
@@ -209,6 +306,65 @@ struct MyDocumentsView: View {
             .padding(.top, 4)
         }
         .padding(.vertical, 6)
+    }
+
+    // MARK: - v0.4.368 dispute / confirm actions
+
+    private static let isoFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f
+    }()
+
+    private func submitDispute(_ slot: StaffDocumentSlot) async {
+        guard let docId = slot.docId else { return }
+        isSubmittingAction = true
+        uploadMessage = nil; uploadError = nil
+        do {
+            let resp = try await APIClient.shared.disputeStaffDocument(docId: docId, note: disputeNote.isEmpty ? nil : disputeNote)
+            uploadMessage = resp.message ?? "Sent to HR for review."
+            disputeTarget = nil
+            await load()
+        } catch let APIError.serverError(_, message) {
+            uploadError = message; disputeTarget = nil
+        } catch {
+            uploadError = "Couldn’t send the dispute: \(error.localizedDescription)"
+        }
+        isSubmittingAction = false
+    }
+
+    private func confirmDate(_ slot: StaffDocumentSlot) async {
+        guard let docId = slot.docId else { return }
+        isSubmittingAction = true
+        uploadMessage = nil; uploadError = nil
+        do {
+            let resp = try await APIClient.shared.confirmStaffDocumentExpiration(docId: docId, action: "confirm", expiresOn: nil)
+            uploadMessage = resp.message ?? "Expiration confirmed — thanks!"
+            await load()
+        } catch let APIError.serverError(_, message) {
+            uploadError = message
+        } catch {
+            uploadError = "Couldn’t confirm: \(error.localizedDescription)"
+        }
+        isSubmittingAction = false
+    }
+
+    private func submitFixDate(_ slot: StaffDocumentSlot) async {
+        guard let docId = slot.docId else { return }
+        isSubmittingAction = true
+        uploadMessage = nil; uploadError = nil
+        do {
+            let resp = try await APIClient.shared.confirmStaffDocumentExpiration(docId: docId, action: nil, expiresOn: Self.isoFormatter.string(from: fixDate))
+            uploadMessage = resp.message ?? "Saved."
+            fixDateTarget = nil
+            await load()
+        } catch let APIError.serverError(_, message) {
+            uploadError = message; fixDateTarget = nil
+        } catch {
+            uploadError = "Couldn’t save the date: \(error.localizedDescription)"
+        }
+        isSubmittingAction = false
     }
 
     /// Presenting a sheet/fullScreenCover straight from a confirmationDialog

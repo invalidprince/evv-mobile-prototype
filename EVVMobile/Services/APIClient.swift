@@ -658,6 +658,21 @@ struct StaffDocumentSlot: Decodable, Identifiable {
     let expiresOn: String?
     let rejectReason: String?
     let fileName: String?
+    // v0.4.368 (HR review queue) — ALL optional so older servers keep decoding.
+    /// The current document row id — target for dispute/confirm POSTs.
+    let docId: Int?
+    /// ISO expiration (YYYY-MM-DD) — feeds the Fix-date picker.
+    let expiresOnIso: String?
+    /// 'ai' | 'computed' | 'manual' | 'staff-confirmed'
+    let dateSource: String?
+    /// Why the doc sits in HR review ('disputed', 'date-extend', …) — only on needs_review.
+    let reviewReason: String?
+    /// Verbatim printed text the AI read the expiration from.
+    let evidence: String?
+    /// True on an AI rejection — shows "This is the right document".
+    let canDispute: Bool?
+    /// True on an AI-dated accept — shows the expiration confirm card.
+    let needsConfirm: Bool?
     var id: Int { typeId }
 }
 
@@ -1898,6 +1913,46 @@ actor APIClient {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard statusCode == 200 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Upload failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(StaffDocumentUploadResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // v0.4.368 — dispute an AI rejection: "This is the right document."
+    // Never self-accepts; the doc lands in the HR review queue (needs_review).
+    func disputeStaffDocument(docId: Int, note: String?) async throws -> StaffDocumentUploadResponse {
+        try await postStaffDocAction(path: "/me/documents/\(docId)/dispute",
+                                     body: ["note": note ?? ""])
+    }
+
+    // v0.4.368 — confirm/fix an AI-read expiration. action "confirm" keeps the
+    // AI date; expiresOn (YYYY-MM-DD) fixes it — earlier accepts freely, later
+    // routes to HR review (the server decides; we just show its message).
+    func confirmStaffDocumentExpiration(docId: Int, action: String?, expiresOn: String?) async throws -> StaffDocumentUploadResponse {
+        var body: [String: String] = [:]
+        if let action = action { body["action"] = action }
+        if let expiresOn = expiresOn { body["expiresOn"] = expiresOn }
+        return try await postStaffDocAction(path: "/me/documents/\(docId)/confirm-expiration", body: body)
+    }
+
+    private func postStaffDocAction(path: String, body: [String: String]) async throws -> StaffDocumentUploadResponse {
+        let url = URL(string: "\(baseURL)\(path)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        addAuth(&request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(body)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Request failed"
             throw APIError.serverError(statusCode, errBody)
         }
         do {
