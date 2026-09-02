@@ -92,6 +92,9 @@ struct ShiftsResponse: Decodable {
     /// Open RECURRING rules available for permanent weekday pickup
     /// (server v0.4.276). Older servers omit the key.
     let openRules: [ServerOpenRule]?
+    /// The acting role's shift-request look-back window in days (server
+    /// v0.4.400, per-role Settings value; default 7). Older servers omit it.
+    let shiftRequestMaxDays: Int?
 }
 
 /// An active, unassigned recurring schedule a staff member can permanently
@@ -1912,7 +1915,10 @@ actor APIClient {
         }
 
         do {
-            return try JSONDecoder().decode(ShiftsResponse.self, from: data)
+            let decoded = try JSONDecoder().decode(ShiftsResponse.self, from: data)
+            // Build 58 — publish the role's shift-request window to the sheet.
+            await MainActor.run { ShiftRequestPolicy.shared.update(from: decoded) }
+            return decoded
         } catch {
             throw APIError.decodingError(error)
         }

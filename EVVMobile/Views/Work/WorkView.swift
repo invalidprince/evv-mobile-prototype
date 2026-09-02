@@ -24,11 +24,6 @@ struct WorkView: View {
     @State private var safariItem: SafariItem?
     /// Visit being documented natively (native == "documentation", build 47).
     @State private var docVisit: Visit?
-    /// Request-a-shift flow (server v0.4.348, build 51).
-    @State private var showRequestShift = false
-    /// Pending visit created by the request sheet — handed to the doc sheet
-    /// once the request sheet has dismissed (sequential-sheet handoff).
-    @State private var requestedDocVisit: Visit?
 
     private var online: Bool { appState.effectivelyOnline }
     private var openTodos: [WorkItem] { items.filter { $0.isTodo && !$0.done } }
@@ -62,21 +57,6 @@ struct WorkView: View {
         }) { visit in
             NavigationView {
                 DocumentationView(visit: visit)
-            }
-        }
-        .sheet(isPresented: $showRequestShift, onDismiss: {
-            // Nick's flow: "Immediately upon requesting, staff should be able
-            // to complete documentation." The request sheet hands back the
-            // pending visit; once it's gone, open the SAME DocumentationView
-            // every other surface uses.
-            if let v = requestedDocVisit {
-                requestedDocVisit = nil
-                docVisit = v
-            }
-        }) {
-            RequestShiftSheet { visit in
-                requestedDocVisit = visit
-                showRequestShift = false
             }
         }
     }
@@ -128,33 +108,10 @@ struct WorkView: View {
                     }
                 }
 
-                Section(header: Text("Shifts"),
-                        footer: Text("Forgot to clock in? Request the shift and document it now — your manager approves or denies it.")) {
-                    Button {
-                        showRequestShift = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "calendar.badge.plus")
-                                .font(.body)
-                                .foregroundColor(online ? .accentColor : .secondary)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Request a shift")
-                                    .font(.subheadline)
-                                    .foregroundColor(.primary)
-                                Text("For a shift that isn't in the system — pending manager approval")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!online)
-                }
+                // Build 58 — the "Shifts → Request a shift" section that lived here
+                // (build 51) is GONE: the entry point moved to the History tab in
+                // build 56 and Nick asked for one home, not two ("since it is now
+                // in history, it should be removed from the work tab").
 
                 Section(header: Text("Documents"),
                         footer: Text("Items marked with an arrow open in the web portal. To-dos with a checkbox can be checked off right here.")) {

@@ -16,11 +16,38 @@ import SwiftUI
 // - ONLINE-ONLY, never queued: the server's duplicate/overlap checks must run
 //   at submit time, and the whole point is dropping straight into
 //   documentation for a visit that exists.
-// - The server is the control: future dates and >14-day lookback are blocked
-//   by the pickers here AND refused server-side; overlaps come back as a 409
-//   naming the conflicting visit.
+// - The server is the control: future dates and the role's look-back window
+//   (shiftRequestMaxDays, build 58) are blocked by the pickers here AND refused
+//   server-side; overlaps come back as a 409 naming the conflicting visit.
+// - Build 58: this sheet is reached from the HISTORY tab only (Nick 2026-09-02:
+//   "since it is now in history, it should be removed from the work tab").
+/// Build 58 — the acting ROLE's shift-request look-back window, published by
+/// the server on GET /api/me/shifts (`shiftRequestMaxDays`, v0.4.400: its own
+/// per-role setting under Settings → Role Permissions → Role limits, default 7
+/// for everyone). Nick 2026-09-02: "Request shifts should allow more than 1
+/// day in the past… Everyone should have up to 7 days… editable in settings
+/// based on role." Before this the picker hard-coded 14 while the server
+/// enforced a different number — two windows, neither his.
+///
+/// Lives here (not on AppState) as a tiny observable so the sheet re-renders
+/// when the value arrives; APIClient.fetchShiftsResponse updates it on every
+/// Today refresh. Older servers omit the key → stays at the server's default 7.
+/// The server re-resolves and enforces the window on the POST regardless.
+@MainActor
+final class ShiftRequestPolicy: ObservableObject {
+    static let shared = ShiftRequestPolicy()
+    @Published var maxDays: Int = 7
+
+    func update(from response: ShiftsResponse) {
+        if let n = response.shiftRequestMaxDays, n >= 0, n <= 366, n != maxDays {
+            maxDays = n
+        }
+    }
+}
+
 struct RequestShiftSheet: View {
     @EnvironmentObject var appState: AppState
+    @ObservedObject private var policy = ShiftRequestPolicy.shared
     @Environment(\.dismiss) private var dismiss
 
     /// Called with the created (pending) visit — the parent routes straight
@@ -39,11 +66,20 @@ struct RequestShiftSheet: View {
 
     private var online: Bool { appState.effectivelyOnline }
 
-    /// Same lookback the server enforces (resolveManualDate, 14 days).
+    /// Same lookback the server enforces (requestShift → resolveManualDate with
+    /// the role's shiftRequestMaxDays). 0 = today only.
     private var dateRange: ClosedRange<Date> {
         let today = Calendar.current.startOfDay(for: Date())
-        let earliest = Calendar.current.date(byAdding: .day, value: -14, to: today) ?? today
+        let earliest = Calendar.current.date(byAdding: .day, value: -policy.maxDays, to: today) ?? today
         return earliest...Date()
+    }
+
+    private var lookbackFooter: String {
+        switch policy.maxDays {
+        case 0: return "Today only — your role can't back-date shift requests. This records a shift that already happened, it doesn't schedule one."
+        case 1: return "Up to 1 day back — this records a shift that already happened, it doesn't schedule one."
+        default: return "Up to \(policy.maxDays) days back — this records a shift that already happened, it doesn't schedule one."
+        }
     }
 
     private var selectedIndividual: ServerIndividualOption? {
@@ -166,7 +202,7 @@ struct RequestShiftSheet: View {
                 }
 
                 Section(header: Text("When"),
-                        footer: Text("Up to 14 days back — this records a shift that already happened, it doesn't schedule one.")) {
+                        footer: Text(lookbackFooter)) {
                     DatePicker("Date", selection: $visitDate, in: dateRange, displayedComponents: .date)
                     DatePicker("Start", selection: $startTime, displayedComponents: .hourAndMinute)
                     DatePicker("End", selection: $endTime, displayedComponents: .hourAndMinute)
