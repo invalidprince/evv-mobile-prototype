@@ -7,6 +7,23 @@ struct HistoryView: View {
     @State private var deleteVisit: Visit?
     @State private var noteVisit: Visit?
     @State private var addNoteVisit: Visit?
+    // Build 56 — "Request a shift" lives on History too (Nick 2026-09-02:
+    // "make the 'request a shift' show up in the 'history'"): a forgotten
+    // shift is noticed while looking at past visits. SAME sheet + SAME
+    // straight-into-documentation handoff as the Work tab.
+    @State private var showRequestShift = false
+    @State private var requestedDocVisit: Visit?
+    @State private var requestDocVisit: Visit?
+
+    /// Build 56 — staff shift requests (server v0.4.393 'Shift request'
+    /// exceptions from GET /me/requests). Shown as their own list so a
+    /// DENIED request — whose visit is soft-deleted and gone from the visit
+    /// rows above — still tells the staff member what happened and why.
+    private var shiftRequests: [ServerException] {
+        appState.serverExceptions
+            .filter { ($0.type ?? "").lowercased() == "shift request" }
+            .sorted { ($0.date ?? "") > ($1.date ?? "") }
+    }
 
     // MARK: - Mock mode data
 
@@ -107,6 +124,26 @@ struct HistoryView: View {
                     DocumentationView(visit: visit)
                 }
             }
+            .sheet(item: $requestDocVisit, onDismiss: {
+                Task { await appState.refreshHistory() }
+            }) { visit in
+                NavigationView {
+                    DocumentationView(visit: visit)
+                }
+            }
+            .sheet(isPresented: $showRequestShift, onDismiss: {
+                // Same handoff WorkView uses: the request sheet hands back the
+                // pending visit; once it's gone, open DocumentationView.
+                if let v = requestedDocVisit {
+                    requestedDocVisit = nil
+                    requestDocVisit = v
+                }
+            }) {
+                RequestShiftSheet { visit in
+                    requestedDocVisit = visit
+                    showRequestShift = false
+                }
+            }
         }
         .navigationViewStyle(.stack)
     }
@@ -117,6 +154,17 @@ struct HistoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 serverSummaryCard
+
+                requestShiftCard
+
+                if !shiftRequests.isEmpty {
+                    Text("Shift requests")
+                        .font(.title3.bold())
+                        .padding(.top, 4)
+                    ForEach(shiftRequests) { req in
+                        ShiftRequestRow(request: req)
+                    }
+                }
 
                 if appState.isLoadingHistory {
                     HStack(spacing: 10) {
@@ -212,6 +260,41 @@ struct HistoryView: View {
             }
         }
         .cardStyle()
+    }
+
+    /// Build 56 — History entry point for a shift that isn't in the system.
+    private var requestShiftCard: some View {
+        Button {
+            showRequestShift = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.title3)
+                    .foregroundColor(appState.effectivelyOnline ? Theme.primary : .secondary)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Request a shift")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+                    Text(appState.effectivelyOnline
+                         ? "Forgot to clock in? Request the shift and document it now — your manager approves or denies it."
+                         : "Shift requests need a connection.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity)
+            .background(Theme.cardBackground)
+            .cornerRadius(14)
+        }
+        .buttonStyle(.plain)
+        .disabled(!appState.effectivelyOnline)
     }
 
     private var mockSummaryCard: some View {
@@ -448,5 +531,64 @@ struct ServerAddNoteSheet: View {
                 showSuccess = true
             }
         }
+    }
+}
+
+// MARK: - Shift request row (build 56)
+
+/// One staff shift request (server 'Shift request' exception). Pending →
+/// waiting on the manager; resolved → APPROVED / DENIED with the manager's
+/// reason (the server writes the outcome into `detail`, so a denied request
+/// whose visit has been removed still explains itself here).
+struct ShiftRequestRow: View {
+    let request: ServerException
+
+    private var isResolved: Bool { (request.status ?? "").lowercased() == "resolved" }
+    private var outcome: String { (request.resolution ?? "").lowercased() }
+
+    private var badge: (text: String, color: Color) {
+        if !isResolved { return ("⏳ PENDING APPROVAL", Theme.warning) }
+        if outcome == "approved" { return ("APPROVED", Theme.success) }
+        if outcome == "denied" { return ("DENIED", Theme.danger) }
+        return ("RESOLVED", Theme.success)
+    }
+
+    private var dateLabel: String {
+        guard let d = request.date, d.count >= 10 else { return request.date ?? "" }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        guard let day = f.date(from: String(d.prefix(10))) else { return d }
+        let out = DateFormatter()
+        out.dateFormat = "EEE, MMM d"
+        return out.string(from: day)
+    }
+
+    /// The request text, minus the manager-facing approval sentence.
+    private var detailText: String {
+        var s = request.detail ?? "Shift request"
+        s = s.replacingOccurrences(of: " Approving makes this a normal billable visit; denying removes the visit AND its documentation.", with: "")
+        s = s.replacingOccurrences(of: "Staff-requested shift ", with: "")
+        return s
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(dateLabel).font(.headline)
+                Spacer()
+                StatusBadge(text: badge.text, color: badge.color)
+            }
+            Text(detailText)
+                .font(.subheadline)
+                .foregroundColor(isResolved && outcome == "denied" ? Theme.danger : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !isResolved {
+                Text("Your manager decides this in Exceptions. Your documentation is saved with the pending visit above.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .cardStyle()
     }
 }

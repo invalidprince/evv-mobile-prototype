@@ -77,9 +77,14 @@ struct RequestShiftSheet: View {
 
     private var timesValid: Bool { endTime > startTime }
 
+    /// Build 56 — reason is REQUIRED (Nick 2026-09-02: "Reason should be
+    /// required on iOS and web"). The server (v0.4.393) refuses without one;
+    /// this keeps the button honest instead of round-tripping a 400.
+    private var trimmedReason: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     private var canSubmit: Bool {
         online && !isSubmitting && selectedIndividualId != nil
-            && !selectedServiceName.isEmpty && timesValid
+            && !selectedServiceName.isEmpty && timesValid && !trimmedReason.isEmpty
     }
 
     var body: some View {
@@ -172,7 +177,10 @@ struct RequestShiftSheet: View {
                     }
                 }
 
-                Section(header: Text("Reason (optional)")) {
+                Section(header: Text("Reason (required)"),
+                        footer: trimmedReason.isEmpty
+                            ? Text("Tell your manager why this shift isn't in the system.").foregroundColor(Theme.danger)
+                            : Text("")) {
                     TextField("e.g. Forgot to clock in", text: $reason)
                 }
 
