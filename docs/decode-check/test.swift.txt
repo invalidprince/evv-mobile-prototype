@@ -1,0 +1,27 @@
+
+let oldRequests = try! Data(contentsOf: URL(fileURLWithPath: "/tmp/s013_requests.json"))  // OLD contract: resolution is an OBJECT
+let r = try! JSONDecoder().decode(RequestsResponse.self, from: oldRequests)
+print("old-contract requests decoded:", r.items.count, "resolution=", r.items.first?.resolution ?? "nil")
+precondition(r.items.count == 1 && r.items.first?.resolution == "approved", "object resolution must map to approved")
+let newRequests = """
+{"requests":[{"id":"EX-1","type":"Delete request","visitId":"V-1","date":"2026-09-02","status":"resolved","detail":"x","resolution":"denied","resolutionDetail":{"reason":"Request denied — returned to staff"}},{"id":"EX-2","type":"Time-change request","status":"new","resolution":null}]}
+""".data(using: .utf8)!
+let r2 = try! JSONDecoder().decode(RequestsResponse.self, from: newRequests)
+precondition(r2.items.count == 2 && r2.items[0].resolution == "denied" && r2.items[1].resolution == nil)
+print("new-contract requests decoded:", r2.items.map { "\($0.id)=\($0.resolution ?? "nil")" })
+// One garbage row (id missing) must be skipped, not kill the list
+let mixed = """
+{"requests":[{"type":"Delete request"},{"id":"EX-3","type":"Delete request","status":"resolved","resolution":{"reason":"Delete request approved — visit voided"}}]}
+""".data(using: .utf8)!
+let r3 = try! JSONDecoder().decode(RequestsResponse.self, from: mixed)
+precondition(r3.items.count == 1 && r3.items[0].resolution == "approved")
+print("mixed requests: kept", r3.items.count, "of 2")
+// History: real S013 payload + one poisoned row (id as number) → 11 kept, 1 skipped
+var visits = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: "/tmp/s013_visits.json"))) as! [String: Any]
+var arr = visits["visits"] as! [[String: Any]]
+arr.append(["id": 12345, "date": "2026-09-02"])
+visits["visits"] = arr
+let h = try! JSONDecoder().decode(HistoryVisitsResponse.self, from: JSONSerialization.data(withJSONObject: visits))
+precondition(h.visits.count == 11, "expected 11 good rows, got \(h.visits.count)")
+print("history: kept", h.visits.count, "of", arr.count)
+print("ALL DECODE CHECKS PASSED")

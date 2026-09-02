@@ -29,9 +29,16 @@ struct ServerUnscheduledContent: View {
     @State private var isUnlisted = false
     @State private var unlistedName = ""
     @State private var unlistedServiceName: String = ""
-    // Manual time entry (non-EVV services)
-    @State private var manualStart: Date = Date().addingTimeInterval(-3600)
-    @State private var manualEnd: Date = Date()
+    // Manual time entry (non-EVV services). Build 55: both boxes open at
+    // MIDNIGHT (12:00 AM → 12:00 AM), matching the desktop's
+    // MANUAL_TIME_PLACEHOLDER — the app no longer guesses now-1h → now
+    // (Nick 2026-09-02: "Make the mobile manual-time defaults match the
+    // desktop behavior (12 AM – 12 AM)"). See ManualSpan.
+    @State private var manualStart: Date = ManualSpan.midnightToday()
+    @State private var manualEnd: Date = ManualSpan.midnightToday()
+    @State private var manualConfirmMessage: String?
+    @State private var showManualConfirm = false
+    @State private var pendingManualSubmit: (() -> Void)?
     // Build 54: manual entries await the server before showing success.
     // `manualSubmitError` is the server's refusal, shown INLINE (the
     // root-level alert cannot present behind a sheet + success cover — which
@@ -91,9 +98,11 @@ struct ServerUnscheduledContent: View {
         isUnlisted ? unlistedServiceIsNonEvv : selectedServiceIsNonEvv
     }
 
-    private var manualTimesValid: Bool {
-        manualEnd > manualStart && manualEnd <= Date().addingTimeInterval(5 * 60)
-    }
+    /// Build 55: mirrors the desktop — there is NO "end must be after start"
+    /// or "no future end" hard rule. end <= start crosses midnight (12→12 is
+    /// a full 24h Lifesharing day); a future end and the untouched midnight
+    /// placeholder are CONFIRMED, never blocked (ManualSpan.confirmationMessage).
+    private var manualTimesValid: Bool { true }
 
     /// Footer for the Individual(s) section — shows cache date hint when offline.
     private var cachedFooter: some View {
@@ -357,11 +366,15 @@ struct ServerUnscheduledContent: View {
                     Section(header: Text("Visit Times"), footer: Text("This service doesn't use live clock in/out — enter the visit start and end times.")) {
                         DatePicker("Start", selection: $manualStart, displayedComponents: .hourAndMinute)
                         DatePicker("End", selection: $manualEnd, displayedComponents: .hourAndMinute)
-                        if !manualTimesValid {
-                            Label(manualEnd <= manualStart ? "End time must be after the start time." : "End time can't be in the future.",
-                                  systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundColor(Theme.danger)
+                        // Desktop's live "8h 15m" / "24h 0m — spans midnight" hint,
+                        // so a midnight-to-midnight entry visibly reads as a full
+                        // day BEFORE saving.
+                        HStack {
+                            Label("Duration", systemImage: "hourglass")
+                            Spacer()
+                            Text(ManualSpan.hint(start: manualStart, end: manualEnd))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.secondary)
                         }
                     }
                     if let err = manualSubmitError {
@@ -454,6 +467,14 @@ struct ServerUnscheduledContent: View {
                 ClockInSuccessView(message: successMessage ?? (manualEntryActive ? "Time recorded" : nil))
             }
             .interactiveDismissDisabled(isSubmittingManual)
+            // Build 55: the desktop's two confirm() prompts (untouched 12:00 AM
+            // placeholder / end time not yet reached) — a question, not a block.
+            .alert("Confirm times", isPresented: $showManualConfirm, presenting: manualConfirmMessage) { _ in
+                Button("Save") { pendingManualSubmit?(); pendingManualSubmit = nil }
+                Button("Cancel", role: .cancel) { pendingManualSubmit = nil }
+            } message: { msg in
+                Text(msg)
+            }
             .onAppear {
                 // Always attempt a refresh; refreshIndividuals handles offline fallback
                 Task { await appState.refreshIndividuals() }
@@ -555,6 +576,18 @@ struct ServerUnscheduledContent: View {
         }
     }
 
+    /// Runs `submit` immediately, or after the desktop-mirroring confirmation
+    /// when the times need one (ManualSpan.confirmationMessage).
+    private func confirmThenSubmitManual(_ submit: @escaping () -> Void) {
+        if let msg = ManualSpan.confirmationMessage(start: manualStart, end: manualEnd) {
+            manualConfirmMessage = msg
+            pendingManualSubmit = submit
+            showManualConfirm = true
+        } else {
+            submit()
+        }
+    }
+
     // Manual time entry for a non-EVV service (listed individuals)
     private func startManualVisit() {
         guard !isSubmittingManual else { return }
@@ -570,15 +603,17 @@ struct ServerUnscheduledContent: View {
             )
         }
         let serviceType = mapServiceNameToType(selectedServiceName)
-        isSubmittingManual = true
-        manualSubmitError = nil
         let serviceName = selectedServiceName
         let start = manualStart, end = manualEnd
-        Task { @MainActor in
-            let outcome = await appState.startUnscheduledManualVisit(
-                clients: clients, service: serviceType, serviceName: serviceName,
-                start: start, end: end)
-            finishManual(outcome)
+        confirmThenSubmitManual {
+            isSubmittingManual = true
+            manualSubmitError = nil
+            Task { @MainActor in
+                let outcome = await appState.startUnscheduledManualVisit(
+                    clients: clients, service: serviceType, serviceName: serviceName,
+                    start: start, end: end)
+                finishManual(outcome)
+            }
         }
     }
 
@@ -590,15 +625,17 @@ struct ServerUnscheduledContent: View {
 
         let client = Client(id: UUID(), name: name, address: "", city: "")
         let serviceType = mapServiceNameToType(unlistedServiceName)
-        isSubmittingManual = true
-        manualSubmitError = nil
         let serviceName = unlistedServiceName
         let start = manualStart, end = manualEnd
-        Task { @MainActor in
-            let outcome = await appState.startUnscheduledManualVisit(
-                clients: [client], service: serviceType, serviceName: serviceName,
-                unlistedName: name, start: start, end: end)
-            finishManual(outcome)
+        confirmThenSubmitManual {
+            isSubmittingManual = true
+            manualSubmitError = nil
+            Task { @MainActor in
+                let outcome = await appState.startUnscheduledManualVisit(
+                    clients: [client], service: serviceType, serviceName: serviceName,
+                    unlistedName: name, start: start, end: end)
+                finishManual(outcome)
+            }
         }
     }
 

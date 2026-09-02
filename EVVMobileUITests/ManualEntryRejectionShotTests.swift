@@ -1,6 +1,6 @@
 import XCTest
 
-/// Build 54 reproduction/verification harness for the 2026-09-02 "unscheduled
+/// Build 54/55 reproduction/verification harness for the 2026-09-02 "unscheduled
 /// manual-time visit silently lost" incident.
 ///
 /// ⚠️ NOT referenced by EVVMobile.xcodeproj on purpose (the pbxproj lists
@@ -90,12 +90,21 @@ final class ManualEntryRejectionShotTests: XCTestCase {
         XCTAssertTrue(visitTimes.waitForExistence(timeout: 5), "manual-time section not shown — wrong service selected?")
         dump(app, "uml_0b_times")
 
+        // Build 55: both boxes open at 12:00 AM and the hint reads a full day.
+        let dayHint = app.staticTexts["24h 0m — spans midnight"].firstMatch
+        XCTAssertTrue(dayHint.waitForExistence(timeout: 5), "12:00 AM → 12:00 AM default hint not shown")
+
         // ── Attempt 1: server refuses (overlap) ────────────────────────
         let record = app.buttons["Record Time"].firstMatch
         var rt = 0
         while !record.exists && rt < 4 { app.swipeUp(); sleep(1); rt += 1 }
         XCTAssertTrue(record.waitForExistence(timeout: 5), "Record Time button not found")
         record.tap()
+        // Untouched midnight placeholder → the desktop-mirroring confirm.
+        let save = app.alerts.buttons["Save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 5), "12:00 AM placeholder confirm not shown")
+        dump(app, "uml_0c_confirm")
+        save.tap()
 
         let rejected = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'overlaps visit'")).firstMatch
         let recorded = app.staticTexts["Time recorded"].firstMatch
@@ -124,6 +133,8 @@ final class ManualEntryRejectionShotTests: XCTestCase {
 
         // ── Attempt 2: same entry, now accepted ────────────────────────
         app.buttons["Record Time"].firstMatch.tap()
+        let save2 = app.alerts.buttons["Save"].firstMatch
+        if save2.waitForExistence(timeout: 5) { save2.tap() }
         let ok = recorded.waitForExistence(timeout: 20)
         dump(app, "uml_2_success")
         XCTAssertTrue(ok, "'Time recorded' not shown after the server accepted")

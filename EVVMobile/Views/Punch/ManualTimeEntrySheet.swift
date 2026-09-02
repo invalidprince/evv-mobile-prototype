@@ -16,31 +16,27 @@ struct ManualTimeEntrySheet: View {
     @State private var isSubmitting = false
     @State private var submitError: String?
     @State private var successMessage = "Time recorded"
+    // Build 55: desktop-mirroring confirm (future end) instead of a hard block.
+    @State private var confirmMessage: String?
+    @State private var showConfirm = false
 
     init(visit: Visit) {
         self.visit = visit
-        // Default to the scheduled times; cap the end at "now" since a
-        // manual entry records a visit that already happened.
-        let now = Date()
-        let defaultStart = min(visit.scheduledStart, now)
-        let defaultEnd = min(visit.scheduledEnd, now)
-        _startTime = State(initialValue: defaultStart)
-        _endTime = State(initialValue: max(defaultEnd, defaultStart.addingTimeInterval(60)))
+        // Build 55: default to the SCHEDULED times exactly as the desktop's
+        // my-day manual-time boxes do (`value="<%= to24h(s.start) %>"`) — no
+        // capping at "now" and no forced +1 minute. A 12:00 AM → 12:00 AM
+        // Lifesharing shift opens as 12:00 AM → 12:00 AM (a full day), which
+        // the old min()/max() dance turned into an unsaveable pair.
+        _startTime = State(initialValue: visit.scheduledStart)
+        _endTime = State(initialValue: visit.scheduledEnd)
     }
 
-    private var validationError: String? {
-        if endTime <= startTime {
-            return "End time must be after the start time."
-        }
-        if endTime > Date().addingTimeInterval(5 * 60) {
-            return "End time can't be in the future."
-        }
-        return nil
-    }
+    /// Build 55: no hard rules — mirrors the desktop. end <= start crosses
+    /// midnight (12→12 = 24h); a not-yet-reached end is CONFIRMED (ManualSpan).
+    private var validationError: String? { nil }
 
     private var durationText: String {
-        let mins = max(0, Int(endTime.timeIntervalSince(startTime) / 60))
-        return "\(mins / 60)h \(String(format: "%02d", mins % 60))m"
+        ManualSpan.hint(start: startTime, end: endTime)
     }
 
     var body: some View {
@@ -138,11 +134,30 @@ struct ManualTimeEntrySheet: View {
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { dismiss() }) {
                 ClockInSuccessView(message: successMessage)
             }
+            .alert("Confirm times", isPresented: $showConfirm, presenting: confirmMessage) { _ in
+                Button("Save") { submit() }
+                Button("Cancel", role: .cancel) {}
+            } message: { msg in
+                Text(msg)
+            }
         }
     }
 
     private func confirm() {
         guard validationError == nil, !isSubmitting else { return }
+        // Untouched-placeholder prompt is an unscheduled-sheet concern (its
+        // boxes open at midnight); here only the future-end confirm applies.
+        if ManualSpan.endIsInFuture(start: startTime, end: endTime),
+           let msg = ManualSpan.confirmationMessage(start: startTime, end: endTime) {
+            confirmMessage = msg
+            showConfirm = true
+            return
+        }
+        submit()
+    }
+
+    private func submit() {
+        guard !isSubmitting else { return }
         isSubmitting = true
         submitError = nil
         let start = startTime, end = endTime

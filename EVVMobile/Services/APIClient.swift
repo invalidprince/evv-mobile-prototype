@@ -192,7 +192,20 @@ struct ServerHistoryVisit: Decodable, Identifiable {
 }
 
 struct HistoryVisitsResponse: Decodable {
+    /// Build 55: rows decode INDIVIDUALLY — one malformed visit is skipped and
+    /// logged, never the whole list (History rendered "No visit history yet"
+    /// + "Data error" on 2026-09-02 because ONE sibling payload failed).
     let visits: [ServerHistoryVisit]
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let wrapped = try c.decodeIfPresent([FailableDecodable<ServerHistoryVisit>].self, forKey: .visits) ?? []
+        let dropped = wrapped.filter { $0.value == nil }.count
+        if dropped > 0 {
+            DiagnosticLogger.shared.logAPI("History: skipped \(dropped) undecodable visit row(s) of \(wrapped.count)")
+        }
+        visits = wrapped.compactMap { $0.value }
+    }
+    private enum CodingKeys: String, CodingKey { case visits }
 }
 
 // MARK: - Requests (GET /me/requests)
@@ -202,9 +215,52 @@ struct ServerException: Decodable, Identifiable {
     let visitId: String?
     let type: String?        // "Time-change request" or "Delete request"
     let status: String?      // "new", "in progress", "resolved"
-    let resolution: String?  // "approved", "denied", etc.
+    /// Outcome: "approved", "denied", … (server v0.4.392 emits the string).
+    /// ⚠️ Older servers emitted the stored JSONB object {at, by, reason,
+    /// comment} here — which failed `String?` decoding and, because
+    /// JSONDecoder is all-or-nothing, blanked the ENTIRE History tab with
+    /// "Data error" the moment a staff member had one resolved request
+    /// (Nick, 2026-09-02 14:46, after his delete request was approved).
+    /// Decoded as string OR object; the object's `reason` prose is mapped
+    /// to the outcome. Never throws for this key.
+    let resolution: String?
     let detail: String?
     let date: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        visitId = try? c.decodeIfPresent(String.self, forKey: .visitId)
+        type = try? c.decodeIfPresent(String.self, forKey: .type)
+        status = try? c.decodeIfPresent(String.self, forKey: .status)
+        detail = try? c.decodeIfPresent(String.self, forKey: .detail)
+        date = try? c.decodeIfPresent(String.self, forKey: .date)
+        if let s = try? c.decodeIfPresent(String.self, forKey: .resolution) {
+            resolution = s
+        } else if let obj = try? c.decodeIfPresent(ResolutionDetail.self, forKey: .resolution) {
+            resolution = ServerException.outcome(fromReason: obj.reason)
+        } else {
+            resolution = nil
+        }
+    }
+
+    /// Same mapping as the server's `requestOutcome` (api.js): the stored
+    /// reason prose is "Request approved" / "Request denied — returned to
+    /// staff" / "Delete request approved — visit voided".
+    static func outcome(fromReason reason: String?) -> String? {
+        guard let r = reason?.lowercased() else { return "resolved" }
+        if r.contains("denied") { return "denied" }
+        if r.contains("approved") { return "approved" }
+        return "resolved"
+    }
+
+    private struct ResolutionDetail: Decodable {
+        let reason: String?
+        let by: String?
+        let at: String?
+        let comment: String?
+    }
+    private enum CodingKeys: String, CodingKey { case id, visitId, type, status, resolution, detail, date }
 }
 
 struct RequestsResponse: Decodable {
@@ -214,6 +270,23 @@ struct RequestsResponse: Decodable {
     var items: [ServerException] {
         requests ?? exceptions ?? []
     }
+
+    /// Build 55: per-row failable decoding — a malformed request row is
+    /// skipped and logged; the list (and History, which awaits it) survives.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func rows(_ key: CodingKeys) -> [ServerException]? {
+            guard let wrapped = try? c.decodeIfPresent([FailableDecodable<ServerException>].self, forKey: key) else { return nil }
+            let dropped = wrapped.filter { $0.value == nil }.count
+            if dropped > 0 {
+                DiagnosticLogger.shared.logAPI("Requests: skipped \(dropped) undecodable row(s) of \(wrapped.count)")
+            }
+            return wrapped.compactMap { $0.value }
+        }
+        requests = rows(.requests)
+        exceptions = rows(.exceptions)
+    }
+    private enum CodingKeys: String, CodingKey { case requests, exceptions }
 }
 
 // MARK: - Note response

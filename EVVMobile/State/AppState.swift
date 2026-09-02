@@ -611,10 +611,13 @@ final class AppState: ObservableObject {
 
         // Applies the completed state locally — called ONLY once the entry is
         // confirmed or durably queued (build 54), never before the request.
+        // Build 55: end <= start crosses midnight (see ManualSpan) — local end
+        // on the next day so the row's duration matches the server's.
+        let localEnd = ManualSpan.crossesMidnight(start: start, end: end) ? end.addingTimeInterval(86_400) : end
         func markCompleted(syncState: SyncState) -> Visit? {
             guard let i = todayVisits.firstIndex(where: { $0.id == visitId }) else { return nil }
             todayVisits[i].actualStart = start
-            todayVisits[i].actualEnd = end
+            todayVisits[i].actualEnd = localEnd
             todayVisits[i].status = .completed
             todayVisits[i].syncState = syncState
             let finished = todayVisits[i]
@@ -687,10 +690,14 @@ final class AppState: ObservableObject {
 
         let startStr = serverTimeLabel(start)
         let endStr = serverTimeLabel(end)
+        // Build 55: end <= start crosses midnight (12:00 AM → 12:00 AM is a
+        // full 24h day) — the LOCAL row's end lands on the next day so its
+        // duration reads 24h 0m, matching what the server stores.
+        let localEnd = ManualSpan.crossesMidnight(start: start, end: end) ? end.addingTimeInterval(86_400) : end
         let localVisitId = UUID()
         var visit = Visit(id: localVisitId, clients: clients, service: service,
-                          scheduledStart: start, scheduledEnd: end,
-                          actualStart: start, actualEnd: end,
+                          scheduledStart: start, scheduledEnd: localEnd,
+                          actualStart: start, actualEnd: localEnd,
                           status: .completed, isGroup: clients.count > 1)
         visit.unlistedIndividualName = unlistedName
         visit.evvRequired = false
@@ -1948,8 +1955,23 @@ final class AppState: ObservableObject {
 
         do {
             async let visitsTask = APIClient.shared.fetchHistoryVisits(days: 14)
-            async let requestsTask = APIClient.shared.fetchRequests()
-            let (serverVisits, exceptions) = try await (visitsTask, requestsTask)
+            // Build 55: the requests list is DECORATION on History (time-fix /
+            // delete badges). If it fails for any reason it must never blank
+            // the visits — that is exactly how History showed "No visit
+            // history yet" + "Data error" on 2026-09-02 (a resolved request's
+            // `resolution` came back as an object and the sibling failure
+            // took the whole structured task down). Fall back to the last
+            // good list of exceptions and log it.
+            async let requestsTask: [ServerException]? = {
+                do { return try await APIClient.shared.fetchRequests() }
+                catch let e as APIError where e.isCancellation { return nil }
+                catch {
+                    DiagnosticLogger.shared.logAPI("History: requests fetch failed, visits kept — \(error.localizedDescription)")
+                    return nil
+                }
+            }()
+            let serverVisits = try await visitsTask
+            let exceptions = await requestsTask ?? serverExceptions
 
             serverExceptions = exceptions
             historyVisits = serverVisits.compactMap { mapHistoryVisit($0, exceptions: exceptions) }

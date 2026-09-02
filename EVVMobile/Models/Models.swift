@@ -338,3 +338,82 @@ struct Credential: Identifiable {
 enum CredentialStatus {
     case valid, expiringSoon, expired
 }
+
+// MARK: - Manual-time span rules (build 55)
+// (Lives in Models.swift because the pbxproj lists files explicitly — a new
+// file is not compiled by Xcode Cloud unless the project is regenerated.)
+
+/// Manual-time (non-EVV service) span rules — the iOS mirror of the desktop
+/// `views/my-day.ejs` conventions (`MANUAL_TIME_PLACEHOLDER`,
+/// `spanCrossesMidnight`, `spanMinutes`, `uvPlaceholderUntouched`,
+/// `confirmFutureEnd`) and of `visit-core.manualSpanMinutes` on the server.
+///
+/// Build 55 (Nick 2026-09-02, #evv): "Desktop defaults them to 12:00 AM –
+/// 12:00 AM ('12-12'), but the app pre-filled 1:41 PM – 2:41 PM. Make the
+/// mobile manual-time defaults match the desktop behavior."
+///
+/// THE RULES (all from the desktop, none invented here):
+///   • Both boxes open at MIDNIGHT (12:00 AM). The app does not guess a
+///     service window — staff type the real times.
+///   • An end AT OR BEFORE the start CROSSES MIDNIGHT. 12:00 AM → 12:00 AM is
+///     a full 24-hour Lifesharing day, never a validation error (Nick
+///     2026-08-18: "you work midnight to midnight").
+///   • Untouched placeholder (both still midnight) → CONFIRM, never a block.
+///   • End later than now (+10 min grace), today, not crossing midnight →
+///     CONFIRM, never a block ("declaring the full scheduled window").
+enum ManualSpan {
+    /// Midnight today in the device's calendar — the 12:00 AM placeholder.
+    static func midnightToday(_ now: Date = Date()) -> Date {
+        Calendar.current.startOfDay(for: now)
+    }
+
+    /// Minutes since midnight for the picker's hour/minute (the date part of a
+    /// `.hourAndMinute` DatePicker is irrelevant — the server takes labels).
+    static func minutes(_ d: Date) -> Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    /// end <= start → the span runs past midnight into the next day.
+    static func crossesMidnight(start: Date, end: Date) -> Bool {
+        minutes(end) <= minutes(start)
+    }
+
+    /// Span length in minutes; 12:00 AM → 12:00 AM = 1440.
+    static func spanMinutes(start: Date, end: Date) -> Int {
+        let s = minutes(start), e = minutes(end)
+        return e <= s ? (1440 - s + e) : (e - s)
+    }
+
+    /// "8h 15m" / "24h 0m — spans midnight" (desktop's uv-span-hint).
+    static func hint(start: Date, end: Date) -> String {
+        let m = spanMinutes(start: start, end: end)
+        let label = "\(m / 60)h \(m % 60)m"
+        return crossesMidnight(start: start, end: end) ? "\(label) — spans midnight" : label
+    }
+
+    /// Both boxes still show the untouched midnight placeholder.
+    static func placeholderUntouched(start: Date, end: Date) -> Bool {
+        minutes(start) == 0 && minutes(end) == 0
+    }
+
+    /// Desktop `confirmFutureEnd`: an end more than 10 min past "now" on a
+    /// same-day, non-wrapping span asks the staff member to confirm.
+    static func endIsInFuture(start: Date, end: Date, now: Date = Date()) -> Bool {
+        if crossesMidnight(start: start, end: end) { return false }
+        return minutes(end) > minutes(now) + 10
+    }
+
+    /// The confirmation copy the sheets show before submitting, or nil when
+    /// nothing needs confirming. Mirrors the desktop's two `confirm()`s.
+    static func confirmationMessage(start: Date, end: Date, now: Date = Date()) -> String? {
+        if placeholderUntouched(start: start, end: end) {
+            return "Save a full 24-hour entry from 12:00 AM to 12:00 AM?\n\nBoth times still show 12:00 AM. Choose Cancel if you meant to enter different times."
+        }
+        if endIsInFuture(start: start, end: end, now: now) {
+            let f = DateFormatter(); f.dateFormat = "h:mm a"
+            return "The end time you entered (\(f.string(from: end))) has not occurred yet — it is currently \(f.string(from: now)).\n\nSave it anyway? Only do this if you are declaring the full service window you are scheduled to work."
+        }
+        return nil
+    }
+}
