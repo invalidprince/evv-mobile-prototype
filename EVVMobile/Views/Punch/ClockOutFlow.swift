@@ -274,7 +274,16 @@ struct ClockOutFlow: View {
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
                 if let next = thenClockIntoNext {
-                    appState.clockIn(visitId: next.id)
+                    // Build 57: clockIn is async and reports its outcome; a
+                    // refusal here has no sheet to render in, so it goes to
+                    // the root alert (nothing else is presented by then).
+                    Task { @MainActor in
+                        let outcome = await appState.clockIn(visitId: next.id, serverShiftId: next.serverShiftId)
+                        if case .rejected(let message) = outcome {
+                            appState.serverError = "Could not clock into the next visit: \(message)"
+                            appState.showServerError = true
+                        }
+                    }
                 }
                 dismiss()
             }

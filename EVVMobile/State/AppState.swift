@@ -316,108 +316,59 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Punch actions
-    func clockIn(visitId: UUID, manualLocation: ManualLocation? = nil) {
-        // Hard guard: never start a second visit, even if a stale UI let the
-        // tap through. Surfaces an explanation instead of failing silently.
-        guard !hasActiveVisit else {
-            surfacePunchBlocked()
-            return
+
+    /// Outcome of a SCHEDULED clock-in. Same contract as ManualEntryOutcome
+    /// (build 54): the confirm sheet renders the green "Clocked in" cover ONLY
+    /// for `.synced` / `.queued`, and `.rejected` INLINE — never success over
+    /// a punch the server refused.
+    ///
+    /// 🚨 Build 57 (2026-09-02): Nick tapped Clock In on his 2:07–4:07 PM Erik
+    /// Hoover card. The server answered 409 "Already have a visit for this
+    /// shift" (a soft-deleted visit still counted — fixed server-side in
+    /// v0.4.398) and wrote NOTHING, but `ClockInConfirmSheet.confirm()` set
+    /// `showSuccess = true` synchronously before the request even left, and
+    /// the root-level error alert cannot present behind a sheet + cover. He
+    /// saw "Clocked in 5:17 PM" for a punch that never happened. Same shape
+    /// as the build 54 manual-entry loss, on the live path this time.
+    typealias PunchOutcome = ManualEntryOutcome
+
+    /// Resolve the Today row a sheet was opened for. `Visit.id` is a fresh
+    /// UUID on EVERY server refresh (mapServerShift), so a sheet that stays
+    /// open across a background refresh holds a stale id — before build 57
+    /// that made `clockIn` a silent no-op (guard … else { return }) while the
+    /// sheet still showed success. Fall back to the stable server shift id.
+    private func todayIndex(forVisitId visitId: UUID, serverShiftId: Int?) -> Int? {
+        if let i = todayVisits.firstIndex(where: { $0.id == visitId }) { return i }
+        if let sid = serverShiftId,
+           let i = todayVisits.firstIndex(where: { $0.serverShiftId == sid }) {
+            DiagnosticLogger.shared.logAPI("Clock-in target re-resolved by shift id \(sid) (row id changed under an open sheet)")
+            return i
         }
-        guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else { return }
+        return nil
+    }
+
+    /// Clock in to a scheduled shift. Returns only after the server has
+    /// answered (or the punch is durably queued offline). The local row is
+    /// flipped to in-progress optimistically (the timer must start at the
+    /// tap, not at the response) and REVERTED on a genuine rejection.
+    @MainActor
+    func clockIn(visitId: UUID, serverShiftId hintShiftId: Int? = nil, manualLocation: ManualLocation? = nil) async -> PunchOutcome {
+        // Hard guard: never start a second visit, even if a stale UI let the
+        // tap through.
+        guard !hasActiveVisit else {
+            haptic(.error)
+            return .rejected("Clock out of your current visit first.")
+        }
+        guard let idx = todayIndex(forVisitId: visitId, serverShiftId: hintShiftId) else {
+            DiagnosticLogger.shared.logAPI("Clock-in target not found locally (visit \(visitId), shift \(hintShiftId.map(String.init) ?? "nil")) — refused, nothing sent")
+            haptic(.error)
+            Task { await self.refreshServerShifts() }
+            return .rejected("This shift is no longer on your Today list. Pull to refresh and try again.")
+        }
+        let localId = todayVisits[idx].id
         let manualAddress = manualLocation?.display
 
-        if mode == .server, let shiftId = todayVisits[idx].serverShiftId {
-            // Server mode: optimistic update + API call
-            todayVisits[idx].status = .inProgress
-            todayVisits[idx].actualStart = Date()
-            startTimerIfNeeded()
-            haptic(.success)
-
-            if !effectivelyOnline {
-                // Offline: queue and keep the optimistic update
-                todayVisits[idx].syncState = .pending
-                enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
-                DiagnosticLogger.shared.logOffline("Clock-in queued offline for shift \(shiftId)")
-                scheduleAutoSync()
-                return
-            }
-
-            Task { @MainActor in
-                do {
-                    // Pass GPS coordinates if available (acquire a fix if we
-                    // don't have one yet — graceful nil on denial/timeout)
-                    var coords = LocationManager.shared.currentCoordinates
-                    if coords == nil {
-                        _ = await LocationManager.shared.acquireLocation()
-                        coords = LocationManager.shared.currentCoordinates
-                    }
-                    // GPS-unavailable fallback: send the manually entered
-                    // address so the punch never lands with no location AND
-                    // no address.
-                    let fallbackAddress = coords == nil ? manualAddress : nil
-                    if coords == nil && fallbackAddress == nil {
-                        DiagnosticLogger.shared.logAPI("WARNING: clock-in for shift \(shiftId) has no GPS and no address")
-                    }
-                    let visitInfo = try await APIClient.shared.clockIn(
-                        shiftId: shiftId,
-                        lat: coords?.lat,
-                        lng: coords?.lng,
-                        accuracy: coords?.accuracy,
-                        address: fallbackAddress
-                    )
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
-                        self.todayVisits[i].serverVisitId = visitInfo.id
-                        self.todayVisits[i].syncState = .synced
-                    }
-                    await self.refreshServerShifts()
-                    // Build 53: in-progress visits show under History → Today.
-                    self.refreshHistoryInBackground()
-                } catch let error as APIError {
-                    if error.isRetainable {
-                        // Network error OR a 2xx whose body couldn't be read
-                        // (.responseUnreadable — the punch IS committed
-                        // server-side). Either way: keep the optimistic
-                        // update, queue for re-sync. NEVER revert a punch the
-                        // user physically made on an unreadable response —
-                        // that was the V-2032 incident.
-                        if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
-                            self.todayVisits[i].syncState = .pending
-                        }
-                        self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
-                        if case .responseUnreadable = error {
-                            self.surfaceServerError(error)
-                            DiagnosticLogger.shared.logAPI("Clock-in response unreadable for shift \(shiftId) — punch retained and queued")
-                        } else {
-                            DiagnosticLogger.shared.logOffline("Clock-in queued (network error) for shift \(shiftId)")
-                        }
-                        self.scheduleAutoSync()
-                    } else {
-                        // Genuine server rejection (4xx): nothing was
-                        // persisted, so reverting the optimistic update is
-                        // correct here.
-                        self.surfaceServerError(error)
-                        DiagnosticLogger.shared.logAPI("Clock-in failed: \(error.localizedDescription)")
-                        if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
-                            self.todayVisits[i].status = .scheduled
-                            self.todayVisits[i].actualStart = nil
-                        }
-                        self.startTimerIfNeeded()
-                        await self.refreshServerShifts()
-                    }
-                } catch {
-                    // Unknown error type — most likely a transport-layer
-                    // throw. Treat like a network error: keep the punch,
-                    // queue it (build 45 — previously this silently dropped
-                    // the optimistic update).
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
-                        self.todayVisits[i].syncState = .pending
-                    }
-                    self.enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: visitId, punchAddress: manualAddress)
-                    self.surfaceServerError(APIError.networkError(error))
-                    self.scheduleAutoSync()
-                }
-            }
-        } else {
+        guard mode == .server, let shiftId = todayVisits[idx].serverShiftId else {
             // Mock mode
             todayVisits[idx].actualStart = Date()
             todayVisits[idx].status = .inProgress
@@ -427,6 +378,107 @@ final class AppState: ObservableObject {
             }
             startTimerIfNeeded()
             haptic(.success)
+            return .synced
+        }
+
+        // Server mode: optimistic update + API call
+        todayVisits[idx].status = .inProgress
+        todayVisits[idx].actualStart = Date()
+        startTimerIfNeeded()
+        haptic(.success)
+
+        func revert() {
+            if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                todayVisits[i].status = .scheduled
+                todayVisits[i].actualStart = nil
+                todayVisits[i].syncState = .synced
+            }
+            startTimerIfNeeded()
+        }
+        func queue(_ why: String) {
+            if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                todayVisits[i].syncState = .pending
+            }
+            enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: localId, punchAddress: manualAddress)
+            DiagnosticLogger.shared.logOffline("Clock-in queued (\(why)) for shift \(shiftId)")
+            scheduleAutoSync()
+        }
+
+        if !effectivelyOnline {
+            queue("offline")
+            return .queued
+        }
+
+        do {
+            // Pass GPS coordinates if available (acquire a fix if we don't
+            // have one yet — graceful nil on denial/timeout)
+            var coords = LocationManager.shared.currentCoordinates
+            if coords == nil {
+                _ = await LocationManager.shared.acquireLocation()
+                coords = LocationManager.shared.currentCoordinates
+            }
+            // GPS-unavailable fallback: send the manually entered address so
+            // the punch never lands with no location AND no address.
+            let fallbackAddress = coords == nil ? manualAddress : nil
+            if coords == nil && fallbackAddress == nil {
+                DiagnosticLogger.shared.logAPI("WARNING: clock-in for shift \(shiftId) has no GPS and no address")
+            }
+            let visitInfo = try await APIClient.shared.clockIn(
+                shiftId: shiftId,
+                lat: coords?.lat,
+                lng: coords?.lng,
+                accuracy: coords?.accuracy,
+                address: fallbackAddress
+            )
+            if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
+                todayVisits[i].serverVisitId = visitInfo.id
+                todayVisits[i].syncState = .synced
+            }
+            DiagnosticLogger.shared.logAPI("Clock-in confirmed for shift \(shiftId) → visit \(visitInfo.id)")
+            Task { await self.refreshServerShifts() }
+            // Build 53: in-progress visits show under History → Today.
+            refreshHistoryInBackground()
+            return .synced
+        } catch let error as APIError {
+            if error.isRetainable {
+                // Network error OR a 2xx whose body couldn't be read
+                // (.responseUnreadable — the punch IS committed server-side).
+                // Either way: keep the optimistic update, queue for re-sync.
+                // NEVER revert a punch the user physically made on an
+                // unreadable response — that was the V-2032 incident.
+                queue(error.isNetworkError ? "network error" : "unreadable 2xx")
+                if case .responseUnreadable = error {
+                    DiagnosticLogger.shared.logAPI("Clock-in response unreadable for shift \(shiftId) — punch retained and queued")
+                    return .synced
+                }
+                return .queued
+            }
+            // Genuine server rejection (4xx): nothing was persisted, so
+            // reverting the optimistic update is correct here — and the
+            // CALLER shows the message; a root-level alert cannot present
+            // behind the sheet (build 57).
+            revert()
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("Clock-in REJECTED for shift \(shiftId) (nothing saved): \(error.localizedDescription)")
+            Task { await self.refreshServerShifts() }
+            return .rejected(punchRejectionMessage(error))
+        } catch {
+            // Unknown error type — most likely a transport-layer throw. Treat
+            // like a network error: keep the punch, queue it (build 45 —
+            // previously this silently dropped the optimistic update).
+            queue("unknown error: \(error.localizedDescription)")
+            return .queued
+        }
+    }
+
+    /// Staff-readable message for a refused live punch — the server's own
+    /// text without the "Server error (409):" prefix.
+    private func punchRejectionMessage(_ error: APIError) -> String {
+        switch error {
+        case .serverError(_, let msg): return msg
+        case .conflict(let msg): return msg
+        case .forbidden(let msg): return msg
+        default: return error.errorDescription ?? "The clock-in could not be saved."
         }
     }
 

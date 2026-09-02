@@ -6,6 +6,18 @@ struct ClockInConfirmSheet: View {
     let visit: Visit
     @State private var selectedClients: Set<UUID>
     @State private var showSuccess = false
+    /// Build 57: success cover text — "Clocked in h:mm" for a confirmed punch,
+    /// the queued wording when the punch is waiting for a connection.
+    @State private var successMessage: String?
+    /// Build 57: the request is in flight — button shows a spinner, sheet
+    /// cannot be dismissed, Cancel disabled. Success is shown ONLY after the
+    /// server confirms (or the punch is durably queued).
+    @State private var isSubmitting = false
+    /// Build 57: the server REFUSED the punch (4xx). Rendered inline in red
+    /// with the server's own message; the sheet stays open. Before build 57
+    /// the only error surface was RootView's alert, which cannot present
+    /// behind this sheet + the success cover — so a 409 looked like success.
+    @State private var submitError: String?
 
     // Manual address entry (GPS-unavailable fallback)
     @State private var manualStreet = ""
@@ -35,7 +47,7 @@ struct ClockInConfirmSheet: View {
     // Block confirm while a GPS fix is still being acquired so the punch
     // carries real coordinates (acquisition is bounded by a 10s timeout),
     // and always block while another visit is running.
-    private var canConfirm: Bool { !punchBlocked && !isAcquiringLocation && (!gpsUnavailable || manualAddressValid) }
+    private var canConfirm: Bool { !punchBlocked && !isAcquiringLocation && !isSubmitting && (!gpsUnavailable || manualAddressValid) }
 
     init(visit: Visit) {
         self.visit = visit
@@ -121,10 +133,34 @@ struct ClockInConfirmSheet: View {
                         .padding(.horizontal)
                 }
 
+                if let err = submitError {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(err, systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(Theme.danger)
+                        Text("You were NOT clocked in. Nothing was saved.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.danger.opacity(0.08))
+                    .cornerRadius(10)
+                    .padding(.horizontal)
+                    .accessibilityIdentifier("clockInRejected")
+                }
+
                 Spacer(minLength: 12)
 
                 Button(action: confirm) {
-                    Label("Confirm Clock In", systemImage: "checkmark.circle.fill")
+                    if isSubmitting {
+                        HStack {
+                            ProgressView().tint(.white)
+                            Text("Clocking in…")
+                        }
+                    } else {
+                        Label("Confirm Clock In", systemImage: "checkmark.circle.fill")
+                    }
                 }
                 .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: canConfirm))
                 .disabled(!canConfirm)
@@ -137,11 +173,12 @@ struct ClockInConfirmSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { dismiss() }.disabled(isSubmitting)
                 }
             }
+            .interactiveDismissDisabled(isSubmitting)
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { dismiss() }) {
-                ClockInSuccessView()
+                ClockInSuccessView(message: successMessage)
             }
             .task {
                 // Acquire GPS location when the sheet appears
@@ -215,6 +252,7 @@ struct ClockInConfirmSheet: View {
     }
 
     private func confirm() {
+        guard !isSubmitting else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
             appState.surfacePunchBlocked()
@@ -228,7 +266,28 @@ struct ClockInConfirmSheet: View {
                                       state: manualState.trimmingCharacters(in: .whitespaces),
                                       zip: manualZip.trimmingCharacters(in: .whitespaces))
         }
-        appState.clockIn(visitId: visit.id, manualLocation: location)
-        showSuccess = true
+        isSubmitting = true
+        submitError = nil
+        Task { @MainActor in
+            // Build 57: success ONLY after the server confirms (or the punch is
+            // durably queued). A refusal keeps the sheet open with the server's
+            // message — the 2026-09-02 "Clocked in 5:17 PM" over a 409 must not
+            // recur. The serverShiftId hint survives a background refresh that
+            // regenerates the row UUIDs under this open sheet.
+            let outcome = await appState.clockIn(visitId: visit.id,
+                                                 serverShiftId: visit.serverShiftId,
+                                                 manualLocation: location)
+            isSubmitting = false
+            switch outcome {
+            case .synced:
+                successMessage = nil          // "Clocked in h:mm a"
+                showSuccess = true
+            case .queued:
+                successMessage = "Clock-in saved — will sync when online"
+                showSuccess = true
+            case .rejected(let message):
+                submitError = message
+            }
+        }
     }
 }
