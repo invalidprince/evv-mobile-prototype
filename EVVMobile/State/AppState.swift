@@ -559,75 +559,131 @@ final class AppState: ObservableObject {
         return f.string(from: date)
     }
 
+    /// Outcome of a MANUAL-TIME entry (non-EVV services). The sheets render
+    /// the "Time recorded" success screen ONLY for `.synced` / `.queued`, and
+    /// an inline error for `.rejected` — never success-then-vanish.
+    ///
+    /// 🚨 Build 54 (2026-09-02): Nick entered an unscheduled Lifesharing visit
+    /// 1:41–2:41 PM, saw the full-screen "Time recorded", and NO row ever
+    /// existed server-side. The server had (correctly) answered 409
+    /// staff_overlap — his 1:58–1:59 PM test visit sat inside the span — and
+    /// wrote nothing. The sheet had already shown success before the request
+    /// even left, the local record was then removed on the rejection, and the
+    /// root-level error alert could not present behind the success cover.
+    /// Success must be shown only after the server confirms (or the entry is
+    /// durably queued offline with the existing pending-sync state).
+    enum ManualEntryOutcome: Equatable {
+        /// The server confirmed the write (2xx). Entry is synced.
+        case synced
+        /// The entry is durably queued for re-sync (offline / network error).
+        /// Shown as pending via the existing offline-queue contract.
+        case queued
+        /// The server REFUSED (4xx/5xx). Nothing was saved anywhere; the
+        /// message is what staff should read to fix their entry.
+        case rejected(String)
+    }
+
+    /// Staff-readable message for a manual-time rejection. The server's own
+    /// text ("That time overlaps visit V-2038 (Erik Hoover, 1:58 PM–1:59 PM)…
+    /// adjust the times, or request a time fix") is actionable — show it
+    /// without the "Server error (409):" prefix.
+    private func manualEntryRejectionMessage(_ error: APIError) -> String {
+        switch error {
+        case .serverError(_, let msg): return msg
+        default: return error.errorDescription ?? "The time entry could not be saved."
+        }
+    }
+
     /// Record manual start/end times for a scheduled non-EVV shift.
     /// Creates a completed visit in one step — no live punches, no GPS.
-    func recordManualTime(visitId: UUID, start: Date, end: Date) {
-        guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else { return }
-        guard mode == .server, let shiftId = todayVisits[idx].serverShiftId else { return }
+    /// Returns only after the server has answered (or the entry is queued).
+    @MainActor
+    func recordManualTime(visitId: UUID, start: Date, end: Date) async -> ManualEntryOutcome {
+        guard let idx = todayVisits.firstIndex(where: { $0.id == visitId }) else {
+            return .rejected("This shift is no longer on your Today list. Pull to refresh and try again.")
+        }
+        guard mode == .server, let shiftId = todayVisits[idx].serverShiftId else {
+            return .rejected("Manual time entry needs a server shift. Pull to refresh and try again.")
+        }
 
         let startStr = serverTimeLabel(start)
         let endStr = serverTimeLabel(end)
 
-        // Optimistic update — the visit is complete in one step
-        todayVisits[idx].actualStart = start
-        todayVisits[idx].actualEnd = end
-        todayVisits[idx].status = .completed
-        todayVisits[idx].syncState = .pending
-        let finished = todayVisits[idx]
-        haptic(.success)
-        NoteReminderCenter.shared.scheduleReminders(for: finished)
-
-        if !effectivelyOnline {
+        // Applies the completed state locally — called ONLY once the entry is
+        // confirmed or durably queued (build 54), never before the request.
+        func markCompleted(syncState: SyncState) -> Visit? {
+            guard let i = todayVisits.firstIndex(where: { $0.id == visitId }) else { return nil }
+            todayVisits[i].actualStart = start
+            todayVisits[i].actualEnd = end
+            todayVisits[i].status = .completed
+            todayVisits[i].syncState = syncState
+            let finished = todayVisits[i]
+            haptic(.success)
+            NoteReminderCenter.shared.scheduleReminders(for: finished)
+            return finished
+        }
+        func queue(_ why: String) {
             enqueueOfflineAction(.manualTime, shiftId: shiftId, visitId: nil,
                                  localVisitId: visitId,
                                  manualStart: startStr, manualEnd: endStr)
-            DiagnosticLogger.shared.logOffline("Manual time entry queued offline for shift \(shiftId)")
+            DiagnosticLogger.shared.logOffline("Manual time entry queued (\(why)) for shift \(shiftId)")
             scheduleAutoSync()
-            return
         }
 
-        Task { @MainActor in
-            do {
-                let response = try await APIClient.shared.manualTimeEntry(shiftId: shiftId, start: startStr, end: endStr)
-                if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
-                    self.todayVisits[i].serverVisitId = response.visit.id
-                    if let allVisits = response.visits, allVisits.count > 1 {
-                        self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
-                    } else {
-                        self.todayVisits[i].serverVisitIds = [response.visit.id]
-                    }
-                    self.todayVisits[i].syncState = .synced
-                }
-                await self.refreshServerShifts()
-            } catch let error as APIError {
-                if error.isNetworkError {
-                    self.enqueueOfflineAction(.manualTime, shiftId: shiftId, visitId: nil,
-                                              localVisitId: visitId,
-                                              manualStart: startStr, manualEnd: endStr)
-                    DiagnosticLogger.shared.logOffline("Manual time entry queued (network error) for shift \(shiftId)")
-                    self.scheduleAutoSync()
+        if !effectivelyOnline {
+            _ = markCompleted(syncState: .pending)
+            queue("offline")
+            return .queued
+        }
+
+        do {
+            let response = try await APIClient.shared.manualTimeEntry(shiftId: shiftId, start: startStr, end: endStr)
+            _ = markCompleted(syncState: .synced)
+            if let i = todayVisits.firstIndex(where: { $0.id == visitId }) {
+                todayVisits[i].serverVisitId = response.visit.id
+                if let allVisits = response.visits, allVisits.count > 1 {
+                    todayVisits[i].serverVisitIds = allVisits.map { $0.id }
                 } else {
-                    self.surfaceServerError(error)
-                    DiagnosticLogger.shared.logAPI("Manual time entry failed: \(error.localizedDescription)")
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == visitId }) {
-                        self.todayVisits[i].status = .scheduled
-                        self.todayVisits[i].actualStart = nil
-                        self.todayVisits[i].actualEnd = nil
-                        self.todayVisits[i].syncState = .synced
-                    }
-                    await self.refreshServerShifts()
+                    todayVisits[i].serverVisitIds = [response.visit.id]
                 }
-            } catch {
-                self.surfaceServerError(APIError.networkError(error))
             }
+            Task { await self.refreshServerShifts() }
+            refreshHistoryInBackground()
+            return .synced
+        } catch let error as APIError {
+            if error.isRetainable {
+                // Network error, or a 2xx whose body couldn't be read (entry
+                // COMMITTED server-side) — keep the record, queue the replay.
+                _ = markCompleted(syncState: .pending)
+                queue(error.isNetworkError ? "network error" : "unreadable 2xx")
+                if case .responseUnreadable = error { return .synced }
+                return .queued
+            }
+            // Genuine server rejection: nothing persisted, local row untouched
+            // (still scheduled — staff can fix the times and try again).
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("Manual time entry REJECTED for shift \(shiftId) (nothing saved): \(error.localizedDescription)")
+            return .rejected(manualEntryRejectionMessage(error))
+        } catch {
+            // Unknown error — treat like network: keep + queue (the replay is
+            // idempotent server-side).
+            _ = markCompleted(syncState: .pending)
+            queue("unknown error: \(error.localizedDescription)")
+            return .queued
         }
     }
 
     /// Record an unscheduled visit for a non-EVV service with manual
     /// start/end times (no live punches, no GPS).
+    /// Returns only after the server has answered (or the entry is queued) —
+    /// the sheet must not show success before then (build 54, see
+    /// ManualEntryOutcome).
+    @MainActor
     func startUnscheduledManualVisit(clients: [Client], service: ServiceType, serviceName: String,
-                                     unlistedName: String? = nil, start: Date, end: Date) {
-        guard mode == .server else { return }
+                                     unlistedName: String? = nil, start: Date, end: Date) async -> ManualEntryOutcome {
+        guard mode == .server else {
+            return .rejected("Manual time entry is only available when signed in.")
+        }
 
         let startStr = serverTimeLabel(start)
         let endStr = serverTimeLabel(end)
@@ -640,88 +696,81 @@ final class AppState: ObservableObject {
         visit.evvRequired = false
         visit.requiresClockIn = false
         visit.syncState = .pending
-        todayVisits.append(visit)
-        haptic(.success)
-        NoteReminderCenter.shared.scheduleReminders(for: visit)
 
         let serverClientIds = clients.map { $0.address }.filter { !$0.isEmpty }
 
-        if !effectivelyOnline {
+        // The local record is appended ONLY once the entry is confirmed or
+        // durably queued (build 54) — never optimistically, so a server
+        // rejection has nothing to silently remove.
+        func retain(_ v: Visit) {
+            todayVisits.append(v)
+            haptic(.success)
+            NoteReminderCenter.shared.scheduleReminders(for: v)
+        }
+        func queue(_ why: String) {
             enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
                                  unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
                                  unschedService: serviceName,
                                  unschedClientName: unlistedName,
                                  localVisitId: localVisitId,
                                  manualStart: startStr, manualEnd: endStr)
-            DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued offline")
+            DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (\(why))")
             scheduleAutoSync()
-            return
         }
 
-        Task { @MainActor in
-            do {
-                let response = try await APIClient.shared.createUnscheduledVisit(
-                    clientIds: serverClientIds,
-                    service: serviceName,
-                    unlistedName: unlistedName,
-                    startTime: startStr,
-                    endTime: endStr
-                )
-                if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                    self.todayVisits[i].serverVisitId = response.visit.id
-                    if let allVisits = response.visits, allVisits.count > 1 {
-                        self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
-                    } else {
-                        self.todayVisits[i].serverVisitIds = [response.visit.id]
-                    }
-                    if let shift = response.shift {
-                        self.todayVisits[i].serverShiftId = shift.id
-                    }
-                    self.todayVisits[i].syncState = .synced
-                }
-                // Build 53: in-progress visits show under History → Today.
-                self.refreshHistoryInBackground()
-            } catch let error as APIError {
-                if error.isRetainable {
-                    // Network error or unreadable 2xx (entry committed
-                    // server-side) — keep the local record, queue for re-sync.
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                        self.todayVisits[i].syncState = .pending
-                    }
-                    self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
-                                              unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
-                                              unschedService: serviceName,
-                                              unschedClientName: unlistedName,
-                                              localVisitId: localVisitId,
-                                              manualStart: startStr, manualEnd: endStr)
-                    if case .responseUnreadable = error {
-                        self.surfaceServerError(error)
-                        DiagnosticLogger.shared.logAPI("Unscheduled manual time entry response unreadable — entry retained and queued")
-                    } else {
-                        DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (network error)")
-                    }
-                    self.scheduleAutoSync()
-                } else {
-                    // Genuine server rejection: nothing persisted, removal OK.
-                    self.surfaceServerError(error)
-                    DiagnosticLogger.shared.logAPI("Unscheduled manual time entry failed: \(error.localizedDescription)")
-                    self.todayVisits.removeAll { $0.id == localVisitId }
-                }
-            } catch {
-                // Unknown error — treat like network: keep + queue (build 45;
-                // previously this deleted the local entry).
-                if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                    self.todayVisits[i].syncState = .pending
-                }
-                self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
-                                          unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
-                                          unschedService: serviceName,
-                                          unschedClientName: unlistedName,
-                                          localVisitId: localVisitId,
-                                          manualStart: startStr, manualEnd: endStr)
-                self.surfaceServerError(APIError.networkError(error))
-                self.scheduleAutoSync()
+        if !effectivelyOnline {
+            retain(visit)
+            queue("offline")
+            return .queued
+        }
+
+        do {
+            let response = try await APIClient.shared.createUnscheduledVisit(
+                clientIds: serverClientIds,
+                service: serviceName,
+                unlistedName: unlistedName,
+                startTime: startStr,
+                endTime: endStr
+            )
+            visit.serverVisitId = response.visit.id
+            if let allVisits = response.visits, allVisits.count > 1 {
+                visit.serverVisitIds = allVisits.map { $0.id }
+            } else {
+                visit.serverVisitIds = [response.visit.id]
             }
+            if let shift = response.shift {
+                visit.serverShiftId = shift.id
+            }
+            visit.syncState = .synced
+            retain(visit)
+            // Build 53: completed visits show under History → Today.
+            refreshHistoryInBackground()
+            return .synced
+        } catch let error as APIError {
+            if error.isRetainable {
+                // Network error, or a 2xx whose body couldn't be read (entry
+                // COMMITTED server-side) — keep the record, queue the replay.
+                // The server-side idempotency check makes the replay safe.
+                retain(visit)
+                queue(error.isNetworkError ? "network error" : "unreadable 2xx")
+                if case .responseUnreadable = error {
+                    DiagnosticLogger.shared.logAPI("Unscheduled manual time entry response unreadable — entry retained and queued")
+                    return .synced
+                }
+                return .queued
+            }
+            // Genuine server rejection (e.g. 409 staff overlap): nothing was
+            // persisted anywhere. No local row was ever added, so there is
+            // nothing to remove — the sheet stays open with the message.
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("Unscheduled manual time entry REJECTED (nothing saved): \(error.localizedDescription)")
+            return .rejected(manualEntryRejectionMessage(error))
+        } catch {
+            // Unknown error — treat like network: keep + queue (build 45;
+            // previously this deleted the local entry).
+            retain(visit)
+            queue("unknown error: \(error.localizedDescription)")
+            return .queued
         }
     }
 

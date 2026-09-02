@@ -32,6 +32,13 @@ struct ServerUnscheduledContent: View {
     // Manual time entry (non-EVV services)
     @State private var manualStart: Date = Date().addingTimeInterval(-3600)
     @State private var manualEnd: Date = Date()
+    // Build 54: manual entries await the server before showing success.
+    // `manualSubmitError` is the server's refusal, shown INLINE (the
+    // root-level alert cannot present behind a sheet + success cover — which
+    // is exactly how Nick's 409 went unseen on 2026-09-02).
+    @State private var isSubmittingManual = false
+    @State private var manualSubmitError: String?
+    @State private var successMessage: String?
     // Location state (GPS-unavailable address fallback)
     @ObservedObject private var locationManager = LocationManager.shared
     @State private var fallbackAddress = ""
@@ -357,6 +364,13 @@ struct ServerUnscheduledContent: View {
                                 .foregroundColor(Theme.danger)
                         }
                     }
+                    if let err = manualSubmitError {
+                        Section(footer: Text("Nothing was saved. Adjust the times and try again.")) {
+                            Label(err, systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline)
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
                 }
 
                 // Active-visit block + GPS status for live EVV punches
@@ -393,10 +407,9 @@ struct ServerUnscheduledContent: View {
                         if unlistedServiceIsNonEvv {
                             // Non-EVV service: manual time entry
                             Button(action: startUnlistedManualVisit) {
-                                Label("Record Time", systemImage: "pencil.circle.fill")
-                                    .frame(maxWidth: .infinity)
+                                manualRecordLabel
                             }
-                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !manualTimesValid)
+                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !manualTimesValid || isSubmittingManual)
                         } else {
                             // F2: Unlisted clock-in
                             Button(action: startUnlistedVisit) {
@@ -408,10 +421,9 @@ struct ServerUnscheduledContent: View {
                     } else if selectedServiceIsNonEvv {
                         // Non-EVV service: manual time entry
                         Button(action: startManualVisit) {
-                            Label("Record Time", systemImage: "pencil.circle.fill")
-                                .frame(maxWidth: .infinity)
+                            manualRecordLabel
                         }
-                        .disabled(selectedIndividualIds.isEmpty || !manualTimesValid)
+                        .disabled(selectedIndividualIds.isEmpty || !manualTimesValid || isSubmittingManual)
                     } else {
                         Button(action: startVisit) {
                             Label(punchBlocked ? "Clock out first" : "Clock In Now", systemImage: "play.circle.fill")
@@ -439,8 +451,9 @@ struct ServerUnscheduledContent: View {
                 }
             }
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { onDismiss() }) {
-                ClockInSuccessView(message: manualEntryActive ? "Time recorded" : nil)
+                ClockInSuccessView(message: successMessage ?? (manualEntryActive ? "Time recorded" : nil))
             }
+            .interactiveDismissDisabled(isSubmittingManual)
             .onAppear {
                 // Always attempt a refresh; refreshIndividuals handles offline fallback
                 Task { await appState.refreshIndividuals() }
@@ -509,8 +522,42 @@ struct ServerUnscheduledContent: View {
         showSuccess = true
     }
 
+    /// "Record Time" button content — spinner while the server is being asked.
+    private var manualRecordLabel: some View {
+        Group {
+            if isSubmittingManual {
+                HStack {
+                    ProgressView()
+                    Text("Recording…")
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                Label("Record Time", systemImage: "pencil.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Build 54: success is rendered ONLY for a confirmed or durably-queued
+    /// entry. A rejection keeps the sheet open with the server's message —
+    /// never a green screen over a record that does not exist.
+    private func finishManual(_ outcome: AppState.ManualEntryOutcome) {
+        isSubmittingManual = false
+        switch outcome {
+        case .synced:
+            successMessage = "Time recorded"
+            showSuccess = true
+        case .queued:
+            successMessage = "Time saved — will sync when online"
+            showSuccess = true
+        case .rejected(let message):
+            manualSubmitError = message
+        }
+    }
+
     // Manual time entry for a non-EVV service (listed individuals)
     private func startManualVisit() {
+        guard !isSubmittingManual else { return }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
         guard !selectedIndividuals.isEmpty, !selectedServiceName.isEmpty, manualTimesValid else { return }
 
@@ -523,23 +570,36 @@ struct ServerUnscheduledContent: View {
             )
         }
         let serviceType = mapServiceNameToType(selectedServiceName)
-        appState.startUnscheduledManualVisit(clients: clients, service: serviceType,
-                                             serviceName: selectedServiceName,
-                                             start: manualStart, end: manualEnd)
-        showSuccess = true
+        isSubmittingManual = true
+        manualSubmitError = nil
+        let serviceName = selectedServiceName
+        let start = manualStart, end = manualEnd
+        Task { @MainActor in
+            let outcome = await appState.startUnscheduledManualVisit(
+                clients: clients, service: serviceType, serviceName: serviceName,
+                start: start, end: end)
+            finishManual(outcome)
+        }
     }
 
     // Manual time entry for a non-EVV service (unlisted individual)
     private func startUnlistedManualVisit() {
+        guard !isSubmittingManual else { return }
         let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !unlistedServiceName.isEmpty, manualTimesValid else { return }
 
         let client = Client(id: UUID(), name: name, address: "", city: "")
         let serviceType = mapServiceNameToType(unlistedServiceName)
-        appState.startUnscheduledManualVisit(clients: [client], service: serviceType,
-                                             serviceName: unlistedServiceName, unlistedName: name,
-                                             start: manualStart, end: manualEnd)
-        showSuccess = true
+        isSubmittingManual = true
+        manualSubmitError = nil
+        let serviceName = unlistedServiceName
+        let start = manualStart, end = manualEnd
+        Task { @MainActor in
+            let outcome = await appState.startUnscheduledManualVisit(
+                clients: [client], service: serviceType, serviceName: serviceName,
+                unlistedName: name, start: start, end: end)
+            finishManual(outcome)
+        }
     }
 
     // F2: Start visit for unlisted individual

@@ -11,6 +11,11 @@ struct ManualTimeEntrySheet: View {
     @State private var startTime: Date
     @State private var endTime: Date
     @State private var showSuccess = false
+    // Build 54: await the server before showing success; a refusal is shown
+    // inline (the root alert cannot present behind this sheet).
+    @State private var isSubmitting = false
+    @State private var submitError: String?
+    @State private var successMessage = "Time recorded"
 
     init(visit: Visit) {
         self.visit = visit
@@ -87,13 +92,36 @@ struct ManualTimeEntrySheet: View {
                             .padding(.horizontal)
                     }
 
+                    if let err = submitError {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label(err, systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(Theme.danger)
+                            Text("Nothing was saved. Adjust the times and try again.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.danger.opacity(0.08))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
+                    }
+
                     Spacer(minLength: 12)
 
                     Button(action: confirm) {
-                        Label("Record Time", systemImage: "checkmark.circle.fill")
+                        if isSubmitting {
+                            HStack {
+                                ProgressView().tint(.white)
+                                Text("Recording…")
+                            }
+                        } else {
+                            Label("Record Time", systemImage: "checkmark.circle.fill")
+                        }
                     }
-                    .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: validationError == nil))
-                    .disabled(validationError != nil)
+                    .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: validationError == nil && !isSubmitting))
+                    .disabled(validationError != nil || isSubmitting)
                     .padding(.horizontal)
                     .padding(.bottom, 16)
                 }
@@ -103,18 +131,38 @@ struct ManualTimeEntrySheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { dismiss() }.disabled(isSubmitting)
                 }
             }
+            .interactiveDismissDisabled(isSubmitting)
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { dismiss() }) {
-                ClockInSuccessView(message: "Time recorded")
+                ClockInSuccessView(message: successMessage)
             }
         }
     }
 
     private func confirm() {
-        guard validationError == nil else { return }
-        appState.recordManualTime(visitId: visit.id, start: startTime, end: endTime)
-        showSuccess = true
+        guard validationError == nil, !isSubmitting else { return }
+        isSubmitting = true
+        submitError = nil
+        let start = startTime, end = endTime
+        Task { @MainActor in
+            // Build 54: success ONLY after the server confirms (or the entry is
+            // durably queued offline). A rejection keeps the sheet open with
+            // the server's message — never success over a record that was
+            // never written.
+            let outcome = await appState.recordManualTime(visitId: visit.id, start: start, end: end)
+            isSubmitting = false
+            switch outcome {
+            case .synced:
+                successMessage = "Time recorded"
+                showSuccess = true
+            case .queued:
+                successMessage = "Time saved — will sync when online"
+                showSuccess = true
+            case .rejected(let message):
+                submitError = message
+            }
+        }
     }
 }
