@@ -53,6 +53,12 @@ final class AppState: ObservableObject {
     @Published var historyVisits: [Visit] = []           // from GET /me/visits
     @Published var serverExceptions: [ServerException] = [] // from GET /me/requests
     @Published var isLoadingHistory = false
+    /// Build 53: when the last history fetch SUCCEEDED — drives the
+    /// on-appear debounce so tab-flipping doesn't hammer /api/me/visits.
+    @MainActor private var lastHistoryRefreshAt: Date?
+    /// Build 53: the in-flight history fetch. Deliberately an UNSTRUCTURED
+    /// task — see refreshHistory() for why.
+    @MainActor private var historyRefreshTask: Task<Void, Never>?
 
     // MARK: - Visits
     @Published var todayVisits: [Visit] = MockData.todaysVisits()
@@ -364,6 +370,8 @@ final class AppState: ObservableObject {
                         self.todayVisits[i].syncState = .synced
                     }
                     await self.refreshServerShifts()
+                    // Build 53: in-progress visits show under History → Today.
+                    self.refreshHistoryInBackground()
                 } catch let error as APIError {
                     if error.isRetainable {
                         // Network error OR a 2xx whose body couldn't be read
@@ -441,6 +449,16 @@ final class AppState: ObservableObject {
             todayVisits[idx].actualEnd = Date()
             todayVisits[idx].status = .completed
             todayVisits[idx].syncState = .pending
+            // Build 53: History now reliably carries the in-progress row for
+            // this visit (server-side). Patch it optimistically so
+            // hasActiveVisit (which reads historyVisits too) releases the
+            // clock-in guard immediately instead of after the refetch.
+            for vid in allVisitIds {
+                if let h = historyVisits.firstIndex(where: { $0.serverVisitId == vid }) {
+                    historyVisits[h].actualEnd = todayVisits[idx].actualEnd
+                    historyVisits[h].status = .completed
+                }
+            }
             let finished = todayVisits[idx]
             startTimerIfNeeded()
             haptic(.success)
@@ -486,6 +504,9 @@ final class AppState: ObservableObject {
                         self.todayVisits[i].syncState = .synced
                     }
                     await self.refreshServerShifts()
+                    // Build 53: the completed visit must show in History now,
+                    // not after a relaunch.
+                    await self.refreshHistory()
                 } catch let error as APIError {
                     if error.isNetworkError {
                         // Enqueue each visit for offline sync
@@ -658,6 +679,8 @@ final class AppState: ObservableObject {
                     }
                     self.todayVisits[i].syncState = .synced
                 }
+                // Build 53: in-progress visits show under History → Today.
+                self.refreshHistoryInBackground()
             } catch let error as APIError {
                 if error.isRetainable {
                     // Network error or unreadable 2xx (entry committed
@@ -781,6 +804,8 @@ final class AppState: ObservableObject {
                         }
                         self.todayVisits[i].syncState = .synced
                     }
+                    // Build 53: in-progress visits show under History → Today.
+                    self.refreshHistoryInBackground()
                 } catch let error as APIError {
                     if error.isRetainable {
                         // Network error OR unreadable 2xx (.responseUnreadable
@@ -896,6 +921,9 @@ final class AppState: ObservableObject {
         if isComplete {
             markDocComplete(visitId: visitId)
         }
+        // Build 53: pull the server's view (docStatus, review result) so
+        // History reflects the submitted documentation without a relaunch.
+        Task { @MainActor [weak self] in self?.refreshHistoryInBackground() }
     }
 
     /// Demo affordance (More tab): fire a note reminder notification now.
@@ -966,6 +994,8 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 await self.replayOfflineQueue()
                 await self.refreshServerShifts()
+                // Build 53: a flushed offline punch/note changes History too.
+                await self.refreshHistory()
                 // Refresh individuals cache on sync (keeps offline data fresh)
                 await self.refreshIndividuals()
                 self.isSyncing = false
@@ -1811,9 +1841,59 @@ final class AppState: ObservableObject {
 
     // MARK: - Server History Fetch
 
+    /// Refresh History from the server. Safe to call from anywhere — callers
+    /// are coalesced onto one in-flight fetch.
+    ///
+    /// 🚨 Build 53 (Todoist 6hPM7CM4hgFRfVXq): the fetch runs in an
+    /// UNSTRUCTURED `Task`, never in the caller's task. Reproduced in the
+    /// simulator: the History tab's `.refreshable` task got cancelled by
+    /// SwiftUI ~100 ms after the pull (the `isLoadingHistory` re-render), which
+    /// cancelled the `async let` children → URLSession -999 "cancelled" →
+    /// swallowed as a benign cancellation → `historyVisits` silently stayed
+    /// stale. Combined with the old "only fetch when empty" onAppear guard,
+    /// a visit completed today never appeared until the app was relaunched.
+    /// Nick: "history is only showing yesterday" / pull-to-refresh "does not"
+    /// show it. An unstructured task does not inherit the caller's
+    /// cancellation, so the request always completes and the array updates.
     @MainActor
     func refreshHistory() async {
         guard mode == .server else { return }
+        if let inflight = historyRefreshTask {
+            await inflight.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            await self.performHistoryRefresh()
+            self.historyRefreshTask = nil
+        }
+        historyRefreshTask = task
+        await task.value
+    }
+
+    /// On-appear variant: skip the network call when a successful fetch
+    /// completed within `maxAge` seconds and we already have rows. Pull-to-
+    /// refresh and post-action refreshes bypass this and always fetch.
+    @MainActor
+    func refreshHistoryIfStale(maxAge: TimeInterval = 10) async {
+        if !historyVisits.isEmpty,
+           let last = lastHistoryRefreshAt,
+           Date().timeIntervalSince(last) < maxAge {
+            return
+        }
+        await refreshHistory()
+    }
+
+    /// Fire-and-forget refresh for success paths that change History
+    /// (clock-in, clock-out, documentation submit, offline-queue flush).
+    @MainActor
+    func refreshHistoryInBackground() {
+        guard mode == .server else { return }
+        Task { @MainActor [weak self] in await self?.refreshHistory() }
+    }
+
+    @MainActor
+    private func performHistoryRefresh() async {
         isLoadingHistory = true
         defer { isLoadingHistory = false }
 
@@ -1824,6 +1904,7 @@ final class AppState: ObservableObject {
 
             serverExceptions = exceptions
             historyVisits = serverVisits.compactMap { mapHistoryVisit($0, exceptions: exceptions) }
+            lastHistoryRefreshAt = Date()
         } catch is CancellationError {
             // Structured-task cancellation (async let sibling failed,
             // view lifecycle, etc.) — silently ignore.
@@ -1955,6 +2036,8 @@ final class AppState: ObservableObject {
                 if isComplete {
                     markDocComplete(visitId: visitId)
                 }
+                // Build 53: reconcile History with the server after a note lands.
+                refreshHistoryInBackground()
             }
         } catch let error as APIError {
             if error.isNetworkError {

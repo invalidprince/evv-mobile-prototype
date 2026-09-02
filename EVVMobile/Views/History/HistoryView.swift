@@ -160,9 +160,11 @@ struct HistoryView: View {
             await appState.refreshHistory()
         }
         .onAppear {
-            if appState.historyVisits.isEmpty {
-                Task { await appState.refreshHistory() }
-            }
+            // Build 53: refresh EVERY time the tab is shown (debounced in
+            // AppState), not only when empty. The old `isEmpty` guard meant a
+            // list loaded before today's visit existed was never refetched —
+            // the visit was on the server and absent from this screen.
+            Task { await appState.refreshHistoryIfStale() }
         }
     }
 
@@ -244,14 +246,31 @@ struct ServerHistoryRow: View {
     let onAddNote: () -> Void
     let onFinishNote: () -> Void
 
+    /// Build 53: a visit that is clocked in but not out. It appears here
+    /// under "Today" AND on the Today tab (Nick, 2026-09-02: "It should").
+    /// Read-only in History until clock-out — Time Fix / Delete are
+    /// meaningless before the visit has an end time.
+    private var isInProgress: Bool {
+        visit.status == .inProgress || (visit.actualStart != nil && visit.actualEnd == nil)
+    }
+
     private var timeText: String {
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
         let start = visit.actualStart ?? visit.scheduledStart
         let end = visit.actualEnd
         let startStr = f.string(from: start)
-        let endStr = end != nil ? f.string(from: end!) : "—"
+        let endStr = end != nil ? f.string(from: end!) : "now"
         return "\(startStr) – \(endStr)"
+    }
+
+    /// Elapsed-so-far for a running visit (no clock-out yet), else the
+    /// stored duration. Never "0h 0m" for a visit that is still going.
+    private var durationLabel: String {
+        guard isInProgress else { return visit.durationText }
+        guard let start = visit.actualStart else { return "—" }
+        let mins = max(0, Int(Date().timeIntervalSince(start) / 60))
+        return "\(mins / 60)h \(mins % 60)m"
     }
 
     var body: some View {
@@ -268,8 +287,9 @@ struct ServerHistoryRow: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(visit.durationText)
+                    Text(durationLabel)
                         .font(.headline)
+                        .foregroundColor(isInProgress ? Theme.primary : .primary)
                     Text(timeText)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -278,6 +298,13 @@ struct ServerHistoryRow: View {
 
             // Status chips row
             HStack(spacing: 6) {
+                // Build 53: running visit — one unambiguous badge. The server's
+                // docStatus for a running visit is also "in progress", which
+                // as a doc chip reads like a documentation state; suppressed
+                // below while the visit itself is running.
+                if isInProgress {
+                    StatusBadge(text: "IN PROGRESS", color: Theme.primary)
+                }
                 // Unsynced badge for offline events
                 if visit.syncState == .pending {
                     StatusBadge(text: "⏳ Unsynced", color: Theme.warning)
@@ -287,7 +314,7 @@ struct ServerHistoryRow: View {
                     StatusBadge(text: "📝 Note", color: Theme.success)
                 }
                 // Doc status
-                if let ds = visit.serverDocStatus, !ds.isEmpty {
+                if !isInProgress, let ds = visit.serverDocStatus, !ds.isEmpty {
                     StatusBadge(text: ds.capitalized, color: ds.lowercased() == "complete" ? Theme.success : Theme.warning)
                 }
                 // Pending request badges
@@ -315,12 +342,14 @@ struct ServerHistoryRow: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(Theme.primary)
                 }
-                if visit.timeFixStatus == .none {
+                // Build 53: no Time Fix / Delete on a running visit (Nick,
+                // 2026-09-02 answer 3: read-only until clock-out).
+                if !isInProgress && visit.timeFixStatus == .none {
                     Button("Time Fix", action: onTimeFix)
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(Theme.primary)
                 }
-                if visit.deleteRequestStatus == .none {
+                if !isInProgress && visit.deleteRequestStatus == .none {
                     Button("Delete", action: onRequestDelete)
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(Theme.danger)
