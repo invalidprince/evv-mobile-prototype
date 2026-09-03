@@ -1,0 +1,101 @@
+
+// ---------------------------------------------------------------------------
+// The checks. Every case runs the REAL PunchReminderPlanner.plan.
+// ---------------------------------------------------------------------------
+var passed = 0; var failed: [String] = []
+func check(_ name: String, _ cond: Bool, _ extra: String = "") {
+    if cond { passed += 1; print("  ✓ \(name)") } else { failed.append(name); print("  ✗ \(name) \(extra)") }
+}
+let now = Date(timeIntervalSince1970: 1_800_000_000) // fixed "now"
+let min = 60.0
+func row(shift: Int? = 1, visit: String? = nil, scheduled: Bool = true, inProgress: Bool = false,
+         clockIn: Bool = true, pending: Bool = false, start: Date, end: Date, name: String = "Erik Hoover") -> PunchReminderInput {
+    PunchReminderInput(serverShiftId: shift, serverVisitId: visit, isScheduled: scheduled, isInProgress: inProgress,
+                       requiresClockIn: clockIn, isPendingApproval: pending, scheduledStart: start, scheduledEnd: end, clientName: name)
+}
+let policy = PunchReminderPolicy(appEnabled: true, clockInAfterMin: 15, clockOutAfterMin: 60)
+let upcoming = row(shift: 613, start: now.addingTimeInterval(30 * min), end: now.addingTimeInterval(90 * min))
+
+print("\n=== decoder: GET /api/me/shifts → punchReminders ===")
+do {
+    let json = #"{"shifts":[],"openShifts":[],"shiftRequestMaxDays":7,"punchReminders":{"appEnabled":true,"clockInAfterMin":15,"clockOutAfterMin":60}}"#
+    let r = try JSONDecoder().decode(ShiftsResponse.self, from: json.data(using: .utf8)!)
+    check("decodes the v0.4.430 payload", r.punchReminders == policy, "\(String(describing: r.punchReminders))")
+    let old = #"{"shifts":[],"openShifts":[]}"#
+    let r2 = try JSONDecoder().decode(ShiftsResponse.self, from: old.data(using: .utf8)!)
+    check("an OLDER server (no key) decodes → nil policy", r2.punchReminders == nil)
+    let off = #"{"shifts":[],"punchReminders":{"appEnabled":false,"clockInAfterMin":15,"clockOutAfterMin":null}}"#
+    let r3 = try JSONDecoder().decode(ShiftsResponse.self, from: off.data(using: .utf8)!)
+    check("null minutes decode as nil (leg off)", r3.punchReminders?.clockOutAfterMin == nil && r3.punchReminders?.isEnabled == false)
+} catch { check("decoder threw", false, "\(error)") }
+
+print("\n=== planner: missed clock-in ===")
+var plan = PunchReminderPlanner.plan(inputs: [upcoming], policy: policy, now: now)
+check("one scheduled shift → exactly one clock-in reminder", plan.count == 1 && plan[0].kind == .clockIn, "\(plan)")
+check("fires at scheduled start + 15 min (the staff SMS leg)", plan.first?.fireAt == upcoming.scheduledStart.addingTimeInterval(15 * min))
+check("identifier is keyed on the SERVER shift id, never Visit.id", plan.first?.identifier == "punch-in-shift-613")
+check("body names the individual + time like the note reminder; title asks the question",
+      (plan.first?.body.contains("Erik Hoover") ?? false) && (plan.first?.title == "Forgot to clock in?"))
+
+let started = row(shift: 7, start: now.addingTimeInterval(-40 * min), end: now.addingTimeInterval(60 * min))
+plan = PunchReminderPlanner.plan(inputs: [started], policy: policy, now: now)
+check("a shift whose start+15 is already in the PAST schedules nothing (never fire-immediately)", plan.isEmpty, "\(plan)")
+
+let inProg = row(shift: 8, visit: "V-2048", scheduled: false, inProgress: true,
+                 start: now.addingTimeInterval(-60 * min), end: now.addingTimeInterval(60 * min))
+plan = PunchReminderPlanner.plan(inputs: [inProg], policy: policy, now: now)
+check("🔑 a clocked-in shift has NO clock-in reminder (compliance = silence)", !plan.contains { $0.kind == .clockIn })
+
+print("\n=== planner: missed clock-out ===")
+check("…and exactly one clock-out reminder at scheduled end + 60", plan.count == 1 && plan[0].kind == .clockOut &&
+      plan[0].fireAt == inProg.scheduledEnd.addingTimeInterval(60 * min), "\(plan)")
+check("keyed on the SERVER visit id", plan.first?.identifier == "punch-out-visit-V-2048")
+check("title/body", plan.first?.title == "Still clocked in?" && (plan.first?.body.contains("Erik Hoover") ?? false))
+
+let offlineInProg = row(shift: 9, visit: nil, scheduled: false, inProgress: true,
+                        start: now.addingTimeInterval(-10 * min), end: now.addingTimeInterval(50 * min))
+plan = PunchReminderPlanner.plan(inputs: [offlineInProg], policy: policy, now: now)
+check("an OFFLINE clock-in (no visit id yet) keys the clock-out reminder on the shift", plan.first?.identifier == "punch-out-shift-9")
+
+let done = row(shift: 10, visit: "V-1", scheduled: false, inProgress: false,
+               start: now.addingTimeInterval(-120 * min), end: now.addingTimeInterval(-60 * min))
+plan = PunchReminderPlanner.plan(inputs: [done], policy: policy, now: now)
+check("🔑 a COMPLETED visit gets no reminder of either kind", plan.isEmpty, "\(plan)")
+
+let overnight = row(shift: 11, visit: "V-N", scheduled: false, inProgress: true,
+                    start: now.addingTimeInterval(-30 * min), end: now.addingTimeInterval(-30 * min))
+plan = PunchReminderPlanner.plan(inputs: [overnight], policy: policy, now: now)
+check("12 AM → 12 AM (end == start) is a FULL DAY: clock-out reminder lands +24h+60m, not in the past",
+      plan.count == 1 && plan[0].fireAt == overnight.scheduledStart.addingTimeInterval(86_400 + 60 * min), "\(plan)")
+
+print("\n=== planner: structural exemptions (the server's, mirrored) ===")
+let manual = row(shift: 12, clockIn: false, start: now.addingTimeInterval(30 * min), end: now.addingTimeInterval(90 * min))
+check("manual-time service (requiresClockIn=false) → nothing", PunchReminderPlanner.plan(inputs: [manual], policy: policy, now: now).isEmpty)
+let pendingReq = row(shift: 13, pending: true, start: now.addingTimeInterval(30 * min), end: now.addingTimeInterval(90 * min))
+check("pending shift request → nothing", PunchReminderPlanner.plan(inputs: [pendingReq], policy: policy, now: now).isEmpty)
+let noServer = row(shift: nil, start: now.addingTimeInterval(30 * min), end: now.addingTimeInterval(90 * min))
+check("mock-mode visit (no server shift id) → nothing", PunchReminderPlanner.plan(inputs: [noServer], policy: policy, now: now).isEmpty)
+
+print("\n=== planner: policy gates ===")
+check("policy nil (older server) → nothing", PunchReminderPlanner.plan(inputs: [upcoming, inProg], policy: nil, now: now).isEmpty)
+let off = PunchReminderPolicy(appEnabled: false, clockInAfterMin: 15, clockOutAfterMin: 60)
+check("Settings 'Phone reminders' OFF → nothing, even with minutes set", PunchReminderPlanner.plan(inputs: [upcoming, inProg], policy: off, now: now).isEmpty)
+let inOnly = PunchReminderPolicy(appEnabled: true, clockInAfterMin: 15, clockOutAfterMin: nil)
+plan = PunchReminderPlanner.plan(inputs: [upcoming, inProg], policy: inOnly, now: now)
+check("blank clock-out staff leg → only the clock-in reminder", plan.count == 1 && plan[0].kind == .clockIn)
+let custom = PunchReminderPolicy(appEnabled: true, clockInAfterMin: 5, clockOutAfterMin: 120)
+plan = PunchReminderPlanner.plan(inputs: [upcoming, inProg], policy: custom, now: now)
+check("minutes come from the SERVER, not a constant (5 / 120 honoured)",
+      plan.contains { $0.kind == .clockIn && $0.fireAt == upcoming.scheduledStart.addingTimeInterval(5 * min) } &&
+      plan.contains { $0.kind == .clockOut && $0.fireAt == inProg.scheduledEnd.addingTimeInterval(120 * min) })
+
+print("\n=== planner: reconcile properties ===")
+plan = PunchReminderPlanner.plan(inputs: [upcoming, upcoming], policy: policy, now: now)
+check("the same shift twice (1:2 sibling rows) → ONE reminder, never a duplicate", plan.count == 1)
+plan = PunchReminderPlanner.plan(inputs: [inProg, upcoming], policy: policy, now: now)
+check("plan is sorted by fire time", plan.count == 2 && plan[0].fireAt <= plan[1].fireAt)
+check("every identifier carries the punch- prefix (so reconcile never touches note-eod-/note-late-)",
+      plan.allSatisfy { $0.identifier.hasPrefix(PunchReminderPlanner.identifierPrefix) } && !"note-eod-x".hasPrefix(PunchReminderPlanner.identifierPrefix))
+
+print("\n\(passed) passed, \(failed.count) failed")
+if !failed.isEmpty { exit(1) }

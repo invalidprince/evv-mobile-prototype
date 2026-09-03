@@ -95,6 +95,10 @@ struct ShiftsResponse: Decodable {
     /// The acting role's shift-request look-back window in days (server
     /// v0.4.400, per-role Settings value; default 7). Older servers omit it.
     let shiftRequestMaxDays: Int?
+    /// Build 60 — the phone's missed-punch reminder policy (server v0.4.430):
+    /// Settings → Punch Alerts' "Phone reminders" switch + the STAFF-leg
+    /// minutes. Older servers omit it → no punch reminders are scheduled.
+    let punchReminders: PunchReminderPolicy?
 }
 
 /// An active, unassigned recurring schedule a staff member can permanently

@@ -386,6 +386,11 @@ final class AppState: ObservableObject {
         todayVisits[idx].actualStart = Date()
         startTimerIfNeeded()
         haptic(.success)
+        // Build 60 — the staff member has punched (live or about to be queued):
+        // the "forgot to clock in?" reminder for this shift is moot NOW, not at
+        // the next refresh. A server rejection below triggers a refresh, which
+        // re-plans it if the shift is still unpunched.
+        PunchReminderCenter.shared.punchedIn(shiftId: shiftId)
 
         func revert() {
             if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
@@ -496,6 +501,8 @@ final class AppState: ObservableObject {
             } else {
                 allVisitIds = []
             }
+            // Build 60 — the visit is ending: no "still clocked in?" reminder.
+            PunchReminderCenter.shared.punchedOut(visitIds: allVisitIds, shiftId: todayVisits[idx].serverShiftId)
 
             // Server mode: optimistic update + API call
             todayVisits[idx].actualEnd = Date()
@@ -1158,6 +1165,8 @@ final class AppState: ObservableObject {
         serverExceptions = []
         serverOpenShifts = []
         serverOpenRules = []
+        // Build 60 — a former session's punch reminders must not buzz this phone.
+        PunchReminderCenter.shared.cancelAll()
         serverIndividuals = []
         individualsFromCacheDate = nil
         dueMedications = []      // PHI — med names must not survive sign-out
@@ -1363,6 +1372,12 @@ final class AppState: ObservableObject {
             serverOpenRules = response.openRules ?? []
             lastSync = Date()
             startTimerIfNeeded()
+            // Build 60 — reconcile the local missed-punch reminders against the
+            // fresh Today list using the server's policy (same minutes as the
+            // staff SMS legs). Punched / cancelled / re-timed shifts lose their
+            // reminder here; new scheduled shifts gain one.
+            PunchReminderCenter.shared.sync(inputs: newToday.map(PunchReminderInput.init(visit:)),
+                                            policy: response.punchReminders)
             // Refresh the Today-tab medications card alongside the shifts —
             // fire-and-forget so a slow meds query never delays the punch UI.
             Task { await self.refreshDueMedications() }
