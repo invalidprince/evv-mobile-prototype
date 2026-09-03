@@ -1,0 +1,222 @@
+Attributes: Application, 0x10f70c9d0, pid: 33859, label: 'EVV Mobile'
+Element subtree:
+ →Application, 0x10f70c9d0, pid: 33859, label: 'EVV Mobile'
+    Window (Main), 0x10f70c730, {{0.0, 0.0}, {402.0, 874.0}}
+      Other, 0x10f70c850, {{0.0, 0.0}, {402.0, 874.0}}
+        Other, 0x10f71f9f0, {{0.0, 0.0}, {402.0, 874.0}}
+          Other, 0x10f70a090, {{-402.0, -874.0}, {1206.0, 2622.0}}
+          Other, 0x10f71f750, {{0.0, 0.0}, {402.0, 874.0}}
+            Other, 0x10f71f870, {{0.0, 0.0}, {402.0, 874.0}}
+              Image, 0x10f709e50, {{17.0, 69.3}, {13.0, 13.0}}, identifier: 'checkmark.circle.fill', label: 'Selected', Selected
+              StaticText, 0x10f709f70, {{39.0, 68.0}, {101.7, 15.7}}, label: 'Synced just now'
+              Other, 0x10f71dbe0, {{0.0, 89.7}, {402.0, 784.3}}
+                Other, 0x10f71dd00, {{0.0, 89.7}, {402.0, 784.3}}
+                  Other, 0x10f71de20, {{0.0, 89.7}, {402.0, 784.3}}
+                    Other, 0x10f71df40, {{0.0, 89.7}, {402.0, 784.3}}
+                      Other, 0x10f71e060, {{0.0, 89.7}, {402.0, 784.3}}
+                        Other, 0x10f720b10, {{0.0, 89.7}, {402.0, 784.3}}
+                          Other, 0x10f720c30, {{0.0, 89.7}, {402.0, 784.3}}
+                            Other, 0x10f720d50, {{0.0, 89.7}, {402.0, 784.3}}
+                              Other, 0x10f720e70, {{0.0, 89.7}, {402.0, 784.3}}
+                                Other, 0x10f720f90, {{0.0, 89.7}, {402.0, 784.3}}
+                                  Other, 0x10f7210b0, {{0.0, 89.7}, {402.0, 784.3}}
+                                    ScrollView, 0x10f7211d0, {{0.0, 89.7}, {402.0, 784.3}}
+                                      Other, 0x10f7212f0, {{0.0, 89.7}, {402.0, 462.0}}
+                                        StaticText, 0x10f721410, {{16.0, 105.7}, {208.3, 26.3}}, label: 'Good evening, Maria'
+                                        Image, 0x10f721530, {{326.7, 123.3}, {11.0, 11.0}}, identifier: 'checkmark.circle.fill', label: 'Selected', Selected
+                                        StaticText, 0x10f721650, {{343.7, 121.7}, {42.3, 14.3}}, label: 'Synced'
+                                        StaticText, 0x10f721770, {{16.0, 134.0}, {160.0, 18.0}}, label: 'Thursday, September 3'
+                                        StaticText, 0x10f721890, {{16.0, 172.0}, {74.0, 24.0}}, label: 'Up Next'
+                                        StaticText, 0x10f7219b0, {{32.0, 228.0}, {145.0, 18.0}}, label: '9:44 PM – 10:44 PM'
+                                        StaticText, 0x10f721ad0, {{88.0, 258.0}, {88.3, 20.3}}, label: 'Alex Rivera'
+                                        StaticText, 0x10f721bf0, {{42.7, 276.9}, {22.7, 20.0}}, label: 'AR'
+                                        StaticText, 0x10f721d10, {{88.0, 280.3}, {119.0, 18.0}}, label: 'In-Home Support'
+                                        StaticText, 0x10f721e30, {{89.0, 301.0}, {239.3, 14.7}}, label: '45 Birchwood Ln, Harrisburg, PA 17110'
+                                        Button, 0x10f721f50, {{32.0, 327.7}, {338.0, 52.0}}, label: 'Clock In'
+                                          Image, 0x10f722070, {{156.3, 345.3}, {17.3, 17.3}}, identifier: 'play.circle.fill', label: 'Play'
+                                          StaticText, 0x10f722190, {{156.3, 343.6}, {90.7, 20.3}}, label: 'Clock In'
+                                        Button, 0x10f7222b0, {{16.0, 419.7}, {370.0, 52.0}}, label: 'Start Unscheduled Visit'
+                                          Image, 0x10f7223d0, {{94.3, 437.3}, {17.3, 17.3}}, identifier: 'plus.circle.fill', label: 'Add'
+                                          StaticText, 0x10f7224f0, {{94.3, 435.6}, {214.7, 20.3}}, label: 'Start Unscheduled Visit'
+                                        Button, 0x10f722610, {{16.0, 483.7}, {370.0, 52.0}}, label: 'Non-Billable Time'
+                                          Image, 0x10f722730, {{116.3, 501.3}, {20.0, 17.0}}, identifier: 'briefcase.fill', label: 'Briefcase'
+                                          StaticText, 0x10f722850, {{116.3, 499.6}, {171.3, 20.3}}, label: 'Non-Billable Time'
+                                      Other, 0x10f722970, {{0.0, 89.7}, {402.0, 784.3}}
+                                        Other, 0x10f722a90, {{0.0, 726.2}, {402.0, 147.8}}
+                                      Other, 0x10f722bb0, {{0.0, 89.7}, {402.0, 784.3}}
+                                      Other, 0x10f722cd0, {{369.0, 117.7}, {30.0, 673.3}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x10f722df0, {{396.0, 360.0}, {3.0, 428.0}}
+                                      Other, 0x10f722f10, {{369.0, 117.7}, {30.0, 673.3}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x10f723030, {{396.0, 360.0}, {3.0, 428.0}}
+                            Other, 0x10f723150, {{0.0, 89.7}, {402.0, 784.3}}
+                              Other, 0x10f723270, {{0.0, 89.7}, {402.0, 784.3}}
+                Other, 0x10f723390, {{0.0, 791.0}, {402.0, 83.0}}
+                  Other, 0x10f7234b0, {{0.0, 89.7}, {402.0, 784.3}}
+                    TabBar, 0x10f7235d0, {{0.0, 791.0}, {402.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x10f7236f0, {{21.0, 791.0}, {360.0, 62.0}}
+                        Other, 0x10f723810, {{21.0, 791.0}, {80.0, 54.0}}
+                        Other, 0x10f723930, {{21.0, 791.0}, {360.0, 62.0}}
+                          Button, 0x10f723a50, {{25.0, 795.0}, {80.0, 54.0}}, identifier: 'sun.max.fill', label: 'Today', Selected
+                            Image, 0x10f723b70, {{51.0, 800.0}, {29.0, 29.3}}, identifier: 'sun.max.fill', label: 'brightness higher'
+                          Button, 0x10f723c90, {{93.0, 795.0}, {80.0, 54.0}}, identifier: 'calendar', label: 'Schedule'
+                            Image, 0x10f723db0, {{119.0, 802.3}, {29.0, 25.0}}, identifier: 'calendar', label: 'calendar'
+                          Button, 0x10f723ed0, {{161.0, 795.0}, {80.0, 54.0}}, identifier: 'clock.arrow.circlepath', label: 'History'
+                            Image, 0x10f723ff0, {{186.7, 801.3}, {27.7, 27.3}}, identifier: 'clock.arrow.trianglehead.counterclockwise.rotate.90', label: 'clock.arrow.trianglehead.counterclockwise.rotate.90'
+                          Button, 0x10f724110, {{229.0, 795.0}, {80.0, 54.0}}, identifier: 'checklist', label: 'Work'
+                            Image, 0x10f724230, {{253.0, 801.3}, {32.0, 27.3}}, identifier: 'checklist', label: 'checklist'
+                          Button, 0x10f724350, {{297.0, 795.0}, {80.0, 54.0}}, identifier: 'ellipsis.circle.fill', label: 'More'
+                            Image, 0x10f724470, {{323.0, 801.3}, {27.3, 27.3}}, identifier: 'ellipsis.circle.fill', label: 'More'
+                        Other, 0x10f724590, {{25.0, 795.0}, {80.0, 54.0}}
+                          Other, 0x10f7246b0, {{25.0, 795.0}, {80.0, 54.0}}
+                            Other, 0x10f7247d0, {{25.0, 795.0}, {80.0, 54.0}}
+                            Other, 0x10f7248f0, {{25.0, 795.0}, {80.0, 54.0}}
+                              Other, 0x10f724a10, {{25.0, 795.0}, {80.0, 54.0}}
+                                Other, 0x10f724b30, {{25.0, 795.0}, {80.0, 54.0}}
+                                  Other, 0x10f724c50, {{25.0, 795.0}, {80.0, 54.0}}
+                                Other, 0x10f724d70, {{25.0, 795.0}, {80.0, 54.0}}
+                              Other, 0x10f724e90, {{25.0, 795.0}, {80.0, 54.0}}
+                  Other, 0x10f724fb0, {{0.0, 791.0}, {402.0, 83.0}}
+                    Other, 0x10f7250d0, {{0.0, 791.0}, {402.0, 83.0}}
+                      Other, 0x10f7251f0, {{0.0, 791.0}, {402.0, 83.0}}
+                        Other, 0x10f725310, {{0.0, 791.0}, {402.0, 83.0}}
+                          Other, 0x10f725430, {{0.0, 791.0}, {402.0, 83.0}}
+                            Other, 0x10f725550, {{0.0, 791.0}, {402.0, 83.0}}
+      Other, 0x10f725670, {{0.0, 0.0}, {402.0, 874.0}}
+        Other, 0x10f725790, {{-402.0, -874.0}, {1206.0, 2622.0}}
+        Other, 0x10f7258b0, {{0.0, 62.0}, {402.0, 812.0}}
+          Other, 0x10f7259d0, {{0.0, 62.0}, {402.0, 812.0}}
+            Other, 0x10f725af0, {{0.0, 62.0}, {402.0, 812.0}}
+              Other, 0x10f725c10, {{0.0, 62.0}, {402.0, 812.0}}
+                Other, 0x10f725d30, {{0.0, 62.0}, {402.0, 812.0}}
+                  Other, 0x10f725e50, {{0.0, 62.0}, {402.0, 812.0}}
+                    NavigationBar, 0x10f725f70, {{0.0, 78.0}, {402.0, 54.0}}, identifier: 'Unscheduled Visit'
+                      Other, 0x10f726090, {{20.0, 82.0}, {76.7, 36.0}}, label: 'Cancel'
+                        Other, 0x10f7261b0, {{20.0, 82.0}, {76.7, 36.0}}
+                          Button, 0x10f7262d0, {{20.0, 82.0}, {76.7, 36.0}}, label: 'Cancel'
+                      StaticText, 0x10f7263f0, {{128.7, 89.7}, {144.3, 20.7}}, label: 'Unscheduled Visit'
+                    Other, 0x10f726510, {{0.0, 62.0}, {402.0, 812.0}}
+                      Other, 0x10f726630, {{0.0, 62.0}, {402.0, 812.0}}
+                        Other, 0x10f726750, {{0.0, 62.0}, {402.0, 812.0}}
+                          Other, 0x10f726870, {{0.0, 62.0}, {402.0, 812.0}}
+                            CollectionView, 0x10f726990, {{0.0, 62.0}, {402.0, 812.0}}
+                              Other, 0x10f726ab0, {{-16.0, -1492.0}, {434.0, 2079.0}}
+                              Other, 0x10f726bd0, {{0.0, 62.0}, {402.0, 812.0}}
+                              Other, 0x10f726cf0, {{0.0, 62.0}, {402.0, 812.0}}
+                              Cell, 0x10f726e10, {{16.0, 132.0}, {370.0, 40.3}}
+                                Other, 0x10f726f30, {{16.0, 132.0}, {370.0, 40.3}}
+                                Other, 0x10f727050, {{16.0, 132.0}, {370.0, 40.3}}
+                                  Other, 0x10f727170, {{16.0, 132.0}, {370.0, 40.3}}
+                                    Other, 0x10f727290, {{16.0, 132.0}, {370.0, 40.3}}
+                                      StaticText, 0x10f7273b0, {{16.0, 132.0}, {370.0, 40.3}}, label: 'Individual(s) — 4'
+                              Cell, 0x10f7274d0, {{16.0, 172.3}, {370.0, 63.0}}
+                                Other, 0x10f727650, {{16.0, 172.3}, {370.0, 63.0}}
+                                  Other, 0x10f727770, {{16.0, 172.3}, {370.0, 63.0}}
+                                Other, 0x10f727890, {{16.0, 172.3}, {370.0, 63.0}}
+                                  Other, 0x10f7279b0, {{16.0, 172.3}, {370.0, 63.0}}
+                                    Other, 0x10f727ad0, {{16.0, 172.3}, {370.0, 63.0}}
+                                      Button, 0x10f727bf0, {{16.0, 172.3}, {370.0, 63.0}}, label: 'Unlisted Individual'
+                                        Image, 0x10f727d10, {{34.3, 194.7}, {21.3, 18.3}}, identifier: 'person.fill.questionmark', label: 'person.fill.questionmark'
+                                        StaticText, 0x10f727e30, {{66.0, 194.8}, {129.7, 18.0}}, label: 'Unlisted Individual'
+                              Cell, 0x10f727f50, {{16.0, 235.3}, {370.0, 64.0}}
+                                Other, 0x10f728070, {{16.0, 235.3}, {370.0, 64.0}}
+                                  Other, 0x10f728190, {{16.0, 235.3}, {370.0, 64.0}}
+                                Other, 0x10f7282b0, {{16.0, 235.3}, {370.0, 64.0}}
+                                  Other, 0x10f7283d0, {{16.0, 235.3}, {370.0, 64.0}}
+                                    Other, 0x10f7284f0, {{16.0, 235.3}, {370.0, 64.0}}
+                                      TextField, 0x10f728610, {{32.0, 250.3}, {338.0, 34.0}}, placeholderValue: 'Search…'
+                              Other, 0x10f728730, {{66.0, 234.3}, {304.0, 1.0}}
+                              Cell, 0x10f728850, {{16.0, 299.3}, {370.0, 258.0}}
+                                Other, 0x10f728970, {{16.0, 299.3}, {370.0, 258.0}}
+                                  Other, 0x10f728a90, {{16.0, 299.3}, {370.0, 258.0}}
+                                Other, 0x10f728bb0, {{16.0, 299.3}, {370.0, 258.0}}
+                                  Other, 0x10f728cd0, {{16.0, 299.3}, {370.0, 258.0}}
+                                    Other, 0x10f728df0, {{16.0, 299.3}, {370.0, 258.0}}
+                                      ScrollView, 0x10f728f10, {{32.0, 314.3}, {338.0, 228.0}}
+                                        Other, 0x10f729030, {{32.0, 314.3}, {338.0, 228.0}}
+                                          Other, 0x10f729150, {{32.0, 314.3}, {338.0, 227.7}}
+                                            Button, 0x10f729270, {{32.0, 314.3}, {338.0, 56.7}}, label: 'AR, Alex Rivera, In-Home & Community Support (1:1), Companion (1:1), In-Home & Community Support (1:1), IDD Life Sharing – Over 30 Hours Per Week On Average With Day - NG 1 - 1 person'
+                                              StaticText, 0x10f729520, {{40.5, 334.5}, {19.0, 16.3}}, label: 'AR'
+                                              StaticText, 0x10f729640, {{76.0, 324.3}, {84.0, 20.3}}, label: 'Alex Rivera'
+                                              StaticText, 0x10f729760, {{76.0, 346.7}, {285.7, 14.3}}, label: 'In-Home & Community Support (1:1), Companion (1:1), In-Home & Community Support (1:1), IDD Life Sharing – Over 30 Hours Per Week On Average With Day - NG 1 - 1 person'
+                                            Button, 0x10f7299f0, {{32.0, 371.3}, {338.0, 56.7}}, label: 'JD, Jane Doe, Community Participation Support'
+                                              StaticText, 0x10f729b10, {{41.0, 391.5}, {18.0, 16.3}}, label: 'JD'
+                                              StaticText, 0x10f729c30, {{76.0, 381.3}, {71.7, 20.3}}, label: 'Jane Doe'
+                                              StaticText, 0x10f729d50, {{76.0, 403.7}, {187.7, 14.3}}, label: 'Community Participation Support'
+                                            Button, 0x10f729e70, {{32.0, 428.3}, {338.0, 56.7}}, label: 'ML, Marcus Lee, Community Participation Support'
+                                              StaticText, 0x10f729f90, {{40.0, 448.5}, {20.0, 16.3}}, label: 'ML'
+                                              StaticText, 0x10f72a0b0, {{76.0, 438.3}, {88.0, 20.3}}, label: 'Marcus Lee'
+                                              StaticText, 0x10f72a1d0, {{76.0, 460.7}, {187.7, 14.3}}, label: 'Community Participation Support'
+                                            Button, 0x10f72a2f0, {{32.0, 485.3}, {338.0, 56.7}}, label: 'OB, Owen Blake, In-Home & Community Support (1:1), Behavioral Supports – Level 1'
+                                              StaticText, 0x10f72a410, {{40.0, 505.5}, {20.0, 16.3}}, label: 'OB'
+                                              StaticText, 0x10f72a530, {{76.0, 495.3}, {89.7, 20.3}}, label: 'Owen Blake'
+                                              StaticText, 0x10f72a650, {{76.0, 517.7}, {280.7, 14.3}}, label: 'In-Home & Community Support (1:1), Behavioral Supports – Level 1'
+                                        Other, 0x10f72a770, {{337.0, 314.3}, {30.0, 218.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                          Other, 0x10f72a890, {{364.0, 522.3}, {3.0, 7.0}}
+                                        Other, 0x10f72a9b0, {{337.0, 314.3}, {30.0, 218.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                          Other, 0x10f72aad0, {{364.0, 522.3}, {3.0, 7.0}}
+                              Other, 0x10f72abf0, {{32.0, 298.3}, {338.0, 1.0}}
+                              Cell, 0x10f72ad10, {{16.0, 557.3}, {370.0, 29.7}}
+                                Other, 0x10f72ae30, {{16.0, 557.3}, {370.0, 29.7}}
+                                Other, 0x10f72af50, {{16.0, 557.3}, {370.0, 29.7}}
+                                  Other, 0x10f72b070, {{16.0, 557.3}, {370.0, 29.7}}
+                                    Other, 0x10f72b190, {{16.0, 557.3}, {370.0, 29.7}}
+                                      StaticText, 0x10f72b2b0, {{16.0, 557.3}, {370.0, 29.7}}, label: 'Select up to 2 for a group (1:2) visit.'
+                              Other, 0x10f72b3d0, {{-16.0, 587.0}, {434.0, 110.0}}
+                              Cell, 0x10f72b4f0, {{16.0, 587.0}, {370.0, 40.3}}
+                                Other, 0x10f72b610, {{16.0, 587.0}, {370.0, 40.3}}
+                                Other, 0x10f72b730, {{16.0, 587.0}, {370.0, 40.3}}
+                                  Other, 0x10f72b850, {{16.0, 587.0}, {370.0, 40.3}}
+                                    Other, 0x10f72b970, {{16.0, 587.0}, {370.0, 40.3}}
+                                      StaticText, 0x10f72ba90, {{16.0, 587.0}, {370.0, 40.3}}, label: 'Service'
+                              Cell, 0x10f72bbb0, {{16.0, 627.3}, {370.0, 52.0}}
+                                Other, 0x10f72bcd0, {{16.0, 627.3}, {370.0, 52.0}}
+                                  Other, 0x10f72bdf0, {{16.0, 627.3}, {370.0, 52.0}}
+                                Other, 0x10f72bf10, {{16.0, 627.3}, {370.0, 52.0}}
+                                  Other, 0x10f72c030, {{16.0, 627.3}, {370.0, 52.0}}
+                                    Other, 0x10f72c150, {{16.0, 627.3}, {370.0, 52.0}}
+                                      StaticText, 0x10f72c270, {{16.0, 627.3}, {370.0, 52.0}}, label: 'Select an individual first'
+                              Other, 0x10f72c390, {{-16.0, 697.0}, {434.0, 218.0}}
+                              Cell, 0x10f72c4b0, {{16.0, 697.0}, {370.0, 40.3}}
+                                Other, 0x10f72c5d0, {{16.0, 697.0}, {370.0, 40.3}}
+                                Other, 0x10f72c6f0, {{16.0, 697.0}, {370.0, 40.3}}
+                                  Other, 0x10f72c810, {{16.0, 697.0}, {370.0, 40.3}}
+                                    Other, 0x10f72c930, {{16.0, 697.0}, {370.0, 40.3}}
+                                      StaticText, 0x10f72ca50, {{16.0, 697.0}, {370.0, 40.3}}, label: 'Location'
+                              Cell, 0x10f72cb70, {{16.0, 737.3}, {370.0, 52.0}}
+                                Other, 0x10f72cc90, {{16.0, 737.3}, {370.0, 52.0}}
+                                  Other, 0x10f72cdb0, {{16.0, 737.3}, {370.0, 52.0}}
+                                Other, 0x10f72ced0, {{16.0, 737.3}, {370.0, 52.0}}
+                                  Other, 0x10f72cff0, {{16.0, 737.3}, {370.0, 52.0}}
+                                    Other, 0x10f72d110, {{16.0, 737.3}, {370.0, 52.0}}
+                                      Image, 0x10f72d230, {{34.0, 753.7}, {19.7, 19.3}}, identifier: 'location.slash.fill', label: 'Location Services Off'
+                                      StaticText, 0x10f72d350, {{16.0, 737.3}, {370.0, 52.0}}, label: 'Location unavailable'
+                              Cell, 0x10f72d470, {{16.0, 789.3}, {370.0, 64.0}}
+                                Other, 0x10f72d590, {{16.0, 789.3}, {370.0, 64.0}}
+                                  Other, 0x10f72d6b0, {{16.0, 789.3}, {370.0, 64.0}}
+                                Other, 0x10f72d7d0, {{16.0, 789.3}, {370.0, 64.0}}
+                                  Other, 0x10f72d8f0, {{16.0, 789.3}, {370.0, 64.0}}
+                                    Other, 0x10f72da10, {{16.0, 789.3}, {370.0, 64.0}}
+                                      TextField, 0x10f72db30, {{32.0, 804.3}, {338.0, 34.0}}, placeholderValue: 'Service address (street, city, state)'
+                              Other, 0x10f72dc50, {{72.0, 788.3}, {298.0, 1.0}}
+                              Cell, 0x10f72dd70, {{16.0, 853.3}, {370.0, 61.7}}
+                                Other, 0x10f72de90, {{16.0, 853.3}, {370.0, 61.7}}
+                                Other, 0x10f72dfb0, {{16.0, 853.3}, {370.0, 61.7}}
+                                  Other, 0x10f72e0d0, {{16.0, 853.3}, {370.0, 61.7}}
+                                    Other, 0x10f72e1f0, {{16.0, 853.3}, {370.0, 61.7}}
+                                      StaticText, 0x10f72e310, {{16.0, 853.3}, {370.0, 61.7}}, label: 'GPS couldn't be captured. Enter the address where this service is being provided — the visit will be flagged for manager review.'
+                              Other, 0x10f72e550, {{369.0, 132.0}, {30.0, 680.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                                Other, 0x10f72e670, {{396.0, 816.0}, {3.0, 7.0}}
+                              Other, 0x10f72e790, {{369.0, 132.0}, {30.0, 680.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+                                Other, 0x10f72e8b0, {{396.0, 816.0}, {3.0, 7.0}}
+                    Other, 0x10f72e9d0, {{0.0, 62.0}, {402.0, 812.0}}
+                      Other, 0x10f72eaf0, {{0.0, 62.0}, {402.0, 812.0}}
+    Window, 0x10f72ec10, {{0.0, 0.0}, {402.0, 874.0}}
+      Other, 0x10f72ed30, {{0.0, 0.0}, {402.0, 874.0}}
+        Other, 0x10f72ee50, {{0.0, 0.0}, {402.0, 874.0}}
+Path to element:
+ →Application, 0x10f70c9d0, pid: 33859, label: 'EVV Mobile'
+Query chain:
+ →Find: Target Application 'net.fbhi.evvmobile'
+  Output: {
+    Application, 0x10f667320, pid: 33859, label: 'EVV Mobile'
+  }

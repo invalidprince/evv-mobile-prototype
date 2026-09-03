@@ -1,0 +1,9 @@
+getpwuid_r did not find a match for uid 501
+Filtering the log data using "composedMessage CONTAINS "[punch-reminders]""
+Timestamp               Ty Process[PID:TID]
+2026-09-03 19:50:48.714 Df EVVMobile[34518:aab6c7] (Foundation) [punch-reminders] reconciled: 1 pending (1 clock-in, 0 clock-out); enabled=true clockIn=15 clockOut=60; dropped 1; ids=punch-in-shift-699@22:05
+2026-09-03 19:52:26.129 Df EVVMobile[34666:aad29f] (Foundation) [punch-reminders] reconciled: 1 pending (1 clock-in, 0 clock-out); enabled=true clockIn=15 clockOut=60; dropped 1; ids=punch-in-shift-699@22:05
+2026-09-03 19:52:44.586 Df EVVMobile[34666:aad242] (Foundation) [punch-reminders] punchedIn: cancelled punch-in-shift-699
+2026-09-03 19:52:44.905 Df EVVMobile[34666:aad512] (Foundation) [punch-reminders] reconciled: 1 pending (0 clock-in, 1 clock-out); enabled=true clockIn=15 clockOut=60; dropped 0; ids=punch-out-visit-V-2058@23:50
+2026-09-03 19:53:06.843 Df EVVMobile[34666:aad5d2] (Foundation) [punch-reminders] signOut: cancelled 1
+Child process terminated with signal 15: Terminated

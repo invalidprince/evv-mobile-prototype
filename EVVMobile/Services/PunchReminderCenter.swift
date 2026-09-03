@@ -202,8 +202,17 @@ final class PunchReminderCenter {
                 let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
                 center.add(UNNotificationRequest(identifier: item.identifier, content: content, trigger: trigger))
             }
-            DiagnosticLogger.shared.logOffline("Punch reminders reconciled: \(plan.count) pending (\(plan.filter { $0.kind == .clockIn }.count) clock-in, \(plan.filter { $0.kind == .clockOut }.count) clock-out); enabled=\(policy?.isEnabled ?? false)")
+            // Identifiers carry server ids only (no names) — safe for the
+            // device log. `log stream --predicate 'eventMessage CONTAINS
+            // "[punch-reminders]"'` is how to see what the phone decided.
+            let summary = "reconciled: \(plan.count) pending (\(plan.filter { $0.kind == .clockIn }.count) clock-in, \(plan.filter { $0.kind == .clockOut }.count) clock-out); enabled=\(policy?.isEnabled ?? false) clockIn=\(policy?.clockInAfterMin.map(String.init) ?? "off") clockOut=\(policy?.clockOutAfterMin.map(String.init) ?? "off"); dropped \(mine.count); ids=\(plan.map { "\($0.identifier)@\(Self.hhmm(item: $0.fireAt))" }.joined(separator: ","))"
+            DiagnosticLogger.shared.logOffline("Punch reminders \(summary)")
+            NSLog("[punch-reminders] %@", summary)
         }
+    }
+
+    private static func hhmm(item date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f.string(from: date)
     }
 
     // MARK: - Cancellation (the moment the punch is recorded)
@@ -211,6 +220,7 @@ final class PunchReminderCenter {
     /// The staff member clocked in (live or queued offline) — the reminder is moot.
     func punchedIn(shiftId: Int) {
         center.removePendingNotificationRequests(withIdentifiers: [PunchReminderPlanner.clockInIdentifier(shiftId: shiftId)])
+        NSLog("[punch-reminders] punchedIn: cancelled %@", PunchReminderPlanner.clockInIdentifier(shiftId: shiftId))
     }
 
     /// The staff member clocked out — drop the clock-out reminder under either key.
@@ -218,6 +228,7 @@ final class PunchReminderCenter {
         var ids = visitIds.filter { !$0.isEmpty }.map { PunchReminderPlanner.clockOutIdentifier(visitId: $0) }
         if let s = shiftId { ids.append(PunchReminderPlanner.clockOutIdentifier(shiftId: s)) }
         if !ids.isEmpty { center.removePendingNotificationRequests(withIdentifiers: ids) }
+        NSLog("[punch-reminders] punchedOut: cancelled %@", ids.joined(separator: ","))
     }
 
     /// Sign-out: nothing about a former session may buzz this phone.
@@ -226,6 +237,7 @@ final class PunchReminderCenter {
         center.getPendingNotificationRequests { [center] pending in
             let mine = pending.map(\.identifier).filter { $0.hasPrefix(PunchReminderPlanner.identifierPrefix) }
             if !mine.isEmpty { center.removePendingNotificationRequests(withIdentifiers: mine) }
+            NSLog("[punch-reminders] signOut: cancelled %d", mine.count)
         }
     }
 }
