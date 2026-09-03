@@ -182,6 +182,23 @@ struct MoreView: View {
                         }
                     }
                 }
+
+                // Build 59 — WHICH build is this phone running? On 2026-09-03
+                // Nick tested a Work-tab change that shipped in build 58 and
+                // reported "Still shows" — and nothing in the app or on the
+                // server could say whether TestFlight had actually updated his
+                // install. Every bug report should be able to quote this line.
+                Section {
+                    HStack {
+                        Spacer()
+                        Text(Self.buildLabel)
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .accessibilityIdentifier("more.buildLabel")
+                        Spacer()
+                    }
+                }
+                .listRowBackground(Color.clear)
             }
             .navigationTitle("More")
             .alert("Log submitted", isPresented: $showLogSuccess) {
@@ -196,6 +213,15 @@ struct MoreView: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    /// "EVV Mobile 0.1.0 · Build 59" — straight from the bundle so it can
+    /// never drift from what TestFlight shows.
+    static var buildLabel: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = (info["CFBundleShortVersionString"] as? String) ?? "?"
+        let build = (info["CFBundleVersion"] as? String) ?? "?"
+        return "EVV Mobile \(version) · Build \(build)"
     }
 
     private func submitLog() {
