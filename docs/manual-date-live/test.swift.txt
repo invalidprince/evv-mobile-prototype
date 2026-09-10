@@ -1,0 +1,144 @@
+// ---------------------------------------------------------------------------
+// LIVE end-to-end: the app's REAL payload path → the DEPLOYED CloudFront server.
+//
+// Everything above this line is verbatim app source (ManualSpan,
+// UnscheduledVisitRequest) and the date-derivation rule below was lifted out of
+// AppState.startUnscheduledManualVisit by gen.py — so this fails if the app ever
+// stops threading the picked date through.
+// ---------------------------------------------------------------------------
+var passed = 0; var failed: [String] = []
+func check(_ name: String, _ cond: Bool, _ extra: String = "") {
+    if cond { passed += 1; print("  ✓ \(name)") } else { failed.append(name); print("  ✗ \(name) \(extra)") }
+}
+
+let BASE = ProcessInfo.processInfo.environment["EVV_BASE"] ?? "https://d2hmfpgqkgeyu.cloudfront.net"
+let EMAIL = ProcessInfo.processInfo.environment["EVV_EMAIL"] ?? "demo@focus.com"
+let PASSWORD = ProcessInfo.processInfo.environment["EVV_PASSWORD"] ?? "DemoEVV2026!"
+let CLIENT_ID = ProcessInfo.processInfo.environment["EVV_CLIENT"] ?? "C001"
+// ⚠️ Use the CODE, not a description. The server resolves either, but prod's
+// description is "IDD Life Sharing – Over 30 Hours Per Week On Average With Day
+// - NG 1 - 1 person" (en-dash included) and a near-miss comes back as
+// "Manual time entry is only allowed for services that do not require clock
+// in/out" — which reads as the manual path being broken rather than as an
+// unmatched service name.
+let SERVICE = ProcessInfo.processInfo.environment["EVV_SERVICE"] ?? "W8593"
+
+func post(_ path: String, _ body: Data, token: String?) -> (Int, String) {
+    var req = URLRequest(url: URL(string: BASE + path)!)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    if let t = token { req.setValue("Bearer " + t, forHTTPHeaderField: "Authorization") }
+    req.httpBody = body
+    req.timeoutInterval = 60
+    var out = (0, "")
+    let sem = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: req) { d, r, _ in
+        out = ((r as? HTTPURLResponse)?.statusCode ?? 0,
+               String(data: d ?? Data(), encoding: .utf8) ?? "")
+        sem.signal()
+    }.resume()
+    _ = sem.wait(timeout: .now() + 90)
+    return out
+}
+
+func get(_ path: String, token: String) -> (Int, String) {
+    var req = URLRequest(url: URL(string: BASE + path)!)
+    if !token.isEmpty { req.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
+    req.timeoutInterval = 60
+    var out = (0, "")
+    let sem = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: req) { d, r, _ in
+        out = ((r as? HTTPURLResponse)?.statusCode ?? 0,
+               String(data: d ?? Data(), encoding: .utf8) ?? "")
+        sem.signal()
+    }.resume()
+    _ = sem.wait(timeout: .now() + 90)
+    return out
+}
+
+print("base=\(BASE)")
+
+// ── 1. Sign in exactly as the app does ─────────────────────────────────────
+let loginBody = try! JSONSerialization.data(withJSONObject: ["email": EMAIL, "password": PASSWORD])
+let (lst, lbody) = post("/api/login", loginBody, token: nil)
+check("1.1 mobile login 200", lst == 200, "\(lst) \(lbody.prefix(160))")
+let loginJson = (try? JSONSerialization.jsonObject(with: lbody.data(using: .utf8)!)) as? [String: Any] ?? [:]
+let TOKEN = (loginJson["token"] as? String) ?? ""
+check("1.2 got a bearer token", !TOKEN.isEmpty)
+if TOKEN.isEmpty { print("\n\(passed) passed, \(failed.count + 1) failed\nFATAL: no token"); exit(1) }
+
+// ── 2. The role window the SHEET would render ──────────────────────────────
+let (sst, sbody) = get("/api/me/shifts", token: TOKEN)
+check("2.1 GET /api/me/shifts 200", sst == 200, "\(sst)")
+let shiftsJson = (try? JSONSerialization.jsonObject(with: sbody.data(using: .utf8)!)) as? [String: Any] ?? [:]
+let window = shiftsJson["manualBackdateMaxDays"] as? Int
+check("2.2 🔑 the DEPLOYED server publishes manualBackdateMaxDays", window != nil,
+      "keys: \(Array(shiftsJson.keys).sorted())")
+print("   role window = \(window.map(String.init) ?? "nil")")
+let maxDays = window ?? ManualSpan.defaultBackdateMaxDays
+// This is exactly what the sheet does with it.
+let range = ManualSpan.dateRange(maxDays: maxDays)
+check("2.3 the picker's range the sheet would build ends TODAY",
+      Calendar.current.isDateInToday(range.upperBound))
+
+// ── 3. The app's REAL back-dated payload ───────────────────────────────────
+let entryDay = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+check("3.0 yesterday is inside the role's window (Nick's case)",
+      range.contains(Calendar.current.startOfDay(for: entryDay)),
+      "window=\(maxDays)")
+
+// Next line is lifted VERBATIM from AppState.startUnscheduledManualVisit:
+// @@DATE_RULE@@
+check("3.1 🔑 the app derives a date string for a BACK-DATED entry", dateStr != nil, "\(dateStr ?? "nil")")
+check("3.2 …and it is yesterday", dateStr == ManualSpan.isoDay(entryDay), "\(dateStr ?? "nil")")
+
+let req = UnscheduledVisitRequest(clientIds: [CLIENT_ID], service: SERVICE,
+                                  lat: nil, lng: nil, accuracy: nil, address: nil,
+                                  unlistedName: nil,
+                                  startTime: "12:00 AM", endTime: "12:00 AM", date: dateStr)
+let payload = try! JSONEncoder().encode(req)
+print("   payload: \(String(data: payload, encoding: .utf8)!)")
+
+let (cst, cbody) = post("/api/shifts/unscheduled", payload, token: TOKEN)
+check("3.3 the DEPLOYED server accepted the app's back-dated payload",
+      cst == 200 || cst == 201, "\(cst) \(cbody.prefix(300))")
+let created = (try? JSONSerialization.jsonObject(with: cbody.data(using: .utf8)!)) as? [String: Any] ?? [:]
+let visitId = ((created["visit"] as? [String: Any])?["id"] as? String) ?? ""
+check("3.4 …and returned a visit id", !visitId.isEmpty, cbody.prefix(200).description)
+print("   created visit: \(visitId)")
+
+// ── 4. The server filed it on the day the app asked for ────────────────────
+let (hst, hbody) = get("/api/me/visits?days=14", token: TOKEN)
+check("4.1 GET /api/me/visits 200", hst == 200, "\(hst)")
+let hist = (try? JSONSerialization.jsonObject(with: hbody.data(using: .utf8)!)) as? [String: Any] ?? [:]
+let visits = (hist["visits"] as? [[String: Any]]) ?? []
+let mine = visits.first { ($0["id"] as? String) == visitId }
+check("4.2 the new visit comes back in the app's OWN history feed", mine != nil,
+      "\(visits.count) visits, ids: \(visits.compactMap { $0["id"] as? String }.prefix(6))")
+if let v = mine {
+    let servedDate = (v["date"] as? String) ?? ""
+    check("4.3 🔑 the app is told the visit's date is YESTERDAY — the whole card",
+          servedDate == dateStr, "server says \(servedDate), app asked \(dateStr ?? "nil")")
+    let todayIso = ManualSpan.isoDay(Date())
+    check("4.4 …and it is NOT filed under today", servedDate != todayIso, servedDate)
+    print("   server-reported date: \(servedDate)  in=\(v["clockIn"] ?? "?") out=\(v["clockOut"] ?? "?")")
+}
+
+// ── 5. Same-day still sends NO date (older builds' contract) ───────────────
+let todayEntry = Date()
+let dateStrToday = ManualSpan.isToday(todayEntry) ? nil : ManualSpan.isoDay(todayEntry)
+check("5.1 a TODAY entry derives no date at all", dateStrToday == nil)
+let todayReq = UnscheduledVisitRequest(clientIds: [CLIENT_ID], service: SERVICE,
+                                       lat: nil, lng: nil, accuracy: nil, address: nil,
+                                       unlistedName: nil,
+                                       startTime: "12:00 AM", endTime: "12:00 AM", date: dateStrToday)
+let todayPayload = String(data: try! JSONEncoder().encode(todayReq), encoding: .utf8)!
+check("5.2 🔑 …so the wire payload has no `date` key — byte-identical to every shipped build",
+      !todayPayload.contains("\"date\""), todayPayload)
+
+// ── 6. Hand the visit id to the driver for RDS assertions + cleanup ────────
+try? visitId.write(toFile: "/tmp/mdl_visit_id.txt", atomically: true, encoding: .utf8)
+try? (dateStr ?? "").write(toFile: "/tmp/mdl_expected_date.txt", atomically: true, encoding: .utf8)
+
+print("\n\(passed) passed, \(failed.count) failed")
+if !failed.isEmpty { for f in failed { print("  FAILED: \(f)") }; exit(1) }

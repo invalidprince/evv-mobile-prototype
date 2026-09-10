@@ -95,6 +95,12 @@ struct ShiftsResponse: Decodable {
     /// The acting role's shift-request look-back window in days (server
     /// v0.4.400, per-role Settings value; default 7). Older servers omit it.
     let shiftRequestMaxDays: Int?
+    /// The acting role's MANUAL-ENTRY back-date window in days (server
+    /// v0.4.436, per-role Settings value; default 30, and **0 legitimately
+    /// means "today only"**). Older servers omit the key — the unscheduled
+    /// sheet then falls back to ManualSpan.defaultBackdateMaxDays and the POST
+    /// remains the authority either way.
+    let manualBackdateMaxDays: Int?
     /// Build 60 — the phone's missed-punch reminder policy (server v0.4.430):
     /// Settings → Punch Alerts' "Phone reminders" switch + the STAFF-leg
     /// minutes. Older servers omit it → no punch reminders are scheduled.
@@ -707,6 +713,12 @@ struct UnscheduledVisitRequest: Encodable {
     /// Manual time entry (non-EVV services): "H:MM AM/PM" strings
     let startTime: String?
     let endTime: String?
+    /// Build 62 — the day the time was worked, "YYYY-MM-DD". OPTIONAL and
+    /// only ever sent with a manual entry: the server has accepted it since
+    /// v0.4.201 and reads a MISSING key as today, which is why every shipped
+    /// build keeps working unchanged. Live clock-ins never send it (a punch is
+    /// always "now"). `resolveManualDate` re-checks the bounds server-side.
+    let date: String?
 }
 
 struct UnscheduledVisitCreated: Decodable {
@@ -1041,6 +1053,11 @@ struct QueuedAction: Identifiable, Codable {
     // Manual time entry fields (non-EVV services, offline queuing)
     let manualStart: String?
     let manualEnd: String?
+    /// Build 62 — "YYYY-MM-DD" the entry was dated when it was QUEUED. Without
+    /// it a back-dated entry made offline would replay as TODAY whenever the
+    /// phone reconnected, silently moving a visit to the wrong day. Optional so
+    /// queues persisted by older builds still decode.
+    let manualDate: String?
     // Retry tracking
     var retryCount: Int
 
@@ -1069,7 +1086,7 @@ struct QueuedAction: Identifiable, Codable {
         case noteText, nbCategory, nbMinutes, nbNote, nbDate
         case unschedClientIds, unschedService, unschedClientName, localVisitId
         case signature, signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
-        case manualStart, manualEnd
+        case manualStart, manualEnd, manualDate
     }
 
     init(id: UUID, type: ActionType, shiftId: Int?, visitId: String?,
@@ -1081,7 +1098,7 @@ struct QueuedAction: Identifiable, Codable {
          signature: String? = nil,
          signatureSkipReason: String? = nil,
          timeFixNewIn: String? = nil, timeFixNewOut: String? = nil, timeFixReason: String? = nil,
-         manualStart: String? = nil, manualEnd: String? = nil,
+         manualStart: String? = nil, manualEnd: String? = nil, manualDate: String? = nil,
          retryCount: Int = 0) {
         self.id = id
         self.type = type
@@ -1108,6 +1125,7 @@ struct QueuedAction: Identifiable, Codable {
         self.timeFixReason = timeFixReason
         self.manualStart = manualStart
         self.manualEnd = manualEnd
+        self.manualDate = manualDate
         self.retryCount = retryCount
     }
 
@@ -1138,6 +1156,7 @@ struct QueuedAction: Identifiable, Codable {
         timeFixReason = try c.decodeIfPresent(String.self, forKey: .timeFixReason)
         manualStart = try c.decodeIfPresent(String.self, forKey: .manualStart)
         manualEnd = try c.decodeIfPresent(String.self, forKey: .manualEnd)
+        manualDate = try c.decodeIfPresent(String.self, forKey: .manualDate)
         retryCount = (try? c.decodeIfPresent(Int.self, forKey: .retryCount)) ?? 0
     }
 }
@@ -1828,14 +1847,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil, date: String? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime)
+            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime, date: date)
         )
         request.timeoutInterval = 15
 
@@ -1921,7 +1940,12 @@ actor APIClient {
         do {
             let decoded = try JSONDecoder().decode(ShiftsResponse.self, from: data)
             // Build 58 — publish the role's shift-request window to the sheet.
-            await MainActor.run { ShiftRequestPolicy.shared.update(from: decoded) }
+            // Build 62 — and the manual-entry back-date window to the
+            // unscheduled sheet's Date picker.
+            await MainActor.run {
+                ShiftRequestPolicy.shared.update(from: decoded)
+                ManualEntryPolicy.shared.update(from: decoded)
+            }
             return decoded
         } catch {
             throw APIError.decodingError(error)

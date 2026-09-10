@@ -1,5 +1,38 @@
 import SwiftUI
 
+// MARK: - Manual-entry back-date policy (build 62)
+//
+// Nick, #evv 2026-09-09 (screenshot of this sheet): "There's no way to put a
+// date on this like you can on desktop. Just fix this." Staff need to record a
+// visit they forgot on a PRIOR day (his example: yesterday's Lifesharing day).
+//
+// The window is the acting ROLE's, published by the server on GET
+// /api/me/shifts (`manualBackdateMaxDays`, v0.4.436) from the SAME helper the
+// POST enforces (`visit-core.backdateMaxDaysFor`) and the same value the
+// desktop my-day view renders — recomputing it on the phone is exactly how a
+// picker and its validator drift apart (the v0.4.364 lesson).
+//
+// Lives here as a tiny observable (the build-58 ShiftRequestPolicy pattern) so
+// the sheet re-renders when the value arrives; APIClient.fetchShiftsResponse
+// updates it on every Today refresh. The POST re-resolves and enforces the
+// window regardless — this only shapes the picker.
+@MainActor
+final class ManualEntryPolicy: ObservableObject {
+    static let shared = ManualEntryPolicy()
+    /// Default matches the server's MANUAL_BACKDATE_MAX_DAYS. Only a fallback:
+    /// a value the server DID send always wins, including 0.
+    @Published var maxDays: Int = ManualSpan.defaultBackdateMaxDays
+
+    func update(from response: ShiftsResponse) {
+        // ⚠️ `0` is a real answer meaning "today only" — an `if let n = …, n > 0`
+        // here would silently hand a today-only role a 30-day picker whose
+        // every back-dated save 400s.
+        if let n = response.manualBackdateMaxDays, n >= 0, n <= 366, n != maxDays {
+            maxDays = n
+        }
+    }
+}
+
 struct UnscheduledVisitSheet: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
@@ -36,6 +69,10 @@ struct ServerUnscheduledContent: View {
     // desktop behavior (12 AM – 12 AM)"). See ManualSpan.
     @State private var manualStart: Date = ManualSpan.midnightToday()
     @State private var manualEnd: Date = ManualSpan.midnightToday()
+    // Build 62: the DAY the time was worked. Defaults to TODAY, so an entry
+    // made the same day behaves exactly as it did before this picker existed.
+    @State private var manualDate: Date = ManualSpan.midnightToday()
+    @ObservedObject private var manualPolicy = ManualEntryPolicy.shared
     @State private var manualConfirmMessage: String?
     @State private var showManualConfirm = false
     @State private var pendingManualSubmit: (() -> Void)?
@@ -103,6 +140,13 @@ struct ServerUnscheduledContent: View {
     /// a full 24h Lifesharing day); a future end and the untouched midnight
     /// placeholder are CONFIRMED, never blocked (ManualSpan.confirmationMessage).
     private var manualTimesValid: Bool { true }
+
+    /// Footer under Visit Times: what the section is for, plus the role's
+    /// actual back-date window (the desktop's per-role hint, v0.4.364).
+    private var manualTimesFooter: String {
+        "This service doesn't use live clock in/out — pick the date and enter the visit start and end times. "
+            + ManualSpan.backdateHint(maxDays: manualPolicy.maxDays)
+    }
 
     /// Footer for the Individual(s) section — shows cache date hint when offline.
     private var cachedFooter: some View {
@@ -363,18 +407,35 @@ struct ServerUnscheduledContent: View {
                 }
 
                 if manualEntryActive {
-                    Section(header: Text("Visit Times"), footer: Text("This service doesn't use live clock in/out — enter the visit start and end times.")) {
+                    Section(header: Text("Visit Times"), footer: Text(manualTimesFooter)) {
+                        // Build 62 — the DATE, the desktop's `<input type="date"
+                        // id="uv-date">`. `in:` bounds the wheel to the role's
+                        // window; the server re-checks BOTH bounds, so this is a
+                        // courtesy, not the control.
+                        DatePicker("Date", selection: $manualDate,
+                                   in: ManualSpan.dateRange(maxDays: manualPolicy.maxDays),
+                                   displayedComponents: .date)
                         DatePicker("Start", selection: $manualStart, displayedComponents: .hourAndMinute)
                         DatePicker("End", selection: $manualEnd, displayedComponents: .hourAndMinute)
                         // Desktop's live "8h 15m" / "24h 0m — spans midnight" hint,
                         // so a midnight-to-midnight entry visibly reads as a full
-                        // day BEFORE saving.
+                        // day BEFORE saving. Build 62 names the day a crossing
+                        // span ends on, now that the start day is selectable.
                         HStack {
                             Label("Duration", systemImage: "hourglass")
                             Spacer()
-                            Text(ManualSpan.hint(start: manualStart, end: manualEnd))
+                            Text(ManualSpan.hint(start: manualStart, end: manualEnd, on: manualDate))
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundColor(.secondary)
+                        }
+                        // A back-dated entry says so in plain words — the one
+                        // thing a staff member must not get wrong is WHICH day
+                        // they just recorded.
+                        if !ManualSpan.isToday(manualDate) {
+                            Label("Recording time for \(ManualSpan.dayLabel(manualDate))",
+                                  systemImage: "calendar.badge.clock")
+                                .font(.subheadline)
+                                .foregroundColor(Theme.primary)
                         }
                     }
                     if let err = manualSubmitError {
@@ -465,6 +526,15 @@ struct ServerUnscheduledContent: View {
             }
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { onDismiss() }) {
                 ClockInSuccessView(message: successMessage ?? (manualEntryActive ? "Time recorded" : nil))
+            }
+            // A picker bounded to today…today-N can still hold a stale value if
+            // the window SHRINKS after the sheet opened (the policy arrives on
+            // a later refresh). Clamp rather than submit a date the server will
+            // refuse.
+            .onChange(of: manualPolicy.maxDays) { _ in
+                let range = ManualSpan.dateRange(maxDays: manualPolicy.maxDays)
+                if manualDate < range.lowerBound { manualDate = range.lowerBound }
+                if manualDate > range.upperBound { manualDate = range.upperBound }
             }
             .interactiveDismissDisabled(isSubmittingManual)
             // Build 55: the desktop's two confirm() prompts (untouched 12:00 AM
@@ -579,7 +649,7 @@ struct ServerUnscheduledContent: View {
     /// Runs `submit` immediately, or after the desktop-mirroring confirmation
     /// when the times need one (ManualSpan.confirmationMessage).
     private func confirmThenSubmitManual(_ submit: @escaping () -> Void) {
-        if let msg = ManualSpan.confirmationMessage(start: manualStart, end: manualEnd) {
+        if let msg = ManualSpan.confirmationMessage(start: manualStart, end: manualEnd, date: manualDate) {
             manualConfirmMessage = msg
             pendingManualSubmit = submit
             showManualConfirm = true
@@ -604,14 +674,14 @@ struct ServerUnscheduledContent: View {
         }
         let serviceType = mapServiceNameToType(selectedServiceName)
         let serviceName = selectedServiceName
-        let start = manualStart, end = manualEnd
+        let start = manualStart, end = manualEnd, date = manualDate
         confirmThenSubmitManual {
             isSubmittingManual = true
             manualSubmitError = nil
             Task { @MainActor in
                 let outcome = await appState.startUnscheduledManualVisit(
                     clients: clients, service: serviceType, serviceName: serviceName,
-                    start: start, end: end)
+                    start: start, end: end, date: date)
                 finishManual(outcome)
             }
         }
@@ -626,14 +696,14 @@ struct ServerUnscheduledContent: View {
         let client = Client(id: UUID(), name: name, address: "", city: "")
         let serviceType = mapServiceNameToType(unlistedServiceName)
         let serviceName = unlistedServiceName
-        let start = manualStart, end = manualEnd
+        let start = manualStart, end = manualEnd, date = manualDate
         confirmThenSubmitManual {
             isSubmittingManual = true
             manualSubmitError = nil
             Task { @MainActor in
                 let outcome = await appState.startUnscheduledManualVisit(
                     clients: [client], service: serviceType, serviceName: serviceName,
-                    unlistedName: name, start: start, end: end)
+                    unlistedName: name, start: start, end: end, date: date)
                 finishManual(outcome)
             }
         }

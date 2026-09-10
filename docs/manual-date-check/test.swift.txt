@@ -1,0 +1,191 @@
+// ---------------------------------------------------------------------------
+// The checks. Every case runs the REAL ManualSpan / ManualEntryPolicy /
+// QueuedAction / ShiftsResponse lifted out of the shipping source by gen.py.
+//
+// What is being proven (Nick, #evv 2026-09-09: "There's no way to put a date on
+// this like you can on desktop. Just fix this."):
+//   • the picker's range is the acting ROLE's window and never includes tomorrow
+//   • 0 days means TODAY ONLY and is never mistaken for "unknown"
+//   • a back-dated entry serialises as YYYY-MM-DD in the DEVICE's calendar
+//   • the cross-midnight span still reads 24h and names the day it ends on
+//   • the desktop's two confirmations, including the one it SKIPS when back-dated
+//   • the offline queue carries the date, so a replay cannot move the visit
+//   • the payload is byte-identical to the pre-build-62 one for a same-day entry
+// ---------------------------------------------------------------------------
+var passed = 0; var failed: [String] = []
+func check(_ name: String, _ cond: Bool, _ extra: String = "") {
+    if cond { passed += 1; print("  ✓ \(name)") } else { failed.append(name); print("  ✗ \(name) \(extra)") }
+}
+
+let cal = Calendar.current
+// A fixed "today" at 2:30 PM local, so the future-end grace has room on both sides.
+let today = cal.date(bySettingHour: 14, minute: 30, second: 0, of: cal.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000)))!
+let midnight = cal.startOfDay(for: today)
+func day(_ n: Int) -> Date { cal.date(byAdding: .day, value: n, to: midnight)! }
+func at(_ h: Int, _ m: Int, on d: Date = midnight) -> Date {
+    cal.date(bySettingHour: h, minute: m, second: 0, of: cal.startOfDay(for: d))!
+}
+
+print("\n=== picker range: the role's window, never the future ===")
+do {
+    let r30 = ManualSpan.dateRange(maxDays: 30, today: today)
+    check("upper bound is TODAY — a future date is never selectable",
+          cal.isDate(r30.upperBound, inSameDayAs: today))
+    check("tomorrow is outside the range", !r30.contains(day(1)))
+    check("30-day window reaches back exactly 30 days", cal.isDate(r30.lowerBound, inSameDayAs: day(-30)))
+    check("day -30 is IN range, day -31 is not", r30.contains(day(-30)) && !r30.contains(day(-31)))
+
+    let r0 = ManualSpan.dateRange(maxDays: 0, today: today)
+    check("🔑 maxDays 0 → today only (lower == upper)", cal.isDate(r0.lowerBound, inSameDayAs: r0.upperBound))
+    check("…and yesterday is refused by the picker", !r0.contains(day(-1)))
+
+    let r1 = ManualSpan.dateRange(maxDays: 1, today: today)
+    check("maxDays 1 → yesterday allowed, day before is not (Nick's forgotten-yesterday case)",
+          r1.contains(day(-1)) && !r1.contains(day(-2)))
+    check("a negative window is clamped to today-only, never a crash",
+          cal.isDate(ManualSpan.dateRange(maxDays: -5, today: today).lowerBound, inSameDayAs: today))
+}
+
+print("\n=== the role's window arrives from the server (v0.4.436) ===")
+do {
+    let json = #"{"shifts":[],"openShifts":[],"shiftRequestMaxDays":7,"manualBackdateMaxDays":1}"#
+    let r = try JSONDecoder().decode(ShiftsResponse.self, from: json.data(using: .utf8)!)
+    check("decodes manualBackdateMaxDays", r.manualBackdateMaxDays == 1)
+    let p = ManualEntryPolicy(); p.update(from: r)
+    check("policy takes the server's 1", p.maxDays == 1)
+
+    let zero = #"{"shifts":[],"manualBackdateMaxDays":0}"#
+    let r0 = try JSONDecoder().decode(ShiftsResponse.self, from: zero.data(using: .utf8)!)
+    let p0 = ManualEntryPolicy(); p0.update(from: r0)
+    check("🔑 a server-sent 0 is honoured as TODAY ONLY, not treated as missing", p0.maxDays == 0)
+
+    let old = #"{"shifts":[],"openShifts":[]}"#
+    let rOld = try JSONDecoder().decode(ShiftsResponse.self, from: old.data(using: .utf8)!)
+    check("an OLDER server (no key) decodes → nil", rOld.manualBackdateMaxDays == nil)
+    let pOld = ManualEntryPolicy(); pOld.update(from: rOld)
+    check("…and the policy keeps the documented default (30)", pOld.maxDays == ManualSpan.defaultBackdateMaxDays)
+
+    let silly = #"{"shifts":[],"manualBackdateMaxDays":9999}"#
+    let rS = try JSONDecoder().decode(ShiftsResponse.self, from: silly.data(using: .utf8)!)
+    let pS = ManualEntryPolicy(); pS.update(from: rS)
+    check("an absurd window is ignored rather than rendering a 27-year wheel", pS.maxDays == ManualSpan.defaultBackdateMaxDays)
+
+    let neg = #"{"shifts":[],"manualBackdateMaxDays":-3}"#
+    let rN = try JSONDecoder().decode(ShiftsResponse.self, from: neg.data(using: .utf8)!)
+    let pN = ManualEntryPolicy(); pN.update(from: rN)
+    check("a negative window is ignored", pN.maxDays == ManualSpan.defaultBackdateMaxDays)
+} catch { check("policy/decoder threw", false, "\(error)") }
+
+print("\n=== the wire format: YYYY-MM-DD in the DEVICE's calendar ===")
+do {
+    let iso = ManualSpan.isoDay(day(-1))
+    check("isoDay is 10 chars, YYYY-MM-DD", iso.count == 10 && iso.filter { $0 == "-" }.count == 2)
+    let comps = cal.dateComponents([.year, .month, .day], from: day(-1))
+    let expect = String(format: "%04d-%02d-%02d", comps.year!, comps.month!, comps.day!)
+    check("…and it is the LOCAL calendar day, not a UTC instant (\(iso))", iso == expect)
+    // 11:30 PM local is already "tomorrow" in UTC for US timezones — the classic
+    // off-by-one that would file a visit on the wrong day.
+    let lateNight = at(23, 30, on: day(-1))
+    check("11:30 PM still serialises as ITS OWN day", ManualSpan.isoDay(lateNight) == expect)
+    check("isToday is true for today, false for yesterday",
+          ManualSpan.isToday(today, today: today) && !ManualSpan.isToday(day(-1), today: today))
+}
+
+print("\n=== the payload: same-day is byte-identical to pre-build-62 ===")
+do {
+    let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
+    // The sheet sends `date` ONLY when the entry is back-dated (AppState:
+    // `ManualSpan.isToday(entryDay) ? nil : ManualSpan.isoDay(entryDay)`).
+    func body(_ date: String?) throws -> String {
+        let r = UnscheduledVisitRequest(clientIds: ["C944868"], service: "Lifesharing", lat: nil, lng: nil,
+                                        accuracy: nil, address: nil, unlistedName: nil,
+                                        startTime: "12:00 AM", endTime: "12:00 AM", date: date)
+        return String(data: try enc.encode(r), encoding: .utf8)!
+    }
+    let sameDay = try body(nil)
+    check("🔑 a TODAY entry sends no `date` key at all — the old payload exactly",
+          !sameDay.contains("\"date\""), sameDay)
+    let backDated = try body("2026-09-08")
+    check("a back-dated entry sends date=YYYY-MM-DD", backDated.contains("\"date\":\"2026-09-08\""), backDated)
+    check("…and changes nothing else about the payload",
+          backDated.replacingOccurrences(of: "\"date\":\"2026-09-08\",", with: "") == sameDay,
+          backDated)
+} catch { check("payload encode threw", false, "\(error)") }
+
+print("\n=== offline queue carries the date (a replay must not move the visit) ===")
+do {
+    let a = QueuedAction(id: UUID(), type: .unscheduledVisit, shiftId: nil, visitId: nil,
+                         lat: nil, lng: nil, accuracy: nil, createdAt: today,
+                         unschedClientIds: ["C944868"], unschedService: "Lifesharing",
+                         localVisitId: UUID(),
+                         manualStart: "12:00 AM", manualEnd: "12:00 AM", manualDate: "2026-09-08")
+    let data = try JSONEncoder().encode(a)
+    let back = try JSONDecoder().decode(QueuedAction.self, from: data)
+    check("🔑 manualDate survives the persisted-queue round trip", back.manualDate == "2026-09-08")
+    check("…alongside the times", back.manualStart == "12:00 AM" && back.manualEnd == "12:00 AM")
+    check("an unscheduled visit is still a PUNCH (never discarded)", back.isPunch)
+
+    // A queue written by an OLDER build has no manualDate key at all.
+    var obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    obj.removeValue(forKey: "manualDate")
+    let legacy = try JSONSerialization.data(withJSONObject: obj)
+    let old = try JSONDecoder().decode(QueuedAction.self, from: legacy)
+    check("a queue persisted by an older build still decodes (manualDate nil → server reads today)",
+          old.manualDate == nil && old.manualStart == "12:00 AM")
+} catch { check("queue round trip threw", false, "\(error)") }
+
+print("\n=== span + duration are unchanged by the date, and name the day ===")
+do {
+    let full = ManualSpan.hint(start: at(0, 0), end: at(0, 0), on: day(-1))
+    check("12:00 AM → 12:00 AM is still 24h 0m and spans midnight", full.hasPrefix("24h 0m — spans midnight"), full)
+    check("…and NAMES the day it ends on (the picker made 'midnight' ambiguous)",
+          full.contains(ManualSpan.dayLabel(midnight)), full)
+    let normal = ManualSpan.hint(start: at(9, 0), end: at(17, 15), on: day(-1))
+    check("a same-day span is untouched: '8h 15m', no day name", normal == "8h 15m", normal)
+    check("spanMinutes ignores the date entirely (rules live on the clock times)",
+          ManualSpan.spanMinutes(start: at(20, 0), end: at(6, 0)) == 600)
+    check("combine() grafts the picked time onto the picked DAY",
+          cal.isDate(ManualSpan.combine(day: day(-3), time: at(9, 30)), inSameDayAs: day(-3))
+              && ManualSpan.minutes(ManualSpan.combine(day: day(-3), time: at(9, 30))) == 570)
+}
+
+print("\n=== confirmations mirror the desktop, including the one it SKIPS ===")
+do {
+    // Untouched 12:00 AM placeholder → ask, and name the day when back-dated.
+    let todayMsg = ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), date: today, now: today)
+    check("untouched placeholder still asks (never a block)", todayMsg != nil)
+    check("…and does NOT name a day when the entry is for today", !(todayMsg?.contains("on ") ?? true), todayMsg ?? "nil")
+    let backMsg = ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), date: day(-1), now: today)
+    check("a back-dated 24-hour entry NAMES the day (desktop: '… on ' + uvDateRaw)",
+          backMsg?.contains(ManualSpan.dayLabel(day(-1))) ?? false, backMsg ?? "nil")
+
+    // Future end: confirmed today, SKIPPED when back-dated.
+    let futureToday = ManualSpan.confirmationMessage(start: at(9, 0), end: at(23, 0), date: today, now: today)
+    check("an end later than now, TODAY → confirm", futureToday?.contains("has not occurred yet") ?? false, futureToday ?? "nil")
+    let futureBack = ManualSpan.confirmationMessage(start: at(9, 0), end: at(23, 0), date: day(-1), now: today)
+    check("🔑 the same times on a PAST day → no prompt (desktop confirmFutureEnd returns true immediately)",
+          futureBack == nil, futureBack ?? "nil")
+    let normalToday = ManualSpan.confirmationMessage(start: at(9, 0), end: at(13, 0), date: today, now: today)
+    check("an ordinary elapsed span today needs no confirmation", normalToday == nil, normalToday ?? "nil")
+
+    // The legacy 2-arg entry point must keep behaving exactly as it did.
+    check("the pre-build-62 confirmationMessage(start:end:now:) still asks about the placeholder",
+          ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), now: today) != nil)
+    check("…and still confirms a future end today",
+          ManualSpan.confirmationMessage(start: at(9, 0), end: at(23, 0), now: today)?.contains("has not occurred yet") ?? false)
+}
+
+print("\n=== the footer says what the role's window ACTUALLY is ===")
+do {
+    check("0 days → 'only enter time for today'", ManualSpan.backdateHint(maxDays: 0, today: today) == "Your role can only enter time for today.")
+    let one = ManualSpan.backdateHint(maxDays: 1, today: today)
+    check("1 day is singular and names the earliest day",
+          one.contains("1 day (") && one.contains(ManualSpan.dayLabel(day(-1))), one)
+    let thirty = ManualSpan.backdateHint(maxDays: 30, today: today)
+    check("30 days is plural and names the earliest day",
+          thirty.contains("30 days") && thirty.contains(ManualSpan.dayLabel(day(-30))), thirty)
+    check("every window states that future dates are never allowed", thirty.contains("Future dates are never allowed"))
+}
+
+print("\n\(passed) passed, \(failed.count) failed")
+if !failed.isEmpty { for f in failed { print("  FAILED: \(f)") }; exit(1) }

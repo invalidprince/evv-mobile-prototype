@@ -740,23 +740,39 @@ final class AppState: ObservableObject {
     /// Returns only after the server has answered (or the entry is queued) —
     /// the sheet must not show success before then (build 54, see
     /// ManualEntryOutcome).
+    /// `date` (build 62) is the DAY the time was worked — today unless the
+    /// staff member back-dated the entry in the sheet. It is sent as the
+    /// server's optional `date` field, which `visit-core.resolveManualDate` has
+    /// accepted since v0.4.201 and bounds by the acting ROLE's window; passing
+    /// nil (or today) reproduces the pre-build-62 payload exactly.
     @MainActor
     func startUnscheduledManualVisit(clients: [Client], service: ServiceType, serviceName: String,
-                                     unlistedName: String? = nil, start: Date, end: Date) async -> ManualEntryOutcome {
+                                     unlistedName: String? = nil, start: Date, end: Date,
+                                     date: Date? = nil) async -> ManualEntryOutcome {
         guard mode == .server else {
             return .rejected("Manual time entry is only available when signed in.")
         }
 
         let startStr = serverTimeLabel(start)
         let endStr = serverTimeLabel(end)
+        // The visit's DAY. `dateStr` is sent only when the entry is back-dated,
+        // so a same-day entry keeps the byte-identical old payload (and older
+        // servers, which ignore the key, behave identically either way).
+        let entryDay = date ?? Date()
+        let dateStr = ManualSpan.isToday(entryDay) ? nil : ManualSpan.isoDay(entryDay)
+        // Build 62: the LOCAL row must sit on the chosen day too — the picker's
+        // start/end carry today's date component, so a back-dated entry would
+        // otherwise show under today in History until the next server refresh.
+        let localStart = ManualSpan.combine(day: entryDay, time: start)
         // Build 55: end <= start crosses midnight (12:00 AM → 12:00 AM is a
         // full 24h day) — the LOCAL row's end lands on the next day so its
         // duration reads 24h 0m, matching what the server stores.
-        let localEnd = ManualSpan.crossesMidnight(start: start, end: end) ? end.addingTimeInterval(86_400) : end
+        let localEndBase = ManualSpan.combine(day: entryDay, time: end)
+        let localEnd = ManualSpan.crossesMidnight(start: start, end: end) ? localEndBase.addingTimeInterval(86_400) : localEndBase
         let localVisitId = UUID()
         var visit = Visit(id: localVisitId, clients: clients, service: service,
-                          scheduledStart: start, scheduledEnd: localEnd,
-                          actualStart: start, actualEnd: localEnd,
+                          scheduledStart: localStart, scheduledEnd: localEnd,
+                          actualStart: localStart, actualEnd: localEnd,
                           status: .completed, isGroup: clients.count > 1)
         visit.unlistedIndividualName = unlistedName
         visit.evvRequired = false
@@ -779,7 +795,8 @@ final class AppState: ObservableObject {
                                  unschedService: serviceName,
                                  unschedClientName: unlistedName,
                                  localVisitId: localVisitId,
-                                 manualStart: startStr, manualEnd: endStr)
+                                 manualStart: startStr, manualEnd: endStr,
+                                 manualDate: dateStr)
             DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (\(why))")
             scheduleAutoSync()
         }
@@ -796,7 +813,8 @@ final class AppState: ObservableObject {
                 service: serviceName,
                 unlistedName: unlistedName,
                 startTime: startStr,
-                endTime: endStr
+                endTime: endStr,
+                date: dateStr
             )
             visit.serverVisitId = response.visit.id
             if let allVisits = response.visits, allVisits.count > 1 {
@@ -1601,6 +1619,7 @@ final class AppState: ObservableObject {
                                         timeFixNewIn: String? = nil, timeFixNewOut: String? = nil,
                                         timeFixReason: String? = nil,
                                         manualStart: String? = nil, manualEnd: String? = nil,
+                                        manualDate: String? = nil,
                                         punchAddress: String? = nil) {
         // DEDUP: clock-out — keep first per server visitId
         if type == .clockOut, let vid = visitId,
@@ -1651,7 +1670,8 @@ final class AppState: ObservableObject {
             timeFixNewOut: timeFixNewOut,
             timeFixReason: timeFixReason,
             manualStart: manualStart,
-            manualEnd: manualEnd
+            manualEnd: manualEnd,
+            manualDate: manualDate
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
@@ -1805,7 +1825,10 @@ final class AppState: ObservableObject {
                             lat: action.lat, lng: action.lng, accuracy: action.accuracy,
                             address: action.address,
                             unlistedName: action.unschedClientName,
-                            startTime: action.manualStart, endTime: action.manualEnd)
+                            startTime: action.manualStart, endTime: action.manualEnd,
+                            // Build 62: replay the day the entry was DATED, not
+                            // the day the phone happened to reconnect.
+                            date: action.manualDate)
                         // Update local visit with real server IDs
                         if let localId = action.localVisitId {
                             localToServerVisitId[localId] = response.visit.id

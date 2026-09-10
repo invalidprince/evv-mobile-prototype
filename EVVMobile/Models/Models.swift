@@ -361,7 +361,87 @@ enum CredentialStatus {
 ///   • Untouched placeholder (both still midnight) → CONFIRM, never a block.
 ///   • End later than now (+10 min grace), today, not crossing midnight →
 ///     CONFIRM, never a block ("declaring the full scheduled window").
+///
+/// Build 62 (Nick 2026-09-09, #evv: "There's no way to put a date on this like
+/// you can on desktop. Just fix this.") — the entry also carries a DATE, the
+/// mirror of the desktop's `<input type="date" id="uv-date">`:
+///   • Default TODAY; a future date is never allowed (`max = TODAY_ISO`).
+///   • The earliest allowed date is the ACTING ROLE's window, which the server
+///     sends as `manualBackdateMaxDays` on GET /api/me/shifts (v0.4.436) — the
+///     same helper the POST enforces (`visit-core.backdateMaxDaysFor`). The
+///     picker is a courtesy; `resolveManualDate` re-checks both bounds, so a
+///     forged payload cannot slip a future or ancient date through.
+///   • **0 days is a real answer meaning "today only"**, never "unknown".
+///   • On a BACK-DATED entry the future-end confirmation is skipped — the
+///     desktop's `confirmFutureEnd` returns true immediately when the date is
+///     not today, because a past day has already elapsed and nagging about a
+///     "future" end time on it would be nonsense (`visit-core.manualEntryNote`
+///     makes the same distinction server-side).
 enum ManualSpan {
+    /// The server's default manual back-date window when it says nothing
+    /// (older servers omit `manualBackdateMaxDays`). Matches
+    /// `visit-core.MANUAL_BACKDATE_MAX_DAYS`. Only ever a FALLBACK — a value
+    /// the server did send, including 0, always wins.
+    static let defaultBackdateMaxDays = 30
+
+    /// Earliest date a manual entry may be dated, given the role's window.
+    /// `maxDays == 0` → today itself.
+    static func earliestDate(maxDays: Int, today: Date = Date()) -> Date {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: today)
+        let days = max(0, maxDays)
+        return cal.date(byAdding: .day, value: -days, to: start) ?? start
+    }
+
+    /// The picker's selectable range: earliest…today. Never includes tomorrow.
+    static func dateRange(maxDays: Int, today: Date = Date()) -> ClosedRange<Date> {
+        let end = Calendar.current.startOfDay(for: today)
+        return earliestDate(maxDays: maxDays, today: today)...end
+    }
+
+    /// True when `date` is the same calendar day as `today`.
+    static func isToday(_ date: Date, today: Date = Date()) -> Bool {
+        Calendar.current.isDate(date, inSameDayAs: today)
+    }
+
+    /// "YYYY-MM-DD" for the server's optional `date` field. Formatted in the
+    /// DEVICE's calendar/timezone from the day the staff member picked —
+    /// never an ISO8601 instant, which could roll a day at a UTC boundary.
+    static func isoDay(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: date)
+    }
+
+    /// Build 62 — a `.hourAndMinute` picker's Date still carries whatever day
+    /// it was created on (today), so a back-dated entry's LOCAL row would land
+    /// under today in History. This grafts the picked time onto the picked day.
+    /// The server is unaffected either way — it takes "H:MM AM/PM" labels plus
+    /// the separate `date` field, never an instant.
+    static func combine(day: Date, time: Date) -> Date {
+        let cal = Calendar.current
+        let t = cal.dateComponents([.hour, .minute], from: time)
+        return cal.date(bySettingHour: t.hour ?? 0, minute: t.minute ?? 0, second: 0,
+                        of: cal.startOfDay(for: day)) ?? day
+    }
+
+    /// "Mon, Sep 8" — the sheet's inline confirmation of what day is being
+    /// recorded, and the day-name in the cross-midnight hint.
+    static func dayLabel(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return f.string(from: date)
+    }
+
+    /// Footer copy naming the role's actual window (the desktop's per-role
+    /// hint, v0.4.364: "Your role can back-date up to N days").
+    static func backdateHint(maxDays: Int, today: Date = Date()) -> String {
+        if maxDays <= 0 { return "Your role can only enter time for today." }
+        let earliest = dayLabel(earliestDate(maxDays: maxDays, today: today))
+        return "Your role can back-date up to \(maxDays) day\(maxDays == 1 ? "" : "s") (no earlier than \(earliest)). Future dates are never allowed."
+    }
     /// Midnight today in the device's calendar — the 12:00 AM placeholder.
     static func midnightToday(_ now: Date = Date()) -> Date {
         Calendar.current.startOfDay(for: now)
@@ -392,6 +472,17 @@ enum ManualSpan {
         return crossesMidnight(start: start, end: end) ? "\(label) — spans midnight" : label
     }
 
+    /// Build 62 — the same hint, but a midnight-crossing span NAMES the day it
+    /// ends on, because with a date picker present "spans midnight" alone no
+    /// longer says which midnight. The visit's DATE stays the start date
+    /// (server: `manualEntryNote` / `visit-core` keeps `date` = start day).
+    static func hint(start: Date, end: Date, on date: Date) -> String {
+        let base = hint(start: start, end: end)
+        guard crossesMidnight(start: start, end: end) else { return base }
+        let next = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: date)) ?? date
+        return "\(base) (ends \(dayLabel(next)))"
+    }
+
     /// Both boxes still show the untouched midnight placeholder.
     static func placeholderUntouched(start: Date, end: Date) -> Bool {
         minutes(start) == 0 && minutes(end) == 0
@@ -407,9 +498,20 @@ enum ManualSpan {
     /// The confirmation copy the sheets show before submitting, or nil when
     /// nothing needs confirming. Mirrors the desktop's two `confirm()`s.
     static func confirmationMessage(start: Date, end: Date, now: Date = Date()) -> String? {
+        confirmationMessage(start: start, end: end, date: now, now: now)
+    }
+
+    /// Build 62 — date-aware twin. Mirrors the desktop exactly:
+    ///   • the 24-hour confirm NAMES the day (`'… on ' + uvDateRaw`);
+    ///   • the future-end confirm is SKIPPED on a back-dated entry
+    ///     (`confirmFutureEnd`: `if (dateIso && dateIso !== TODAY_ISO) return true`).
+    static func confirmationMessage(start: Date, end: Date, date: Date, now: Date = Date()) -> String? {
         if placeholderUntouched(start: start, end: end) {
-            return "Save a full 24-hour entry from 12:00 AM to 12:00 AM?\n\nBoth times still show 12:00 AM. Choose Cancel if you meant to enter different times."
+            let onDay = isToday(date, today: now) ? "" : " on \(dayLabel(date))"
+            return "Save a full 24-hour entry from 12:00 AM to 12:00 AM\(onDay)?\n\nBoth times still show 12:00 AM. Choose Cancel if you meant to enter different times."
         }
+        // A past day has already elapsed — there is no "future" end time on it.
+        if !isToday(date, today: now) { return nil }
         if endIsInFuture(start: start, end: end, now: now) {
             let f = DateFormatter(); f.dateFormat = "h:mm a"
             return "The end time you entered (\(f.string(from: end))) has not occurred yet — it is currently \(f.string(from: now)).\n\nSave it anyway? Only do this if you are declaring the full service window you are scheduled to work."
