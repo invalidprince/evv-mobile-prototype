@@ -65,7 +65,7 @@ struct ActiveVisitCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(visit.clients.map { $0.name }.joined(separator: " & "))
                             .font(.headline)
-                        Text(visit.service.rawValue)
+                        Text(visit.serviceLabel)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }

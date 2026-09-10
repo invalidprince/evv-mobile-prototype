@@ -134,7 +134,7 @@ struct ClockOutFlow: View {
                     Divider().padding(.horizontal)
                     summaryRow(icon: "person.fill", label: "Client(s)", value: visit.clients.map { $0.name }.joined(separator: ", "))
                     Divider().padding(.horizontal)
-                    summaryRow(icon: "briefcase.fill", label: "Service", value: visit.service.rawValue)
+                    summaryRow(icon: "briefcase.fill", label: "Service", value: visit.serviceLabel)
                     if let loc = locationText {
                         Divider().padding(.horizontal)
                         summaryRow(icon: "mappin.and.ellipse", label: "Location", value: loc)

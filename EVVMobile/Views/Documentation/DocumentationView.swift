@@ -459,7 +459,7 @@ struct DocumentationView: View {
                         ConversationOutcome(title: so.title, goal: so.goal)
                     },
                     individualName: visit.client.name,
-                    service: visit.service.rawValue
+                    service: visit.serviceLabel
                 ) { response in
                     applyVoiceConversationResult(response)
                 }
@@ -950,7 +950,7 @@ struct DocumentationView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(visit.clients.map { $0.name }.joined(separator: " & "))
                     .font(.headline)
-                Text(visit.service.rawValue)
+                Text(visit.serviceLabel)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }

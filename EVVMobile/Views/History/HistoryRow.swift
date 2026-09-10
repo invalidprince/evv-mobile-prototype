@@ -62,7 +62,7 @@ struct HistoryRow: View {
                 AvatarView(name: visit.client.name, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(visit.client.name).font(.headline)
-                    Text(visit.service.rawValue)
+                    Text(visit.serviceLabel)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

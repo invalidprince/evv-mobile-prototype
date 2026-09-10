@@ -34,7 +34,7 @@ struct DeleteRequestSheet: View {
                         AvatarView(name: visit.client.name, size: 36)
                         VStack(alignment: .leading) {
                             Text(visit.client.name).font(.headline)
-                            Text("\(visit.service.rawValue) · \(dateText)")
+                            Text("\(visit.serviceLabel) · \(dateText)")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

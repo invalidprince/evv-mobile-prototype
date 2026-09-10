@@ -47,7 +47,7 @@ struct ManualTimeEntrySheet: View {
                         AvatarView(name: visit.client.name, size: 64)
                         Text(visit.clients.map { $0.name }.joined(separator: " & "))
                             .font(.title3.bold())
-                        Text(visit.service.rawValue)
+                        Text(visit.serviceLabel)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }

@@ -40,7 +40,7 @@ struct TimeFixSheet: View {
                         AvatarView(name: visit.client.name, size: 36)
                         VStack(alignment: .leading) {
                             Text(visit.client.name).font(.headline)
-                            Text(visit.service.rawValue)
+                            Text(visit.serviceLabel)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

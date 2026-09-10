@@ -68,6 +68,8 @@ struct ServerShift: Decodable {
     let start: String
     let end: String
     let service: String?
+    /// Human service name, added server v0.4.447 — older falls back to `service`.
+    let serviceName: String?
     let ratio: String?
     let individual: ServerIndividual
     let location: String?
@@ -116,6 +118,8 @@ struct ServerOpenRule: Decodable, Identifiable {
     let start: String
     let end: String
     let service: String?
+    /// Human service name, added server v0.4.447 — older falls back to `service`.
+    let serviceName: String?
     /// 1 = weekly, 2 = every other week, N = every N weeks.
     let intervalWeeks: Int?
     let individual: ServerIndividual
@@ -192,6 +196,8 @@ struct ServerHistoryVisit: Decodable, Identifiable {
     let shiftId: Int?
     let individual: ServerIndividual?
     let service: String?
+    /// Human service name, added server v0.4.447 — older falls back to `service`.
+    let serviceName: String?
     let clockIn: String?
     let clockOut: String?
     let status: String?

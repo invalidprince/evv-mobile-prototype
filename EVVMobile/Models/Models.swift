@@ -89,6 +89,11 @@ struct Visit: Identifiable {
     let id: UUID
     var clients: [Client]
     var service: ServiceType
+    /// Human service name from the server (server v0.4.447). nil on older
+    /// servers/mock data — then the enum label stands in, exactly as before.
+    var serviceName: String?
+    /// The ONE display discipline: server name → enum label fallback.
+    var serviceLabel: String { serviceName ?? service.rawValue }
     var scheduledStart: Date
     var scheduledEnd: Date
     var actualStart: Date?

@@ -1492,6 +1492,7 @@ final class AppState: ObservableObject {
         visit.serverVisitId = serverVisitId
         visit.ratio = s.ratio
         visit.partners = partners
+        visit.serviceName = s.serviceName ?? s.service
         visit.serverLocation = s.location
         visit.evvRequired = s.evvRequired ?? true
         visit.requiresClockIn = s.requiresClockIn ?? (s.evvRequired ?? true)
@@ -2082,6 +2083,7 @@ final class AppState: ObservableObject {
             city: ""
         )
         let serviceType = mapServiceType(sv.service ?? "")
+        var serviceName: String? = sv.serviceName ?? sv.service
 
         var actualStart: Date? = nil
         var actualEnd: Date? = nil
@@ -2139,6 +2141,7 @@ final class AppState: ObservableObject {
         )
         visit.serverVisitId = sv.id
         visit.serverShiftId = sv.shiftId
+        visit.serviceName = serviceName ?? sv.service
         visit.timeFixStatus = tfStatus
         visit.deleteRequestStatus = drStatus
         visit.hasNote = sv.hasNote ?? false

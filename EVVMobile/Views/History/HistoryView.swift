@@ -363,7 +363,7 @@ struct ServerHistoryRow: View {
                     AvatarView(name: visit.client.name, size: 40)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(visit.client.name).font(.headline)
-                        Text(visit.service.rawValue)
+                        Text(visit.serviceLabel)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -464,7 +464,7 @@ struct ServerAddNoteSheet: View {
                         AvatarView(name: visit.client.name, size: 36)
                         VStack(alignment: .leading) {
                             Text(visit.client.name).font(.headline)
-                            Text(visit.service.rawValue)
+                            Text(visit.serviceLabel)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

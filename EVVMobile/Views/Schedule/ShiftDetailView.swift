@@ -78,7 +78,7 @@ struct ShiftDetailView: View {
                                     StatusBadge(text: "2:1", color: Theme.primary)
                                 }
                             }
-                            Text(visit.service.rawValue)
+                            Text(visit.serviceLabel)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
