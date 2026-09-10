@@ -596,6 +596,9 @@ struct DocumentationTemplateResponse: Decodable {
     let healthInfo: ServerHealthInfo?
     let existingNote: ServerExistingNote?
     let aiAssistEnabled: Bool?
+    /// ✨ AI Review per-field rewrite (server v0.4.458 — Settings → AI toggle).
+    /// nil on older servers → treated as OFF.
+    let noteRewriteEnabled: Bool?
     let signatureCaptured: Bool?
     /// Server-configured visit questions (pre-filtered + pre-sorted for this visit).
     let questions: [ServerDocQuestion]?
@@ -604,7 +607,7 @@ struct DocumentationTemplateResponse: Decodable {
     let serviceLocation: ServerServiceLocation?
 
     enum CodingKeys: String, CodingKey {
-        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, signatureCaptured, questions, serviceLocation
+        case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, noteRewriteEnabled, signatureCaptured, questions, serviceLocation
     }
 
     init(from decoder: Decoder) throws {
@@ -622,6 +625,7 @@ struct DocumentationTemplateResponse: Decodable {
         healthInfo = (try? c.decodeIfPresent(ServerHealthInfo.self, forKey: .healthInfo)) ?? nil
         existingNote = (try? c.decodeIfPresent(ServerExistingNote.self, forKey: .existingNote)) ?? nil
         aiAssistEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aiAssistEnabled)) ?? nil
+        noteRewriteEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .noteRewriteEnabled)) ?? nil
         signatureCaptured = (try? c.decodeIfPresent(Bool.self, forKey: .signatureCaptured)) ?? nil
         // Per-element lenient decode — one malformed question never kills the form.
         if let raw = try? c.decodeIfPresent([FailableDecodable<ServerDocQuestion>].self, forKey: .questions) {
@@ -742,6 +746,18 @@ struct UnscheduledVisitResponse: Decodable {
 
 struct APIErrorResponse: Decodable {
     let error: String
+}
+
+/// ✨ AI Review wire shapes (server v0.4.458).
+struct AIReviewTextResponse: Decodable {
+    let rewritten: String
+    let model: String?
+    let unchanged: Bool?
+}
+
+struct AIReviewErrorResponse: Decodable {
+    let error: String?
+    let message: String?
 }
 
 // MARK: - Staff Documents (v0.4.194 — compliance vault, no offline support)
@@ -1663,6 +1679,39 @@ actor APIClient {
     }
 
     // MARK: - Voice Documentation Conversation
+
+    // MARK: - ✨ AI Review (per-field rewrite, server v0.4.458)
+
+    /// POST /api/visits/:id/ai-review-text — rewrite ONE note field's text
+    /// toward the agency's Note Review criteria. Never writes to the visit; the
+    /// caller replaces the field locally and offers Undo. Errors carry the
+    /// server's human `message` when present (429 rate_limited, 503 unavailable,
+    /// 502 ai_error, 400 too_long) so the row can show it inline.
+    func aiReviewText(visitId: String, text: String, fieldKind: String, outcomeId: Int? = nil, questionId: Int? = nil) async throws -> AIReviewTextResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/ai-review-text")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        var body: [String: Any] = ["text": text, "fieldKind": fieldKind]
+        if let o = outcomeId { body["outcomeId"] = o }
+        if let q = questionId { body["questionId"] = q }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 25
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let err = try? JSONDecoder().decode(AIReviewErrorResponse.self, from: data)
+            throw APIError.serverError(statusCode, err?.message ?? err?.error ?? "AI Review failed")
+        }
+        do {
+            return try JSONDecoder().decode(AIReviewTextResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
 
     func docConversation(
         visitId: String,

@@ -24,13 +24,19 @@ struct DocumentationView: View {
 
     // AI Assist state
     @State private var aiAssistEnabled = false
+    // ✨ AI Review per-field rewrite (server v0.4.458, Settings → AI toggle).
+    @State private var noteRewriteEnabled = false
     @State private var showAIAssistSheet = false
     @State private var aiDraftApplied = false
     @State private var aiInputText: String?
     @State private var aiModel: String?
     @State private var aiDraftedOutcomeIds: Set<UUID> = []  // Outcome IDs populated by AI
     @State private var aiUnaddressedOutcomeIds: Set<Int> = []  // Server outcome IDs not addressed
-    @State private var sectionsViewed: Set<UUID> = []  // Track which AI-drafted sections staff viewed
+    // Build 66 (Nick 2026-09-10: "I cannot stand the tiny blue box that says
+    // Tap to review. Get rid of that"): the per-section "AI draft — tap to
+    // review" badge and its submit gate (`sectionsViewed`) are GONE. Nothing was
+    // ever sent to the server for it, so no audit trail is lost. The RED
+    // "Not mentioned — please complete" chip stays — that one is information.
 
     // Voice conversation state
     @State private var showVoiceConversation = false
@@ -110,12 +116,17 @@ struct DocumentationView: View {
         let outcomes = effectiveOutcomes
         if outcomes.isEmpty { return true }
         let baseComplete = note.isComplete(for: outcomes)
-        // If AI draft was used, require staff to have viewed each drafted section
-        if aiDraftApplied && !aiDraftedOutcomeIds.isEmpty {
-            let allViewed = aiDraftedOutcomeIds.allSatisfy { sectionsViewed.contains($0) }
-            return baseComplete && allViewed
-        }
         return baseComplete
+    }
+
+    /// Context every DocTextEditor on this form reads to render ✨ AI Review.
+    private var aiReviewContext: AIReviewContext {
+        AIReviewContext(
+            visitId: appState.mode == .server ? visit.serverVisitId : nil,
+            enabled: appState.mode == .server && noteRewriteEnabled,
+            online: appState.effectivelyOnline,
+            outcomeServerIds: Dictionary(uniqueKeysWithValues: serverOutcomes.map { ($0.localId, $0.serverId) })
+        )
     }
 
     /// True when server mode and offline — blocks submission.
@@ -272,7 +283,7 @@ struct DocumentationView: View {
                             VStack(spacing: 16) {
                                 ForEach(effectiveOutcomes) { outcome in
                                     VStack(spacing: 0) {
-                                        // AI draft badge or unaddressed chip
+                                        // Unaddressed chip (the AI draft could not address this outcome)
                                         if aiDraftApplied {
                                             if let so = serverOutcomes.first(where: { $0.localId == outcome.id }),
                                                aiUnaddressedOutcomeIds.contains(so.serverId) {
@@ -289,38 +300,10 @@ struct DocumentationView: View {
                                                 .padding(.vertical, 6)
                                                 .background(Theme.danger.opacity(0.08))
                                                 .cornerRadius(8)
-                                            } else if aiDraftedOutcomeIds.contains(outcome.id) {
-                                                HStack(spacing: 6) {
-                                                    Image(systemName: "sparkles")
-                                                        .font(.caption2)
-                                                        .foregroundColor(Theme.primary)
-                                                    Text(sectionsViewed.contains(outcome.id) ? "AI draft — reviewed ✓" : "AI draft — tap to review")
-                                                        .font(.caption2.weight(.medium))
-                                                        .foregroundColor(Theme.primary)
-                                                    Spacer()
-                                                    if !sectionsViewed.contains(outcome.id) {
-                                                        Image(systemName: "eye")
-                                                            .font(.caption2)
-                                                            .foregroundColor(Theme.primary)
-                                                    }
-                                                }
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 6)
-                                                .background(Theme.primary.opacity(0.06))
-                                                .cornerRadius(8)
-                                                .onTapGesture {
-                                                    sectionsViewed.insert(outcome.id)
-                                                }
                                             }
                                         }
 
                                         OutcomeEntryView(outcome: outcome, entry: entryBinding(for: outcome))
-                                            .onTapGesture {
-                                                // Mark section as viewed when interacted with
-                                                if aiDraftApplied && aiDraftedOutcomeIds.contains(outcome.id) {
-                                                    sectionsViewed.insert(outcome.id)
-                                                }
-                                            }
                                     }
                                 }
                             }
@@ -370,15 +353,6 @@ struct DocumentationView: View {
                     }
 
                     if !effectiveOutcomes.isEmpty && !noteComplete {
-                        if aiDraftApplied && !aiDraftedOutcomeIds.isEmpty {
-                            let unviewed = aiDraftedOutcomeIds.subtracting(sectionsViewed)
-                            if !unviewed.isEmpty {
-                                Label("Review all AI-drafted sections before submitting (\(unviewed.count) remaining).", systemImage: "eye")
-                                    .font(.caption)
-                                    .foregroundColor(Theme.primary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
                         Label("To submit, each goal needs a data point and a narrative.", systemImage: "info.circle")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -425,6 +399,7 @@ struct DocumentationView: View {
             .padding(16)
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+        .environment(\.aiReviewContext, aiReviewContext)
         .navigationTitle("Visit Note")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -516,6 +491,7 @@ struct DocumentationView: View {
 
                 // Capture AI Assist feature flag
                 aiAssistEnabled = template.aiAssistEnabled ?? false
+                noteRewriteEnabled = template.noteRewriteEnabled ?? false
 
                 // Service Location — preselect the server's answer: a locked
                 // code, the value already stored on the visit, the service's
@@ -1075,7 +1051,9 @@ struct VisitQuestionCard: View {
                         set: { answer = $0 }
                     ),
                     placeholder: "Your answer…",
-                    minHeight: 80
+                    minHeight: 80,
+                    fieldKind: "question",
+                    questionId: question.id
                 )
             }
 
@@ -1299,11 +1277,164 @@ struct DocSection<Content: View>: View {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ✨ AI Review (build 66, server v0.4.458).
+//
+// Nick 2026-09-10: "instead of a mic button with each textbox, change it to AI
+// Review. You can type whatever you want, AI will rewrite it based on the AI
+// settings." The per-textbox 🎤 DictationButton is REPLACED (not hidden) by an
+// AI Review action that rewrites THAT field's text in place toward the agency's
+// Note Review criteria, with one-tap Undo. Dictation is still available through
+// the keyboard's own mic key. DictationButton.swift / SpeechRecognizer.swift
+// are left in the target on purpose (Info.plist usage strings still reference
+// them); they simply have no call sites on this form any more.
+//
+// The context travels through the SwiftUI environment so OutcomeEntryView /
+// DocQuestionView / the comments editor need no new parameters for the visit id.
+// ---------------------------------------------------------------------------
+struct AIReviewContext {
+    var visitId: String? = nil
+    var enabled: Bool = false
+    var online: Bool = true
+    /// Outcome local UUID → server client_goals.id (so a narrative rewrite can
+    /// tell the server WHICH outcome it belongs to).
+    var outcomeServerIds: [UUID: Int] = [:]
+
+    /// Button renders at all (server mode, feature ON, real visit).
+    var available: Bool { enabled && visitId != nil }
+}
+
+private struct AIReviewContextKey: EnvironmentKey {
+    static let defaultValue = AIReviewContext()
+}
+
+extension EnvironmentValues {
+    var aiReviewContext: AIReviewContext {
+        get { self[AIReviewContextKey.self] }
+        set { self[AIReviewContextKey.self] = newValue }
+    }
+}
+
+struct AIReviewButton: View {
+    @Binding var text: String
+    let fieldKind: String          // "outcome_narrative" | "comment" | "question"
+    var outcomeLocalId: UUID? = nil
+    var questionId: Int? = nil
+
+    @Environment(\.aiReviewContext) private var ctx
+
+    @State private var busy = false
+    @State private var original: String? = nil      // text before the accepted rewrite
+    @State private var rewrittenText: String? = nil // what we put in the field
+    @State private var status: String? = nil
+    @State private var statusIsError = false
+
+    private var canTap: Bool {
+        !busy && ctx.online && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let status = status {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundColor(statusIsError ? Theme.danger : Theme.primary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            if original != nil {
+                Button("Undo") { undo() }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .foregroundColor(Theme.primary)
+            }
+            Button(action: { Task { await run() } }) {
+                HStack(spacing: 4) {
+                    if busy {
+                        ProgressView().scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "sparkles")
+                    }
+                    Text(ctx.online ? "AI Review" : "Needs a connection")
+                }
+                .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderless)
+            .foregroundColor(Theme.primary)
+            .disabled(!canTap)
+            .opacity(canTap ? 1 : 0.5)
+            .accessibilityLabel("AI Review — rewrite this field")
+        }
+        .onChange(of: text) { newValue in
+            // Typing after a rewrite invalidates the Undo target.
+            if let r = rewrittenText, newValue != r {
+                original = nil
+                rewrittenText = nil
+                status = nil
+            }
+        }
+    }
+
+    private func undo() {
+        guard let o = original else { return }
+        text = o
+        original = nil
+        rewrittenText = nil
+        statusIsError = false
+        status = "Restored your original text."
+    }
+
+    @MainActor
+    private func run() async {
+        guard let visitId = ctx.visitId, canTap else { return }
+        let input = text
+        busy = true
+        statusIsError = false
+        status = "Rewriting…"
+        defer { busy = false }
+        do {
+            var serverOutcomeId: Int? = nil
+            if let lid = outcomeLocalId { serverOutcomeId = ctx.outcomeServerIds[lid] }
+            let r = try await APIClient.shared.aiReviewText(
+                visitId: visitId, text: input, fieldKind: fieldKind,
+                outcomeId: serverOutcomeId, questionId: questionId)
+            // The field may have changed while we waited — never clobber that.
+            guard text == input else {
+                statusIsError = true
+                status = "Field changed while rewriting — tap again."
+                return
+            }
+            if r.unchanged == true {
+                status = "Already reads well — no changes."
+                return
+            }
+            original = input
+            rewrittenText = r.rewritten
+            text = r.rewritten
+            status = "Rewritten by AI — check it says what you meant."
+        } catch {
+            statusIsError = true
+            if case APIError.serverError(_, let msg) = error {
+                status = msg
+            } else {
+                status = "AI Review failed. Your text was left as is."
+            }
+        }
+    }
+}
+
 struct DocTextEditor: View {
     @Binding var text: String
     let placeholder: String
     var minHeight: CGFloat = 90
-    var showDictation: Bool = true
+    /// Build 66: was `showDictation` (🎤). Callers that must suppress the row
+    /// (read-only/detail contexts) pass false.
+    var showAIReview: Bool = true
+    var fieldKind: String = "comment"
+    var outcomeLocalId: UUID? = nil
+    var questionId: Int? = nil
+
+    @Environment(\.aiReviewContext) private var aiReview
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1320,13 +1451,11 @@ struct DocTextEditor: View {
                     .frame(minHeight: minHeight)
                     .opacity(text.isEmpty ? 0.6 : 1)
             }
-            if showDictation {
-                HStack {
-                    Spacer()
-                    DictationButton(text: $text)
-                }
-                .padding(.trailing, 4)
-                .padding(.bottom, 4)
+            if showAIReview && aiReview.available {
+                AIReviewButton(text: $text, fieldKind: fieldKind,
+                               outcomeLocalId: outcomeLocalId, questionId: questionId)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
             }
         }
         .background(Theme.screenBackground)

@@ -136,7 +136,9 @@ struct OutcomeEntryView: View {
                               placeholder: entry.na
                                   ? "Optional — add details if needed"
                                   : "Describe how \(outcome.title.lowercased()) went during this visit…",
-                              minHeight: 80)
+                              minHeight: 80,
+                              fieldKind: "outcome_narrative",
+                              outcomeLocalId: outcome.id)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
