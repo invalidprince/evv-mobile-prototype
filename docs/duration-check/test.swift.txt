@@ -1,0 +1,71 @@
+
+// ---------------------------------------------------------------------------
+// Build 64 — Visit.durationText / hoursValue for cross-midnight + full-day spans
+// ---------------------------------------------------------------------------
+var passed = 0
+var failed = 0
+func check(_ label: String, _ cond: Bool) {
+    if cond { passed += 1; print("  ✓ \(label)") } else { failed += 1; print("  ✗ \(label)") }
+}
+
+// Same-date parse, exactly as AppState.parseShiftDateTime builds the pair.
+let fmt = DateFormatter()
+fmt.locale = Locale(identifier: "en_US_POSIX")
+fmt.timeZone = TimeZone(identifier: "America/New_York")
+fmt.dateFormat = "yyyy-MM-dd h:mm a"
+func at(_ date: String, _ t: String) -> Date { fmt.date(from: "\(date) \(t)")! }
+
+let client = Client(id: UUID(), name: "Ray E. Varner", address: "", city: "")
+func visit(_ start: Date?, _ end: Date?, server: Int? = nil, status: VisitStatus = .completed) -> Visit {
+    var v = Visit(id: UUID(), clients: [client], service: .inHomeSupport,
+                  scheduledStart: start ?? Date(), scheduledEnd: end ?? Date(),
+                  actualStart: start, actualEnd: end, status: status)
+    v.serverDurationMinutes = server
+    return v
+}
+
+print("\nlocal fallback (no server duration) — the same-date parse that produced 0h 0m / negatives")
+let D = "2026-09-09"
+let full = visit(at(D, "12:00 AM"), at(D, "12:00 AM"))
+check("12:00 AM → 12:00 AM renders 24h 0m (was 0h 0m)", full.durationText == "24h 0m")
+check("12:00 AM → 12:00 AM is 24.0 hours (was 0)", full.hoursValue == 24.0)
+let eq = visit(at(D, "8:00 AM"), at(D, "8:00 AM"))
+check("8:00 AM → 8:00 AM = full day, matching the server primitive", eq.durationText == "24h 0m")
+let ovn = visit(at(D, "8:00 PM"), at(D, "6:00 AM"))
+check("8:00 PM → 6:00 AM renders 10h 0m (was negative)", ovn.durationText == "10h 0m")
+check("8:00 PM → 6:00 AM adds +10h to Total Hours, not -14h", ovn.hoursValue == 10.0)
+let ovn2 = visit(at(D, "10:00 PM"), at(D, "6:00 AM"))
+check("10:00 PM → 6:00 AM = 8h 0m", ovn2.durationText == "8h 0m")
+let norm = visit(at(D, "9:00 AM"), at(D, "5:00 PM"))
+check("9:00 AM → 5:00 PM = 8h 0m (normal day unchanged)", norm.durationText == "8h 0m" && norm.hoursValue == 8.0)
+let half = visit(at(D, "9:15 AM"), at(D, "11:45 AM"))
+check("9:15 AM → 11:45 AM = 2h 30m", half.durationText == "2h 30m" && half.hoursValue == 2.5)
+// Truthful Date pair (end rolled onto the next day, as AppState now does) agrees.
+let realOvn = visit(at(D, "8:00 PM"), at("2026-09-10", "6:00 AM"))
+check("a next-day end Date gives the same 10h 0m", realOvn.durationText == "10h 0m")
+let realFull = visit(at(D, "12:00 AM"), at("2026-09-10", "12:00 AM"))
+check("a next-day midnight end Date gives the same 24h 0m", realFull.durationText == "24h 0m")
+
+print("\nmissing punches")
+let inprog = visit(at(D, "9:00 AM"), nil, status: .inProgress)
+check("no clock-out → durationText is —", inprog.durationText == "—")
+check("no clock-out → hoursValue is 0 (never negative)", inprog.hoursValue == 0)
+let noIn = visit(nil, at(D, "5:00 PM"))
+check("no clock-in → —", noIn.durationText == "—" && noIn.hoursValue == 0)
+
+print("\nserver duration is authoritative")
+let srv = visit(at(D, "12:00 AM"), at(D, "12:00 AM"), server: 1440)
+check("server 1440 → 24h 0m", srv.durationText == "24h 0m" && srv.hoursValue == 24.0)
+let srvWins = visit(at(D, "9:00 AM"), at(D, "5:00 PM"), server: 150)
+check("server minutes win over the local pair (150 → 2h 30m)", srvWins.durationText == "2h 30m")
+let srvNeg = visit(at(D, "9:00 AM"), at(D, "5:00 PM"), server: -30)
+check("a hostile negative server value is ignored → local fallback 8h 0m", srvNeg.durationText == "8h 0m")
+let srvOnly = visit(at(D, "9:00 AM"), nil, server: 600)
+check("server duration with a missing local punch still renders (600 → 10h 0m)", srvOnly.durationText == "10h 0m")
+
+print("\nTotal Hours (14d) reduce — the HistoryView expression")
+let total = [full, ovn, norm, inprog].reduce(0) { $0 + $1.hoursValue }
+check("24 + 10 + 8 + 0 = 42h (was 0 - 14 + 8 = -6h)", total == 42.0)
+
+print("\n\(passed) passed, \(failed) failed")
+exit(failed == 0 ? 0 : 1)

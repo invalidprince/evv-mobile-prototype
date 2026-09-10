@@ -1467,6 +1467,11 @@ final class AppState: ObservableObject {
             } else {
                 status = .inProgress
             }
+            // Build 64 — same-date parse; roll a wrapped clock-out forward so
+            // 12:00 AM → 12:00 AM is a real 24h Date pair, not zero seconds.
+            if let st = actualStart, let en = actualEnd, en <= st {
+                actualEnd = st.addingTimeInterval(Double(ManualSpan.spanMinutes(start: st, end: en)) * 60)
+            }
         }
 
         let partners = (s.partners ?? []).map { PartnerInfo(staffId: $0.staffId, name: $0.name) }
@@ -2096,6 +2101,14 @@ final class AppState: ObservableObject {
             actualEnd = parseShiftDateTime(dateStr: histDate, timeStr: co)
                 ?? parseISO8601(co)
         }
+        // Build 64 — both punches are parsed onto the visit's DATE, so a span
+        // that wraps midnight (12:00 AM → 12:00 AM, 8:00 PM → 6:00 AM) lands
+        // with end <= start. Roll the end forward by the real span so the
+        // Date pair is truthful (time text, sorting) — the same
+        // `ManualSpan.spanMinutes` rule the server's `duration` now uses.
+        if let s = actualStart, let e = actualEnd, e <= s {
+            actualEnd = s.addingTimeInterval(Double(ManualSpan.spanMinutes(start: s, end: e)) * 60)
+        }
 
         let visitStatus: VisitStatus
         switch sv.status?.lowercased() {
@@ -2147,6 +2160,9 @@ final class AppState: ObservableObject {
         visit.hasNote = sv.hasNote ?? false
         visit.serverDocStatus = sv.docStatus
         visit.approvalStatus = sv.approvalStatus
+        // Build 64 — the server's minutes are authoritative for History and
+        // Total Hours (14d); the local span math is only the fallback.
+        visit.serverDurationMinutes = sv.duration
         if let dur = sv.duration {
             // Use duration from server (minutes) to compute end if missing
             if actualEnd == nil, let start = actualStart {

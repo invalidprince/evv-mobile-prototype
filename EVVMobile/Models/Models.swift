@@ -175,15 +175,35 @@ struct Visit: Identifiable {
         docComplete && lateDocumentation
     }
 
+    // MARK: - Duration (build 64)
+
+    /// Server-computed duration in minutes (`GET /api/me/visits` → `duration`,
+    /// server v0.4.450+ routes it through span-core so 12:00 AM → 12:00 AM is
+    /// 1440 and 8:00 PM → 6:00 AM is 600). nil on mock/offline/queued rows and
+    /// on a visit with a missing punch.
+    var serverDurationMinutes: Int?
+
+    /// THE one duration rule. Server value first (one source of truth); the
+    /// local recompute is only the FALLBACK, and it goes through
+    /// `ManualSpan.spanMinutes` — minutes-since-midnight math — because
+    /// `actualStart`/`actualEnd` are parsed onto the SAME calendar date by
+    /// `parseShiftDateTime`, so `end.timeIntervalSince(start)` was 0 for a
+    /// 12-12 Lifesharing day and NEGATIVE for an overnight span (History read
+    /// "0h 0m" and Total Hours (14d) shrank). nil ⇔ a punch is missing.
+    var durationMinutes: Int? {
+        if let m = serverDurationMinutes, m >= 0 { return m }
+        guard let start = actualStart, let end = actualEnd else { return nil }
+        return ManualSpan.spanMinutes(start: start, end: end)
+    }
+
     var durationText: String {
-        guard let start = actualStart, let end = actualEnd else { return "—" }
-        let mins = Int(end.timeIntervalSince(start) / 60)
+        guard let mins = durationMinutes else { return "—" }
         return "\(mins / 60)h \(mins % 60)m"
     }
 
     var hoursValue: Double {
-        guard let start = actualStart, let end = actualEnd else { return 0 }
-        return end.timeIntervalSince(start) / 3600
+        guard let mins = durationMinutes else { return 0 }
+        return Double(mins) / 60.0
     }
 }
 
