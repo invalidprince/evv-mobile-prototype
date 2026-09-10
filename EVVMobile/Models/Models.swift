@@ -383,9 +383,13 @@ enum CredentialStatus {
 ///   • An end AT OR BEFORE the start CROSSES MIDNIGHT. 12:00 AM → 12:00 AM is
 ///     a full 24-hour Lifesharing day, never a validation error (Nick
 ///     2026-08-18: "you work midnight to midnight").
-///   • Untouched placeholder (both still midnight) → CONFIRM, never a block.
+///   • Untouched placeholder (both still midnight) → build 65: NO PROMPT AT
+///     ALL. It was a hard block, then a confirm, and is now nothing — Nick
+///     2026-09-10: "Nah just don't require it" / "all shifts, also across the
+///     website AND iOS". The live span hint is the disclosure.
 ///   • End later than now (+10 min grace), today, not crossing midnight →
-///     CONFIRM, never a block ("declaring the full scheduled window").
+///     CONFIRM, never a block ("declaring the full scheduled window"). This is
+///     the ONLY surviving manual-time prompt on either platform.
 ///
 /// Build 62 (Nick 2026-09-09, #evv: "There's no way to put a date on this like
 /// you can on desktop. Just fix this.") — the entry also carries a DATE, the
@@ -521,20 +525,31 @@ enum ManualSpan {
     }
 
     /// The confirmation copy the sheets show before submitting, or nil when
-    /// nothing needs confirming. Mirrors the desktop's two `confirm()`s.
+    /// nothing needs confirming. Mirrors the desktop's remaining `confirm()`.
     static func confirmationMessage(start: Date, end: Date, now: Date = Date()) -> String? {
         confirmationMessage(start: start, end: end, date: now, now: now)
     }
 
-    /// Build 62 — date-aware twin. Mirrors the desktop exactly:
-    ///   • the 24-hour confirm NAMES the day (`'… on ' + uvDateRaw`);
-    ///   • the future-end confirm is SKIPPED on a back-dated entry
-    ///     (`confirmFutureEnd`: `if (dateIso && dateIso !== TODAY_ISO) return true`).
+    /// Build 65 (Nick 2026-09-10, Todoist 6hQX2PvpHr59Pf9H: "It appears to always
+    /// verify, I don't think it's necessarily required. That's why you enter in
+    /// the times." / "Nah just don't require it." / "All shifts, also across the
+    /// website AND iOS.") — the FULL-DAY / cross-midnight confirm is GONE on both
+    /// platforms. A 12:00 AM → 12:00 AM entry is the NORMAL shape of a
+    /// Lifesharing day, so prompting on it prompted on the common case and
+    /// taught people to tap through. The passive `hint(start:end:on:)` string
+    /// ("24h 0m — spans midnight (ends Fri, Sep 11)") stays visible under the
+    /// pickers and is now the only disclosure — the desktop made exactly the
+    /// same trade in `my-day.ejs`.
+    ///
+    /// `placeholderUntouched` is intentionally retained (the sheets show the
+    /// hint from it and the offline harness asserts the shape) but no longer
+    /// produces a confirmation. Do not wire it back to an alert.
+    ///
+    /// What SURVIVES: the future-end confirm. That is a different question —
+    /// "this end time has not happened yet" (v0.4.128, asked for by name) — and
+    /// it is still SKIPPED on a back-dated entry, matching the desktop's
+    /// `confirmFutureEnd` (`if (dateIso && dateIso !== TODAY_ISO) return true`).
     static func confirmationMessage(start: Date, end: Date, date: Date, now: Date = Date()) -> String? {
-        if placeholderUntouched(start: start, end: end) {
-            let onDay = isToday(date, today: now) ? "" : " on \(dayLabel(date))"
-            return "Save a full 24-hour entry from 12:00 AM to 12:00 AM\(onDay)?\n\nBoth times still show 12:00 AM. Choose Cancel if you meant to enter different times."
-        }
         // A past day has already elapsed — there is no "future" end time on it.
         if !isToday(date, today: now) { return nil }
         if endIsInFuture(start: start, end: end, now: now) {

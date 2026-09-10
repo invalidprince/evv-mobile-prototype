@@ -1,0 +1,144 @@
+
+// ===========================================================================
+// build 65 — the full-day / cross-midnight confirm is GONE on iOS.
+// Todoist 6hQX2PvpHr59Pf9H. Nick 2026-09-10: "Nah just don't require it" /
+// "All shifts, also across the website AND iOS."
+//
+// Everything above this line is the REAL `ManualSpan` from Models.swift,
+// lifted verbatim. Nothing below re-implements it.
+// ===========================================================================
+
+var pass = 0
+var failures: [String] = []
+
+func t(_ name: String, _ body: () -> Bool) {
+    if body() { pass += 1; print("  ✓ \(name)") }
+    else { failures.append(name); print("  ✗ \(name)") }
+}
+func section(_ s: String) { print("\n— \(s)\n") }
+
+let cal = Calendar.current
+
+/// A Date at H:MM on a fixed reference day (the picker's date part is
+/// irrelevant to ManualSpan.minutes, which reads hour+minute only).
+func at(_ h: Int, _ m: Int) -> Date {
+    cal.date(bySettingHour: h, minute: m, second: 0, of: cal.startOfDay(for: Date()))!
+}
+func daysAgo(_ n: Int) -> Date {
+    cal.date(byAdding: .day, value: -n, to: cal.startOfDay(for: Date()))!
+}
+
+let today = Date()
+let noon = at(12, 0)
+
+// ===========================================================================
+section("THE CARD: a full-day 12:00 AM → 12:00 AM entry asks NOTHING")
+// ===========================================================================
+let midnight = at(0, 0)
+
+t("12:00 AM → 12:00 AM, today → nil (was the 24-hour confirm)") {
+    ManualSpan.confirmationMessage(start: midnight, end: midnight, date: today, now: noon) == nil
+}
+t("12:00 AM → 12:00 AM, back-dated 3 days → nil") {
+    ManualSpan.confirmationMessage(start: midnight, end: midnight, date: daysAgo(3), now: noon) == nil
+}
+t("12:00 AM → 12:00 AM via the 2-arg convenience overload → nil") {
+    ManualSpan.confirmationMessage(start: midnight, end: midnight, now: noon) == nil
+}
+t("...even when 'now' is 12:01 AM (the end looks future-ish)") {
+    ManualSpan.confirmationMessage(start: midnight, end: midnight, date: today, now: at(0, 1)) == nil
+}
+t("no surviving message anywhere contains the removed copy") {
+    // Sweep the whole grid; the string must be unreachable.
+    var hits = 0
+    for sh in 0..<24 {
+        for eh in 0..<24 {
+            for d in [today, daysAgo(1), daysAgo(9)] {
+                if let m = ManualSpan.confirmationMessage(start: at(sh, 0), end: at(eh, 0), date: d, now: noon),
+                   m.contains("full 24-hour entry") { hits += 1 }
+            }
+        }
+    }
+    return hits == 0
+}
+
+// ===========================================================================
+section("other wrapping spans are equally silent (Nick: 'all shifts')")
+// ===========================================================================
+for (sh, sm, eh, em, label) in [
+    (20, 0, 6, 0, "8:00 PM → 6:00 AM"),
+    (23, 30, 0, 15, "11:30 PM → 12:15 AM"),
+    (12, 0, 12, 0, "12:00 PM → 12:00 PM"),
+    (9, 0, 9, 0, "9:00 AM → 9:00 AM"),
+] {
+    t("\(label) (crosses midnight) → nil") {
+        ManualSpan.confirmationMessage(start: at(sh, sm), end: at(eh, em), date: today, now: at(23, 59)) == nil
+    }
+}
+
+// ===========================================================================
+section("THE SURVIVOR: a future end time still asks (v0.4.128, kept)")
+// ===========================================================================
+t("9:00 AM → 5:00 PM at 10:00 AM → asks (end has not occurred)") {
+    guard let m = ManualSpan.confirmationMessage(start: at(9, 0), end: at(17, 0), date: today, now: at(10, 0))
+    else { return false }
+    return m.contains("has not occurred yet")
+}
+t("...and that is the ONLY copy it can produce") {
+    guard let m = ManualSpan.confirmationMessage(start: at(9, 0), end: at(17, 0), date: today, now: at(10, 0))
+    else { return false }
+    return !m.contains("24-hour")
+}
+t("9:00 AM → 5:00 PM at 6:00 PM → nil (already elapsed)") {
+    ManualSpan.confirmationMessage(start: at(9, 0), end: at(17, 0), date: today, now: at(18, 0)) == nil
+}
+t("the +10 min grace still holds: end 10:05 at 10:00 → nil") {
+    ManualSpan.confirmationMessage(start: at(9, 0), end: at(10, 5), date: today, now: at(10, 0)) == nil
+}
+t("...but end 10:11 at 10:00 → asks") {
+    ManualSpan.confirmationMessage(start: at(9, 0), end: at(10, 11), date: today, now: at(10, 0)) != nil
+}
+t("BACK-DATED future-looking end → nil (a past day already elapsed)") {
+    ManualSpan.confirmationMessage(start: at(9, 0), end: at(17, 0), date: daysAgo(2), now: at(10, 0)) == nil
+}
+t("a wrapping span is never a 'future end' either") {
+    ManualSpan.endIsInFuture(start: at(20, 0), end: at(6, 0), now: at(10, 0)) == false
+}
+
+// ===========================================================================
+section("nothing else about ManualSpan moved")
+// ===========================================================================
+t("spanMinutes: 12→12 is still 1440") { ManualSpan.spanMinutes(start: midnight, end: midnight) == 1440 }
+t("spanMinutes: 8 PM → 6 AM is still 600") { ManualSpan.spanMinutes(start: at(20, 0), end: at(6, 0)) == 600 }
+t("spanMinutes: 9 AM → 5 PM is still 480") { ManualSpan.spanMinutes(start: at(9, 0), end: at(17, 0)) == 480 }
+t("crossesMidnight still true for an equal pair") { ManualSpan.crossesMidnight(start: noon, end: noon) }
+t("crossesMidnight still false for a normal span") { !ManualSpan.crossesMidnight(start: at(9, 0), end: at(17, 0)) }
+
+t("the passive hint STILL discloses a full day (now the only disclosure)") {
+    ManualSpan.hint(start: midnight, end: midnight) == "24h 0m — spans midnight"
+}
+t("...and the date-aware hint still names the day it ends on") {
+    ManualSpan.hint(start: midnight, end: midnight, on: today).contains("ends ")
+}
+t("a non-wrapping hint stays plain") {
+    ManualSpan.hint(start: at(9, 0), end: at(17, 0)) == "8h 0m"
+}
+t("placeholderUntouched is retained (hint/harness use it) but drives no alert") {
+    ManualSpan.placeholderUntouched(start: midnight, end: midnight)
+        && ManualSpan.confirmationMessage(start: midnight, end: midnight, date: today, now: noon) == nil
+}
+t("the date rules are untouched: 0 maxDays means today only") {
+    ManualSpan.isToday(ManualSpan.earliestDate(maxDays: 0, today: today), today: today)
+}
+t("...and a 14-day window still reaches back 14 days") {
+    cal.dateComponents([.day], from: ManualSpan.earliestDate(maxDays: 14, today: today),
+                       to: cal.startOfDay(for: today)).day == 14
+}
+
+print("\n" + String(repeating: "=", count: 60) + "\n")
+if !failures.isEmpty {
+    print("\(failures.count) FAILED:")
+    for f in failures { print("  ✗ \(f)") }
+}
+print("\(pass) passed, \(failures.count) failed")
+exit(failures.isEmpty ? 0 : 1)

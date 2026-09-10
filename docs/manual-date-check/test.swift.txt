@@ -151,13 +151,18 @@ do {
 
 print("\n=== confirmations mirror the desktop, including the one it SKIPS ===")
 do {
-    // Untouched 12:00 AM placeholder → ask, and name the day when back-dated.
+    // Build 65 (Nick 2026-09-10, Todoist 6hQX2PvpHr59Pf9H: "Nah just don't
+    // require it" / "all shifts, also across the website AND iOS"): the
+    // untouched-placeholder / full-day prompt is REMOVED on both platforms.
+    // It used to ask, and used to name the day when back-dated. Now it is
+    // silent in both cases — the live span hint is the only disclosure.
     let todayMsg = ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), date: today, now: today)
-    check("untouched placeholder still asks (never a block)", todayMsg != nil)
-    check("…and does NOT name a day when the entry is for today", !(todayMsg?.contains("on ") ?? true), todayMsg ?? "nil")
+    check("build 65: an untouched 12→12 placeholder asks NOTHING", todayMsg == nil, todayMsg ?? "nil")
     let backMsg = ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), date: day(-1), now: today)
-    check("a back-dated 24-hour entry NAMES the day (desktop: '… on ' + uvDateRaw)",
-          backMsg?.contains(ManualSpan.dayLabel(day(-1))) ?? false, backMsg ?? "nil")
+    check("…and a BACK-DATED full day is silent too", backMsg == nil, backMsg ?? "nil")
+    check("the hint still names the day the span ends on — that is the disclosure now",
+          ManualSpan.hint(start: at(0, 0), end: at(0, 0), on: day(-1)).contains(ManualSpan.dayLabel(today)),
+          ManualSpan.hint(start: at(0, 0), end: at(0, 0), on: day(-1)))
 
     // Future end: confirmed today, SKIPPED when back-dated.
     let futureToday = ManualSpan.confirmationMessage(start: at(9, 0), end: at(23, 0), date: today, now: today)
@@ -168,9 +173,9 @@ do {
     let normalToday = ManualSpan.confirmationMessage(start: at(9, 0), end: at(13, 0), date: today, now: today)
     check("an ordinary elapsed span today needs no confirmation", normalToday == nil, normalToday ?? "nil")
 
-    // The legacy 2-arg entry point must keep behaving exactly as it did.
-    check("the pre-build-62 confirmationMessage(start:end:now:) still asks about the placeholder",
-          ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), now: today) != nil)
+    // The legacy 2-arg entry point must agree with the date-aware twin.
+    check("build 65: the pre-build-62 overload is silent on the placeholder too",
+          ManualSpan.confirmationMessage(start: at(0, 0), end: at(0, 0), now: today) == nil)
     check("…and still confirms a future end today",
           ManualSpan.confirmationMessage(start: at(9, 0), end: at(23, 0), now: today)?.contains("has not occurred yet") ?? false)
 }

@@ -137,8 +137,9 @@ struct ServerUnscheduledContent: View {
 
     /// Build 55: mirrors the desktop — there is NO "end must be after start"
     /// or "no future end" hard rule. end <= start crosses midnight (12→12 is
-    /// a full 24h Lifesharing day); a future end and the untouched midnight
-    /// placeholder are CONFIRMED, never blocked (ManualSpan.confirmationMessage).
+    /// a full 24h Lifesharing day).
+    /// Build 65: the untouched-midnight / full-day confirm is GONE (Nick
+    /// 2026-09-10) — only a FUTURE end still asks. Nothing here ever blocks.
     private var manualTimesValid: Bool { true }
 
     /// Footer under Visit Times: what the section is for, plus the role's
@@ -647,7 +648,9 @@ struct ServerUnscheduledContent: View {
     }
 
     /// Runs `submit` immediately, or after the desktop-mirroring confirmation
-    /// when the times need one (ManualSpan.confirmationMessage).
+    /// when the times need one (ManualSpan.confirmationMessage). Build 65: the
+    /// only surviving prompt is the future-end one, so a full-day 12→12 entry
+    /// now saves on the first tap.
     private func confirmThenSubmitManual(_ submit: @escaping () -> Void) {
         if let msg = ManualSpan.confirmationMessage(start: manualStart, end: manualEnd, date: manualDate) {
             manualConfirmMessage = msg
