@@ -34,8 +34,12 @@ struct VoiceConversationSheet: View {
 
     // Silence detection for hands-free mode
     @State private var silenceTimer: Timer?
-    /// How long the user must be silent (no transcript change) before auto-sending
-    private let silenceThreshold: TimeInterval = 2.2
+    /// How long the user must be silent (no transcript change) before auto-sending.
+    /// Build 68: 2.2 s → 3.0 s — a thinking pause while describing a whole day
+    /// must not send half an answer (Nick 2026-09-11: long speech got cut off).
+    /// The ~1-minute recogniser cut-off itself is fixed in SpeechRecognizer
+    /// (segment chaining); this just stops a mid-thought pause from ending the turn.
+    private let silenceThreshold: TimeInterval = 3.0
     /// Maximum time to wait for any speech before falling back to tap-to-talk
     private let emptyListenTimeout: TimeInterval = 10.0
     @State private var recordingStartTime: Date = Date()
@@ -724,6 +728,16 @@ struct DocConversationResponse: Decodable {
     /// Where the service happened (build 28 / server v0.4.267). The server
     /// only returns a code it validated against this visit's allowed set.
     let serviceLocation: String?
+    /// Visit-question answers from the interview (build 68 / server v0.4.472).
+    /// The server only returns answers it validated against each question's
+    /// own options; wire shape == what `note.questionAnswers` stores
+    /// (checkbox = JSON-encoded array string). Older servers omit the key.
+    let visitQuestions: [DocConversationQuestionAnswer]?
+}
+
+struct DocConversationQuestionAnswer: Decodable {
+    let questionId: Int?
+    let answer: String?
 }
 
 struct DocConversationOutcome: Decodable {

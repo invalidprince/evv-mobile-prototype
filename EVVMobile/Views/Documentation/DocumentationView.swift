@@ -706,6 +706,22 @@ struct DocumentationView: View {
             }
         }
 
+        // Visit question answers from the interview (build 68 / server
+        // v0.4.472 — Nick 2026-09-11: the voice AI "never asked about the
+        // questions that ARE configured"). The interviewer now asks THIS
+        // visit's real questions and the server returns only answers it
+        // validated against each question's options, in the exact shape
+        // questionAnswers already stores — straight assignment, same as
+        // applyAIDraft. Questions the AI didn't answer are LEFT ALONE.
+        for qa in response.visitQuestions ?? [] {
+            guard let qid = qa.questionId, let answer = qa.answer,
+                  serverQuestions.contains(where: { $0.id == qid }) else { continue }
+            note.questionAnswers[qid] = answer
+            if let tq = transportQuestion, tq.id == qid {
+                note.transportReviewedGoals = (answer == "Yes")
+            }
+        }
+
         // Service Location from the interview (build 28 / server v0.4.267) —
         // validated server-side against this visit's allowed set.
         if let loc = response.serviceLocation, let sl = serviceLocation, sl.locked != true,
