@@ -104,7 +104,11 @@ struct OpenShiftsSection: View {
                         AvatarView(name: shift.client.name, size: 40)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(shift.client.name).font(.headline)
-                            Text(shift.service.rawValue)
+                            // Server open shifts render through
+                            // ServerOpenShiftsSection (serviceName ?? service);
+                            // this mock-mode section is the last enum-label
+                            // hold-out, aligned for consistency (v0.4.484).
+                            Text(shift.serviceLabel)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }

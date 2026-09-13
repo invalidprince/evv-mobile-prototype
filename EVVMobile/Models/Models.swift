@@ -211,6 +211,11 @@ struct OpenShift: Identifiable {
     let id: UUID
     let client: Client
     let service: ServiceType
+    /// Human service name (mock mode has none; real server open shifts render
+    /// through ServerOpenShiftsSection, which reads the payload's serviceName).
+    var serviceName: String? = nil
+    /// The ONE display discipline, same as Visit.serviceLabel (v0.4.484).
+    var serviceLabel: String { serviceName ?? service.rawValue }
     let start: Date
     let end: Date
 }
