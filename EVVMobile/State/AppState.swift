@@ -179,8 +179,16 @@ final class AppState: ObservableObject {
         // Notifications: ask permission at app start and make sure every
         // incomplete note has its end-of-day + midnight-late reminders queued.
         NoteReminderCenter.shared.activate()
-        for visit in incompleteNoteVisits {
-            NoteReminderCenter.shared.scheduleReminders(for: visit)
+        // A note reminder names the individual in the banner, so it may ONLY be
+        // built from server data. At init() `mode` is still .mock and
+        // todayVisits/pastVisits are MockData-seeded, so this loop used to queue
+        // 7 PM / midnight banners naming FAKE clients on every cold launch — a
+        // real user was told their note for "James Whitaker" was due. Server
+        // visits get their reminders at clock-out / manual entry instead.
+        if mode == .server {
+            for visit in incompleteNoteVisits {
+                NoteReminderCenter.shared.scheduleReminders(for: visit)
+            }
         }
         setupConnectivityMonitor()
         setupAutoSyncPipeline()
@@ -601,7 +609,8 @@ final class AppState: ObservableObject {
             let finished = todayVisits[idx]
             startTimerIfNeeded()
             haptic(.success)
-            NoteReminderCenter.shared.scheduleReminders(for: finished)
+            // Mock/demo mode: the client is a MockData fixture — never put that
+            // name in a notification banner.
             scheduleAutoSync()
             return finished
         }
@@ -1061,7 +1070,10 @@ final class AppState: ObservableObject {
 
     /// Demo affordance (More tab): fire a note reminder notification now.
     func sendTestNoteReminder(late: Bool) {
-        let clientName = incompleteNoteVisits.first?.client.name ?? MockData.clients[0].name
+        // No MockData fallback: this demo button must never put a fixture name
+        // (e.g. "James Whitaker") into a real notification banner. With nothing
+        // real to name, the reminder stays generic.
+        let clientName = incompleteNoteVisits.first?.client.name
         NoteReminderCenter.shared.sendTestReminder(clientName: clientName, late: late)
     }
 

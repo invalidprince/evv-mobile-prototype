@@ -25,6 +25,22 @@ final class NoteReminderCenter: NSObject, UNUserNotificationCenterDelegate {
     func activate() {
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        purgeStaleNoteReminders()
+    }
+
+    /// Drop every pending note reminder at launch. They are keyed on `Visit.id`,
+    /// a fresh UUID on each refresh, so a leftover request can never be matched
+    /// or cancelled later — which is how mock-seeded banners naming fixture
+    /// clients survived across launches and fired at a real user. The live
+    /// server visits are re-scheduled as they complete.
+    private func purgeStaleNoteReminders() {
+        center.getPendingNotificationRequests { [weak self] requests in
+            let stale = requests.map(\.identifier).filter {
+                $0.hasPrefix("note-eod-") || $0.hasPrefix("note-late-")
+            }
+            guard !stale.isEmpty else { return }
+            self?.center.removePendingNotificationRequests(withIdentifiers: stale)
+        }
     }
 
     // MARK: - Scheduling
@@ -75,14 +91,17 @@ final class NoteReminderCenter: NSObject, UNUserNotificationCenterDelegate {
 
     /// Demo affordance: fires a note reminder a few seconds from now so the
     /// notification can be shown instantly in the simulator.
-    func sendTestReminder(clientName: String, late: Bool) {
+    /// `clientName` is nil when there is no real incomplete note to name — the
+    /// body then stays generic rather than borrowing a MockData fixture name.
+    func sendTestReminder(clientName: String?, late: Bool) {
+        let subject = clientName ?? "an individual"
         let content = UNMutableNotificationContent()
         if late {
             content.title = "Note is now late"
-            content.body = "Your note for \(clientName) is now late. Complete it as soon as possible — your supervisor can see late documentation."
+            content.body = "Your note for \(subject) is now late. Complete it as soon as possible — your supervisor can see late documentation."
         } else {
             content.title = "Visit note still open"
-            content.body = "Your note for \(clientName) is due by midnight tonight. Finish it before the end of the day."
+            content.body = "Your note for \(subject) is due by midnight tonight. Finish it before the end of the day."
         }
         content.sound = .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
