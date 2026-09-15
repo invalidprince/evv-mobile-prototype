@@ -45,10 +45,61 @@ final class ShiftRequestPolicy: ObservableObject {
     }
 }
 
+/// Build 71 (server v0.4.505) — "I worked this shift" from a MISSED SHIFT
+/// row. The request is the ordinary shift request, PRE-POPULATED from the
+/// scheduled shift and LINKED to it (`shiftId`) so an approved visit covers the
+/// missed row. Nick 2026-09-15: "it would follow the exact same process to
+/// request a new visit to be created. It should still verify the times, etc.
+/// Just that stuff is pre-populated." The individual, service and date are
+/// fixed by the shift (the server refuses a mismatch: missed_shift_client_
+/// mismatch / missed_shift_date_mismatch); the TIMES stay editable and the
+/// reason stays required.
+struct MissedShiftPrefill {
+    let shiftId: Int
+    let clientId: String
+    let clientName: String
+    /// Service CODE — what the POST sends (the server resolves a code first).
+    let serviceCode: String
+    /// Description — what the sheet shows.
+    let serviceName: String
+    let date: String        // YYYY-MM-DD (agency day)
+    let start: String?      // "h:mm a"
+    let end: String?
+
+    init?(item: MissedShiftItem) {
+        guard let clientId = item.clientId, !clientId.isEmpty,
+              let code = item.service, !code.isEmpty else { return nil }
+        shiftId = item.shiftId
+        self.clientId = clientId
+        clientName = item.clientName ?? clientId
+        serviceCode = code
+        serviceName = item.serviceName ?? code
+        date = item.date
+        start = item.start
+        end = item.end
+    }
+
+    /// Agency-timezone parse of the server's labels (the inverse of the
+    /// sheet's serverDateLabel/serverTimeLabel). Falls back to "now" so a
+    /// malformed label never blocks the sheet — the server re-validates.
+    static func parse(date: String, time: String?) -> Date? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = time == nil ? "yyyy-MM-dd" : "yyyy-MM-dd h:mm a"
+        return f.date(from: time == nil ? date : "\(date) \(time!)")
+    }
+}
+
 struct RequestShiftSheet: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var policy = ShiftRequestPolicy.shared
     @Environment(\.dismiss) private var dismiss
+
+    /// Build 71 — when set, the sheet is the "I worked this shift" path for a
+    /// missed scheduled shift: individual/service/date are fixed, times are
+    /// pre-filled but editable, and the POST carries `shiftId`.
+    var prefill: MissedShiftPrefill? = nil
 
     /// Called with the created (pending) visit — the parent routes straight
     /// into DocumentationView for it.
@@ -123,6 +174,16 @@ struct RequestShiftSheet: View {
             && !selectedServiceName.isEmpty && timesValid && !trimmedReason.isEmpty
     }
 
+    /// Build 71 — the missed-shift path: the shift fixes who/what/when.
+    private var isPrefilled: Bool { prefill != nil }
+
+    private var prefillDateText: String {
+        guard let p = prefill, let d = MissedShiftPrefill.parse(date: p.date, time: nil) else { return prefill?.date ?? "" }
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return f.string(from: d)
+    }
+
     var body: some View {
         NavigationView {
             Form {
@@ -134,6 +195,35 @@ struct RequestShiftSheet: View {
                     }
                 }
 
+                if let p = prefill {
+                    Section(header: Text("Missed scheduled shift"),
+                            footer: Text("This records the scheduled shift you worked but never clocked. Check the times — the individual, service and date come from the schedule and can't change here.")) {
+                        HStack {
+                            AvatarView(name: p.clientName, size: 36)
+                            VStack(alignment: .leading) {
+                                Text(p.clientName)
+                                Text(p.serviceName)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        HStack {
+                            Text("Date")
+                            Spacer()
+                            Text(prefillDateText).foregroundColor(.secondary)
+                        }
+                        DatePicker("Start", selection: $startTime, displayedComponents: .hourAndMinute)
+                        DatePicker("End", selection: $endTime, displayedComponents: .hourAndMinute)
+                        if !timesValid {
+                            Label("End time must be after the start time.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundColor(Theme.danger)
+                        }
+                    }
+                }
+
+                if !isPrefilled {
                 Section(header: Text(individualsSectionTitle),
                         footer: Text("Who you worked with. Only individuals you have access to are listed.")) {
                     if appState.isLoadingIndividuals && appState.serverIndividuals.isEmpty {
@@ -212,10 +302,11 @@ struct RequestShiftSheet: View {
                             .foregroundColor(Theme.danger)
                     }
                 }
+                } // !isPrefilled
 
                 Section(header: Text("Reason (required)"),
                         footer: trimmedReason.isEmpty
-                            ? Text("Tell your manager why this shift isn't in the system.").foregroundColor(Theme.danger)
+                            ? Text(isPrefilled ? "Tell your manager why this shift was never clocked." : "Tell your manager why this shift isn't in the system.").foregroundColor(Theme.danger)
                             : Text("")) {
                     TextField("e.g. Forgot to clock in", text: $reason)
                 }
@@ -244,7 +335,7 @@ struct RequestShiftSheet: View {
                     .disabled(!canSubmit)
                 }
             }
-            .navigationTitle("Request a Shift")
+            .navigationTitle(isPrefilled ? "I Worked This Shift" : "Request a Shift")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -252,9 +343,22 @@ struct RequestShiftSheet: View {
                 }
             }
             .onAppear {
+                applyPrefill()
                 Task { await appState.refreshIndividuals() }
             }
         }
+    }
+
+    /// Build 71 — seed the form from the missed scheduled shift. Runs once
+    /// (guarded on the selection being empty) so a re-appear never clobbers
+    /// edited times.
+    private func applyPrefill() {
+        guard let p = prefill, selectedIndividualId == nil else { return }
+        selectedIndividualId = p.clientId
+        selectedServiceName = p.serviceCode
+        if let d = MissedShiftPrefill.parse(date: p.date, time: nil) { visitDate = d }
+        if let s = p.start, let sd = MissedShiftPrefill.parse(date: p.date, time: s) { startTime = sd }
+        if let e = p.end, let ed = MissedShiftPrefill.parse(date: p.date, time: e) { endTime = ed }
     }
 
     private func select(_ individual: ServerIndividualOption) {
@@ -297,7 +401,20 @@ struct RequestShiftSheet: View {
     }
 
     private func submit() {
-        guard let individual = selectedIndividual, canSubmit else { return }
+        guard canSubmit else { return }
+        // Build 71 — on the missed-shift path the individual comes from the
+        // SHIFT, not the roster picker (the roster may still be loading).
+        let individualName: String
+        let individualId: String
+        if let p = prefill {
+            individualId = p.clientId
+            individualName = p.clientName
+        } else if let individual = selectedIndividual {
+            individualId = individual.id
+            individualName = individual.name
+        } else {
+            return
+        }
         isSubmitting = true
         submitError = nil
 
@@ -310,25 +427,28 @@ struct RequestShiftSheet: View {
         Task {
             do {
                 let resp = try await APIClient.shared.requestShift(
-                    clientId: individual.id,
+                    clientId: individualId,
                     service: selectedServiceName,
-                    date: serverDateLabel(visitDate),
+                    // Prefilled: send the shift's own date label verbatim so a
+                    // device-timezone round-trip can never shift the day.
+                    date: prefill?.date ?? serverDateLabel(visitDate),
                     startTime: serverTimeLabel(startCombined),
                     endTime: serverTimeLabel(endCombined),
                     reason: reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        ? nil : reason.trimmingCharacters(in: .whitespacesAndNewlines)
+                        ? nil : reason.trimmingCharacters(in: .whitespacesAndNewlines),
+                    shiftId: prefill?.shiftId
                 )
                 await MainActor.run {
                     isSubmitting = false
                     // Build the Visit the documentation screen needs. The
                     // server visit id is the only field DocumentationView
                     // actually submits against; the rest is display.
-                    let client = Client(id: UUID(), name: individual.name,
-                                        address: individual.id, city: "")
+                    let client = Client(id: UUID(), name: individualName,
+                                        address: individualId, city: "")
                     var visit = Visit(
                         id: UUID(),
                         clients: [client],
-                        service: mapServiceNameToType(selectedServiceName),
+                        service: mapServiceNameToType(prefill?.serviceName ?? selectedServiceName),
                         scheduledStart: startCombined,
                         scheduledEnd: endCombined,
                         actualStart: startCombined,

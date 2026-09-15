@@ -695,6 +695,60 @@ struct ShiftRequestBody: Encodable {
     let startTime: String   // "h:mm a"
     let endTime: String
     let reason: String?
+    /// Build 71 (server v0.4.505) — "I worked this shift" from a MISSED SHIFT
+    /// row: the id of the scheduled shift that was never started. The server
+    /// links the pending visit to THAT shift (instead of minting a new
+    /// origin='request' shift), so an approved visit covers the missed row and
+    /// it leaves the list by itself. nil = an ordinary request (unchanged).
+    let shiftId: Int?
+}
+
+// MARK: - Missed shifts (server v0.4.505, build 71)
+
+/// One scheduled shift of MINE that was never started and still OWES a
+/// reason (GET /api/me/missed-shifts). Derived server-side from the same
+/// builder the web To-Do renders (todo-core.missedShiftsForStaff); the row
+/// disappears on its own once a visit covers the shift or a reason is recorded.
+/// Manual-time services and daily-visit rows never appear here by construction.
+struct MissedShiftItem: Decodable, Identifiable {
+    let key: String
+    let shiftId: Int
+    let staffId: String?
+    let date: String            // YYYY-MM-DD (agency day)
+    let start: String?          // "h:mm a"
+    let end: String?
+    let clientId: String?
+    let clientName: String?
+    let service: String?        // service CODE (what the shift-request POST wants)
+    let serviceName: String?    // description — what the card shows
+    let lateMinutes: Int?
+    /// Whether "I worked this shift" is offered: the role has canRequestShift
+    /// AND the shift date is inside the role's shiftRequestMaxDays window.
+    /// Older rows can only take a reason.
+    let canRequest: Bool?
+    let requestMinDate: String?
+    var id: String { key }
+    var offersRequest: Bool { canRequest == true }
+}
+
+struct MissedShiftsResponse: Decodable {
+    let missedShifts: [MissedShiftItem]
+    /// The ONE reason vocabulary (db.NOT_WORKED_REASONS) — shared with the web
+    /// dialog so the lists cannot drift. "Other" requires a comment.
+    let reasons: [String]
+    let requiredFrom: String?
+    let shiftRequestMaxDays: Int?
+}
+
+struct MissedShiftResolveBody: Encodable {
+    let reason: String
+    let comment: String?
+}
+
+struct MissedShiftResolveResponse: Decodable {
+    let ok: Bool
+    let shiftId: Int?
+    let reason: String?
 }
 
 struct ShiftRequestVisitInfo: Decodable {
@@ -826,6 +880,9 @@ struct WorkItem: Decodable, Identifiable {
     /// Server visit id (e.g. "V-2027") for documentation items — used to
     /// resolve the native DocumentationView destination.
     let visitId: String?
+    /// Scheduled shift id for `native == "missedshift"` items (server
+    /// v0.4.505, build 71) — resolves the in-app missed-shift sheet.
+    let shiftId: Int?
     var id: String { key }
     var isTodo: Bool { kind == "todo" }
 }
@@ -1937,7 +1994,8 @@ actor APIClient {
     /// ONLINE-ONLY by design — never queued (a retroactive record needs the
     /// server's duplicate/overlap checks at submit time).
     func requestShift(clientId: String, service: String, date: String,
-                      startTime: String, endTime: String, reason: String?) async throws -> ShiftRequestResponse {
+                      startTime: String, endTime: String, reason: String?,
+                      shiftId: Int? = nil) async throws -> ShiftRequestResponse {
         let url = URL(string: "\(baseURL)/me/shift-requests")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1945,7 +2003,8 @@ actor APIClient {
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
             ShiftRequestBody(clientId: clientId, service: service, date: date,
-                             startTime: startTime, endTime: endTime, reason: reason)
+                             startTime: startTime, endTime: endTime, reason: reason,
+                             shiftId: shiftId)
         )
         request.timeoutInterval = 15
 
@@ -1971,6 +2030,78 @@ actor APIClient {
             return try JSONDecoder().decode(ShiftRequestResponse.self, from: data)
         } catch {
             // 2xx reached: the pending visit is COMMITTED server-side.
+            throw APIError.responseUnreadable(error)
+        }
+    }
+
+    // MARK: - Missed shifts (server v0.4.505, build 71)
+
+    /// GET /api/me/missed-shifts — my scheduled shifts that were never started
+    /// and still owe a reason. ONLINE-ONLY, never cached: the list is derived
+    /// server-side and a stale copy would nag about a row that a late-syncing
+    /// punch already covered. A 403 means the ROLE cannot resolve missed
+    /// shifts (canResolveOwnMissedShift off) — surfaced as `.forbidden` so the
+    /// caller can hide the card instead of showing an empty one.
+    func fetchMissedShifts() async throws -> MissedShiftsResponse {
+        let url = URL(string: "\(baseURL)/me/missed-shifts")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Your role cannot resolve missed shifts."
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to fetch missed shifts"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(MissedShiftsResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    /// POST /api/me/missed-shifts/:shiftId/resolve — "It was missed": record
+    /// WHY a scheduled shift of mine was never worked. Self-scoped by the token
+    /// (the staff id is never in the body). ONLINE-ONLY, never queued — the
+    /// server state-checks the row (must still be a live never-started shift
+    /// for me, no pending request) and a queued reason replayed hours later
+    /// could land on a shift a punch has since covered. 409 = that state
+    /// refusal, 403 = permission, 400 = bad reason / Other without a comment.
+    func resolveMissedShift(shiftId: Int, reason: String, comment: String?) async throws -> MissedShiftResolveResponse {
+        let url = URL(string: "\(baseURL)/me/missed-shifts/\(shiftId)/resolve")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(MissedShiftResolveBody(reason: reason, comment: comment))
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Your role cannot resolve missed shifts."
+            throw APIError.forbidden(errBody)
+        }
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "This shift is no longer waiting on a reason."
+            throw APIError.conflict(errBody)
+        }
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not record the reason."
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(MissedShiftResolveResponse.self, from: data)
+        } catch {
+            // 200 reached: the reason is RECORDED server-side.
             throw APIError.responseUnreadable(error)
         }
     }

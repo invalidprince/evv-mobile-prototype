@@ -24,6 +24,9 @@ struct WorkView: View {
     @State private var safariItem: SafariItem?
     /// Visit being documented natively (native == "documentation", build 47).
     @State private var docVisit: Visit?
+    /// Build 71 — missed scheduled shift being resolved natively
+    /// (native == "missedshift", server v0.4.505).
+    @State private var missedTarget: MissedShiftItem?
 
     private var online: Bool { appState.effectivelyOnline }
     private var openTodos: [WorkItem] { items.filter { $0.isTodo && !$0.done } }
@@ -58,6 +61,17 @@ struct WorkView: View {
             NavigationView {
                 DocumentationView(visit: visit)
             }
+        }
+        .sheet(item: $missedTarget, onDismiss: {
+            // The missed line clears itself server-side once a reason is
+            // recorded or a request covers the shift — reload the list.
+            Task {
+                await appState.refreshMissedShifts()
+                await load()
+                await appState.refreshHistory()
+            }
+        }) { item in
+            MissedShiftResolveSheet(item: item)
         }
     }
 
@@ -175,6 +189,24 @@ struct WorkView: View {
                 NavigationLink(destination: MyDocumentsView()) {
                     autoRowLabel(item)
                 }
+            } else if item.native == "missedshift",
+                      let missed = resolveMissedShift(item.shiftId) {
+                // Build 71: opens the SAME sheet the Today card uses (Nick's
+                // "if it's available on the app, open on the app"). Unresolved
+                // (older build's payload, or the row already cleared) falls
+                // through to the webPath branch below.
+                Button {
+                    missedTarget = missed
+                } label: {
+                    HStack {
+                        autoRowLabel(item)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
             } else if item.native == "documentation",
                       let visit = resolveVisit(item.visitId) {
                 Button {
@@ -336,8 +368,17 @@ struct WorkView: View {
         return appState.historyVisits.first(where: { $0.serverVisitId == vid })
     }
 
+    /// Build 71 — a `native == "missedshift"` row's sheet needs the full
+    /// missed-shift item (reasons, canRequest, times); the todo payload only
+    /// carries the shift id.
+    private func resolveMissedShift(_ shiftId: Int?) -> MissedShiftItem? {
+        guard let sid = shiftId else { return nil }
+        return appState.missedShifts.first(where: { $0.shiftId == sid })
+    }
+
     private func iconFor(_ category: String?) -> String {
         switch category {
+        case "missed": return "calendar.badge.exclamationmark"
         case "ack": return "signature"
         case "doc": return "square.and.pencil"
         case "staffdoc": return "doc.badge.ellipsis"
@@ -387,6 +428,15 @@ struct WorkView: View {
             }
             if needsHistory {
                 await appState.refreshHistory()
+            }
+            // Build 71: same for missed-shift rows — they resolve against
+            // appState.missedShifts, which Today keeps warm but a cold start
+            // on the Work tab may not have loaded yet.
+            let needsMissed = response.items.contains {
+                $0.native == "missedshift" && resolveMissedShift($0.shiftId) == nil
+            }
+            if needsMissed {
+                await appState.refreshMissedShifts()
             }
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)

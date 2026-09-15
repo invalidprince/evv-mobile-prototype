@@ -6,6 +6,8 @@ struct TodayView: View {
     @State private var showUnscheduled = false
     @State private var showNonBillable = false
     @State private var noteVisit: Visit?
+    /// Build 71 — missed scheduled shift being resolved (server v0.4.505).
+    @State private var missedTarget: MissedShiftItem?
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -81,6 +83,19 @@ struct TodayView: View {
                         .cornerRadius(12)
                     }
 
+                    // Build 71 — scheduled shifts that were never started and
+                    // still owe a reason (server v0.4.505). Above the incomplete
+                    // notes: a shift with NO visit at all outranks a visit with
+                    // an unfinished note. Server mode only — the list is derived
+                    // server-side and never cached.
+                    if appState.mode == .server {
+                        ForEach(appState.missedShifts) { item in
+                            MissedShiftCard(item: item, isOffline: !appState.effectivelyOnline) {
+                                missedTarget = item
+                            }
+                        }
+                    }
+
                     ForEach(appState.incompleteNoteVisits) { visit in
                         IncompleteNoteCard(visit: visit, isOffline: !appState.effectivelyOnline) {
                             noteVisit = visit
@@ -109,7 +124,7 @@ struct TodayView: View {
                         }
                     }
 
-                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty {
+                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty && appState.missedShifts.isEmpty {
                         VStack(spacing: 10) {
                             Image(systemName: "calendar.badge.checkmark")
                                 .font(.largeTitle)
@@ -136,6 +151,7 @@ struct TodayView: View {
                     // data Today actually renders.
                     await appState.refreshHistory()
                     await appState.refreshDueMedications()
+                    await appState.refreshMissedShifts()
                 } else {
                     appState.syncNow()
                     // Brief delay so the spinner is visible in mock mode
@@ -177,6 +193,18 @@ struct TodayView: View {
                 NavigationView {
                     DocumentationView(visit: visit)
                 }
+            }
+            .sheet(item: $missedTarget, onDismiss: {
+                // Either path changes what the server derives (a reason
+                // recorded, or a pending visit now covering the shift) —
+                // re-read the list and History so the card and the ⏳ badge
+                // reflect the server, never a local guess.
+                Task {
+                    await appState.refreshMissedShifts()
+                    await appState.refreshHistory()
+                }
+            }) { item in
+                MissedShiftResolveSheet(item: item)
             }
         }
         .navigationViewStyle(.stack)

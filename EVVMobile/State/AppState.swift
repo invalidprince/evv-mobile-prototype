@@ -49,6 +49,16 @@ final class AppState: ObservableObject {
     @Published var prnMedications: [PrnMedication] = []
     @Published var isLoadingMeds = false
 
+    // MARK: - Missed shifts (server v0.4.505, build 71 — ONLINE-ONLY, never cached)
+    /// My scheduled shifts that were never started and still owe a reason.
+    /// Memory only: the list is DERIVED server-side and clears itself the
+    /// moment a visit covers the shift or a reason is recorded, so a cached
+    /// copy would nag about rows that no longer exist. Cleared on sign-out.
+    @Published var missedShifts: [MissedShiftItem] = []
+    /// The server's reason vocabulary (db.NOT_WORKED_REASONS) — the same list
+    /// the web dialog renders, so the two surfaces cannot drift.
+    @Published var missedShiftReasons: [String] = []
+
     // MARK: - History (server mode)
     @Published var historyVisits: [Visit] = []           // from GET /me/visits
     @Published var serverExceptions: [ServerException] = [] // from GET /me/requests
@@ -1275,6 +1285,7 @@ final class AppState: ObservableObject {
         individualsFromCacheDate = nil
         dueMedications = []      // PHI — med names must not survive sign-out
         prnMedications = []
+        missedShifts = []        // build 71 — individual names; memory only
         LocalCache.shared.clearAll()
         if let owner = queueOwner, !preservedPunches.isEmpty {
             LocalCache.shared.saveOfflineQueue(preservedPunches, staffId: owner)
@@ -1494,6 +1505,8 @@ final class AppState: ObservableObject {
             // Refresh the Today-tab medications card alongside the shifts —
             // fire-and-forget so a slow meds query never delays the punch UI.
             Task { await self.refreshDueMedications() }
+            // Build 71 — same for the missed-shift cards (server v0.4.505).
+            Task { await self.refreshMissedShifts() }
         } catch is CancellationError {
             // Silently ignore task cancellation
         } catch {
@@ -1524,6 +1537,32 @@ final class AppState: ObservableObject {
             let apiErr = error as? APIError ?? .networkError(error)
             if !apiErr.isCancellation {
                 DiagnosticLogger.shared.logOffline("Med refresh failed: \(apiErr.localizedDescription)")
+            }
+        }
+    }
+
+    /// Missed shifts that owe a reason, for the Today card and the Work tab's
+    /// `native == "missedshift"` rows (server v0.4.505, build 71). ONLINE-ONLY:
+    /// never queued, never persisted. A 403 means the role cannot resolve
+    /// missed shifts at all — the list is emptied so no card renders.
+    @MainActor
+    func refreshMissedShifts() async {
+        guard mode == .server, effectivelyOnline else { return }
+        do {
+            let response = try await APIClient.shared.fetchMissedShifts()
+            missedShifts = response.missedShifts
+            if !response.reasons.isEmpty { missedShiftReasons = response.reasons }
+        } catch {
+            let apiErr = error as? APIError ?? .networkError(error)
+            if case .forbidden = apiErr {
+                // Role lacks canResolveOwnMissedShift — hide the surface.
+                missedShifts = []
+                return
+            }
+            // Non-fatal: keep the previous in-memory list. The sheet's own
+            // submit path surfaces errors when the user acts on a row.
+            if !apiErr.isCancellation {
+                DiagnosticLogger.shared.logOffline("Missed-shift refresh failed: \(apiErr.localizedDescription)")
             }
         }
     }

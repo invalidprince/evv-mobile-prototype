@@ -1,0 +1,61 @@
+{
+  "missedShifts": [
+    {
+      "key": "5:S1",
+      "shiftId": 5,
+      "staffId": "S1",
+      "staffName": "Dee Esp",
+      "date": "2026-09-15",
+      "start": "1:00 PM",
+      "end": "5:00 PM",
+      "clientId": "C1",
+      "clientName": "Ray V",
+      "service": "W1726",
+      "serviceName": "IHCS",
+      "lateMinutes": 3960,
+      "canRequest": true,
+      "requestMinDate": "2026-09-11"
+    },
+    {
+      "key": "1:S1",
+      "shiftId": 1,
+      "staffId": "S1",
+      "staffName": "Dee Esp",
+      "date": "2026-09-16",
+      "start": "9:00 AM",
+      "end": "1:00 PM",
+      "clientId": "C1",
+      "clientName": "Ray V",
+      "service": "W1726",
+      "serviceName": "IHCS",
+      "lateMinutes": 2760,
+      "canRequest": true,
+      "requestMinDate": "2026-09-11"
+    },
+    {
+      "key": "6:S1",
+      "shiftId": 6,
+      "staffId": "S1",
+      "staffName": "Dee Esp",
+      "date": "2026-09-17",
+      "start": "8:00 AM",
+      "end": "4:00 PM",
+      "clientId": "C1",
+      "clientName": "Ray V",
+      "service": "W1726",
+      "serviceName": "IHCS",
+      "lateMinutes": 1140,
+      "canRequest": true,
+      "requestMinDate": "2026-09-11"
+    }
+  ],
+  "reasons": [
+    "Staff no-show",
+    "Staff called off / sick",
+    "Shift cancelled late",
+    "Individual unavailable / declined",
+    "Other"
+  ],
+  "requiredFrom": "2026-09-15",
+  "shiftRequestMaxDays": 7
+}
