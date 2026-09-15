@@ -129,6 +129,12 @@ struct TodayView: View {
             .refreshable {
                 if appState.mode == .server {
                     await appState.refreshServerShifts()
+                    // Build 70 — the incomplete-documentation cards for
+                    // PREVIOUS dates come from historyVisits
+                    // (GET /api/me/visits); /api/me/shifts is today-forward
+                    // only. A pull-to-refresh on Today has to refresh the
+                    // data Today actually renders.
+                    await appState.refreshHistory()
                     await appState.refreshDueMedications()
                 } else {
                     appState.syncNow()
@@ -142,6 +148,16 @@ struct TodayView: View {
                 // Warm up GPS as soon as the Today screen shows so a clock-in
                 // moments later can use the cached fix instead of waiting.
                 LocationManager.shared.warmUp()
+                // Build 70 — Today renders incomplete-documentation cards for
+                // PREVIOUS dates out of historyVisits, so Today has to be one
+                // of the screens that keeps History warm. Debounced (the
+                // build-53 helper) so tab-flipping does not hammer
+                // /api/me/visits, and deliberately NOT awaited on the view's
+                // own task — refreshHistory() runs unstructured internally
+                // precisely because SwiftUI cancels these.
+                if appState.mode == .server {
+                    Task { await appState.refreshHistoryIfStale() }
+                }
             }
             .sheet(item: $clockInTarget) { visit in
                 if visit.requiresClockIn {

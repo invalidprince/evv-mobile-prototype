@@ -166,12 +166,86 @@ final class AppState: ObservableObject {
         }
     }
 
+    // BEGIN incomplete-notes-source (build 70)
     /// Completed visits (today or past) whose note still needs finishing.
+    ///
+    /// 🚨 Build 70 (Todoist 6hVvh2hr9qM9r2cH). Nick, 2026-09-15: *"it's now not
+    /// showing on the iOS. It showed initially but after sync, it removed an
+    /// incomplete note from yesterday, 9/14"* — his real visit V-2069
+    /// (2026-09-14, W8593, `note_status='incomplete'`).
+    ///
+    /// ROOT CAUSE: this read `pastVisits`, and `pastVisits` is populated
+    /// EXCLUSIVELY from `GET /api/me/shifts`, whose window is **today + the
+    /// next 7 days** (`visit-core.myShiftsPayload`: `if (s.date < today ...)
+    /// return false`). Nothing before today is EVER in that payload, so
+    /// `refreshServerShifts()`'s `pastVisits = newPast` always assigns an
+    /// EMPTY array in server mode. Before the first sync the array still held
+    /// `MockData.pastVisits()` — which seeds a `docComplete: false` demo row —
+    /// so a fake card "showed initially" and the sync then wiped it. Both
+    /// halves of what he saw were this one bug: the yesterday card could never
+    /// have come from real data, and no real past-dated incomplete note could
+    /// ever appear here.
+    ///
+    /// THE FIX: in server mode the past-dated rows come from `historyVisits`
+    /// (`GET /api/me/visits`, the last 14 days), which is the ONLY payload
+    /// that carries them and already held V-2069 all along — the History tab
+    /// was showing it while Today could not. `pastVisits` stays the source in
+    /// mock mode so the demo keeps working.
+    ///
+    /// Dedupe is by `serverVisitId` first, then `serverShiftId`: a visit
+    /// completed TODAY appears in BOTH payloads, and rendering it twice is the
+    /// v0.4.485 double-render trap on the phone.
     var incompleteNoteVisits: [Visit] {
-        let today = todayVisits.filter { $0.status == .completed && !$0.docComplete }
-        let past = pastVisits.filter { $0.status == .completed && !$0.docComplete }
-        return (today + past).sorted { $0.scheduledStart > $1.scheduledStart }
+        let todayRows = todayVisits.filter { $0.status == .completed && !$0.docComplete }
+
+        let pastSource: [Visit]
+        if mode == .server {
+            // History carries the previous dates; Today's payload never does.
+            let cal = Calendar.current
+            let startOfToday = cal.startOfDay(for: Date())
+            pastSource = historyVisits.filter { visit in
+                guard visit.status == .completed, !visit.docComplete else { return false }
+                // `mapHistoryVisit` does not set `docComplete`, so the
+                // server's own note status is authoritative here. Anything
+                // the server calls complete is complete; "in progress" and
+                // "incomplete" both still need finishing (the same definition
+                // `todo-core.incompleteDocsForStaff` uses on the web).
+                if let docStatus = visit.serverDocStatus?.lowercased(),
+                   docStatus == "complete" {
+                    return false
+                }
+                // A ghost row must never nag: a denied or deleted visit is
+                // not documentation debt.
+                if let approval = visit.approvalStatus?.lowercased(),
+                   approval == "denied" || approval == "deleted" {
+                    return false
+                }
+                // Today's own rows arrive via todayVisits; keep this list to
+                // the previous dates so the two cannot double-render.
+                return visit.scheduledStart < startOfToday
+            }
+        } else {
+            pastSource = pastVisits.filter { $0.status == .completed && !$0.docComplete }
+        }
+
+        // Dedupe on the server identity, preferring the Today row.
+        var seenVisitIds = Set<String>()
+        var seenShiftIds = Set<Int>()
+        var result: [Visit] = []
+        for visit in todayRows + pastSource {
+            if let vid = visit.serverVisitId {
+                if seenVisitIds.contains(vid) { continue }
+                seenVisitIds.insert(vid)
+            }
+            if let sid = visit.serverShiftId {
+                if seenShiftIds.contains(sid) { continue }
+                seenShiftIds.insert(sid)
+            }
+            result.append(visit)
+        }
+        return result.sorted { $0.scheduledStart > $1.scheduledStart }
     }
+    // END incomplete-notes-source (build 70)
 
     init() {
         startTimerIfNeeded()
@@ -1245,6 +1319,12 @@ final class AppState: ObservableObject {
             self.restoreOfflineQueue()
         }
         await refreshServerShifts()
+        // Build 70 — Today's "needs documentation" card reads previous dates
+        // from historyVisits (GET /api/me/visits); /api/me/shifts is
+        // today-forward and cannot carry them. Without this, a DSP who lands
+        // on Today straight after login sees no past-dated incomplete note
+        // until something else happens to fetch History.
+        await refreshHistory()
         // Pre-load cached individuals so they're available immediately (even offline)
         await MainActor.run { loadCachedIndividuals() }
         // Then try a live refresh (updates cache if online)
@@ -1273,6 +1353,9 @@ final class AppState: ObservableObject {
             self.restoreOfflineQueue()
         }
         await refreshServerShifts()
+        // Build 70 — see loginWithGoogle: Today's incomplete-documentation
+        // card needs History for the previous dates.
+        await refreshHistory()
         // Pre-load cached individuals so they're available immediately (even offline)
         await MainActor.run { loadCachedIndividuals() }
         // Then try a live refresh (updates cache if online)
