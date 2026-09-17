@@ -46,7 +46,8 @@ struct TodayView: View {
                     // is more urgent than an unsynced note. Hidden entirely when
                     // the staff member has no eMAR-enabled individuals today.
                     if appState.mode == .server
-                        && (!appState.dueMedications.isEmpty || !appState.prnMedications.isEmpty) {
+                        && (!appState.dueMedications.isEmpty || !appState.prnMedications.isEmpty
+                            || !appState.correctableMedications.isEmpty) {
                         MedicationsDueCard()
                     }
 

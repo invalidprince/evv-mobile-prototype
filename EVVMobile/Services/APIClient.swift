@@ -971,11 +971,42 @@ struct DueMedication: Decodable, Identifiable {
     let giveWindowOpensLabel: String?
     let giveWindowClosesLabel: String?
     let giveWindowReason: String?
+    /// build 72 / server v0.4.533 — CORRECTIONS from the phone (Todoist
+    /// 6hWcVX84mgjMCvMH). All optional: older servers omit them.
+    ///   `canCorrect`   — the SERVER's decision that this token may correct
+    ///                    this row right now (manager tier = no limit;
+    ///                    DSP / Lifesharing Provider = inside the role's hours
+    ///                    limit, 48h by default). The app never guesses from a
+    ///                    role — the button is drawn iff this is true.
+    ///   `isCorrection` — a correction marker for the row. The correction
+    ///                    REASON is never in the payload at all (Nick: "internal
+    ///                    processes only").
+    ///   `date` / `dateLabel` — the dose's date (earlier-dose rows).
+    let canCorrect: Bool?
+    let isCorrection: Bool?
+    let date: String?
+    let dateLabel: String?
 
     /// Missing field (old server / mock data) ⇒ fall back to `recordable`, the
     /// pre-v0.4.295 behaviour. Never default to `false`: that would hide Given
     /// on every dose the moment the app talked to an older backend.
     var canGive: Bool { giveAllowed ?? recordable }
+
+    /// The Correct button: server-decided, and only on a row that is NOT
+    /// first-recordable (recorded, or auto-missed). Never inferred client-side.
+    var offersCorrection: Bool { (canCorrect ?? false) && !recordable }
+
+    /// Default for the correction sheet's "time administered" picker: the
+    /// dose's scheduled time on its date, in the AGENCY timezone. Falls back to
+    /// now when the server sent no date/time.
+    var scheduledInstant: Date? {
+        guard let d = date, let t = dueTime else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.date(from: "\(d) \(t)")
+    }
 
     /// True when the server told us the window is shut (either side of it).
     /// 'none' is NOT a closed window — it means the dose has no due time at
@@ -1033,6 +1064,27 @@ struct MedicationsResponse: Decodable {
     let due: [DueMedication]
     let prnMeds: [PrnMedication]
     let enabledClientIds: [String]
+    /// build 72 / server v0.4.533 — earlier doses (yesterday + the day
+    /// before) open to correction, and the role's hours limit (nil = none).
+    /// Optional: absent on older servers.
+    let correctable: [DueMedication]?
+    let correctionWindowHours: Int?
+    let canCorrectAny: Bool?
+}
+
+/// build 72 — the body for POST /api/emar/administrations/:id/correct.
+/// `given_at` is ISO-8601 WITH offset (the server also accepts an agency
+/// wall-clock string; the app always sends the unambiguous form).
+struct CorrectAdministrationBody: Encodable {
+    let action: String
+    let notes: String
+    let given_at: String?
+}
+
+struct CorrectAdministrationResponse: Decodable {
+    let ok: Bool
+    let newId: Int?
+    let givenAt: String?
 }
 
 struct RecordAdministrationResponse: Decodable {
@@ -2388,6 +2440,54 @@ actor APIClient {
         guard statusCode == 200 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not record the PRN administration"
             throw APIError.serverError(statusCode, errBody)
+        }
+    }
+
+    /// build 72 / server v0.4.533 — CORRECT a recorded (or auto-missed)
+    /// administration (Todoist 6hWcVX84mgjMCvMH). A thin call onto the same
+    /// emar-core engine the web MAR grid uses:
+    ///   • `notes` (the correction reason) is REQUIRED — and it is internal:
+    ///     the server writes it to the audit log and never renders it on the
+    ///     MAR or returns it in any payload.
+    ///   • `givenAt` is REQUIRED for a correction to "given" — the ACTUAL time
+    ///     the medication was administered (sent as ISO-8601 with offset; the
+    ///     server refuses a future time or one off the dose's date).
+    ///   • 403 → `.forbidden` (role has no flag, or the dose is outside the
+    ///     role's hours window — the server's prose says which).
+    ///   • 409 → `.conflict` (the record changed under us: superseded by
+    ///     another correction, or a live pending row) — callers refresh.
+    ///   • 200 with an unreadable body = COMMITTED (`responseUnreadable`).
+    /// ⚠️ ONLINE-ONLY, NEVER queued: a replayed correction against a slot
+    /// whose state moved is exactly what the 409s exist to refuse.
+    func correctMedAdministration(id: Int, action: String, notes: String, givenAt: Date?) async throws -> CorrectAdministrationResponse {
+        let url = URL(string: "\(baseURL)/emar/administrations/\(id)/correct")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.timeoutInterval = 15
+        var givenAtString: String? = nil
+        if let g = givenAt {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime]
+            f.timeZone = TimeZone(identifier: "America/New_York")
+            givenAtString = f.string(from: g)
+        }
+        request.httpBody = try JSONEncoder().encode(CorrectAdministrationBody(action: action, notes: notes, given_at: givenAtString))
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not correct the record"
+            if statusCode == 409 { throw APIError.conflict(errBody) }
+            if statusCode == 403 { throw APIError.forbidden(errBody) }
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(CorrectAdministrationResponse.self, from: data)
+        } catch {
+            throw APIError.responseUnreadable(error)
         }
     }
 

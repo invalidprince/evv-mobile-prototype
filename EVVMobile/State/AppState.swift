@@ -47,6 +47,12 @@ final class AppState: ObservableObject {
     // last in-memory list read-only with recording disabled.
     @Published var dueMedications: [DueMedication] = []
     @Published var prnMedications: [PrnMedication] = []
+    /// build 72 / server v0.4.533 — earlier doses (previous 2 days) the
+    /// server says this staff member may CORRECT, + the role's hours limit
+    /// (nil = no limit). PHI like the due list: memory only, cleared on
+    /// sign-out, never cached.
+    @Published var correctableMedications: [DueMedication] = []
+    @Published var medCorrectionWindowHours: Int? = nil
     @Published var isLoadingMeds = false
 
     // MARK: - Missed shifts (server v0.4.505, build 71 — ONLINE-ONLY, never cached)
@@ -1285,6 +1291,8 @@ final class AppState: ObservableObject {
         individualsFromCacheDate = nil
         dueMedications = []      // PHI — med names must not survive sign-out
         prnMedications = []
+        correctableMedications = []
+        medCorrectionWindowHours = nil
         missedShifts = []        // build 71 — individual names; memory only
         LocalCache.shared.clearAll()
         if let owner = queueOwner, !preservedPunches.isEmpty {
@@ -1531,6 +1539,8 @@ final class AppState: ObservableObject {
             let response = try await APIClient.shared.fetchDueMedications()
             dueMedications = response.due
             prnMedications = response.prnMeds
+            correctableMedications = response.correctable ?? []
+            medCorrectionWindowHours = response.correctionWindowHours
         } catch {
             // Non-fatal: keep the previous in-memory list. The card's own
             // refresh path surfaces errors when the user acts on it.

@@ -33,15 +33,35 @@ import SwiftUI
 //      because a dose can tip from open → closed while the sheet is open —
 //      and since v0.4.322 that refusal is TERMINAL: every outcome is dropped
 //      and the sheet can only be dismissed.
+//
+// 🔑 build 72 / server v0.4.533 — CORRECTIONS ON THE PHONE (Todoist
+// 6hWcVX84mgjMCvMH). Nick: "If someone forgot to record, in the desktop, you
+// can make a correction. Allow corrections from iOS as well. Correction
+// reason is required, and you have to put in the time you administered.
+// HOWEVER, I don't want the eMAR displaying the correction reason."
+//   • A "Correct" button appears on a row iff the SERVER sent
+//     `canCorrect: true` (manager tier = no limit; DSP / Lifesharing Provider
+//     = inside the role's hours window, 48h by default). Never a role guess.
+//   • "Earlier doses" lists yesterday's + the day before's rows the server
+//     says are correctable (`correctable`), so a dose forgotten last night
+//     can be fixed this morning.
+//   • CorrectAdministrationSheet (its own file) — outcome, TIME ADMINISTERED
+//     (given only, required, defaults to the scheduled time, capped at now),
+//     REASON (required, labelled internal — it goes to the audit log and is
+//     never on the MAR). 409 → refresh; 403 → the option disappears.
+//   • ONLINE-ONLY like everything else on this card. Never queued.
 struct MedicationsDueCard: View {
     @EnvironmentObject var appState: AppState
     @State private var recordTarget: DueMedication?
     @State private var prnTarget: PrnMedication?
+    @State private var correctTarget: DueMedication?
+    @State private var showEarlier = false
 
     private var online: Bool { appState.effectivelyOnline }
     private var outstanding: [DueMedication] {
         appState.dueMedications.filter { $0.recordable }
     }
+    private var earlier: [DueMedication] { appState.correctableMedications }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -82,7 +102,40 @@ struct MedicationsDueCard: View {
                 }
             }
 
+            if !earlier.isEmpty {
+                if !appState.dueMedications.isEmpty { Divider() }
+                Button {
+                    withAnimation { showEarlier.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: showEarlier ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.bold))
+                        Text("Earlier doses")
+                            .font(.caption.weight(.bold))
+                        Text("· \(earlier.count) open to correction")
+                            .font(.caption)
+                        Spacer()
+                    }
+                    .foregroundColor(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("emar-earlier-toggle")
+                if showEarlier {
+                    if let hours = appState.medCorrectionWindowHours {
+                        Text("Your role can correct a dose up to \(hours) hours after it was due. Ask a manager for anything older.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(earlier) { med in
+                        medRow(med, showDate: true)
+                        if med.id != earlier.last?.id { Divider() }
+                    }
+                }
+            }
+
             if !appState.prnMedications.isEmpty {
+                if !earlier.isEmpty { Divider() }
                 Text("PRN (as needed)")
                     .font(.caption.weight(.bold))
                     .foregroundColor(.secondary)
@@ -128,10 +181,13 @@ struct MedicationsDueCard: View {
         .sheet(item: $prnTarget) { med in
             PRNSheet(med: med)
         }
+        .sheet(item: $correctTarget) { med in
+            CorrectAdministrationSheet(med: med)
+        }
     }
 
     @ViewBuilder
-    private func medRow(_ med: DueMedication) -> some View {
+    private func medRow(_ med: DueMedication, showDate: Bool = false) -> some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(med.medName)
@@ -140,6 +196,11 @@ struct MedicationsDueCard: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 HStack(spacing: 6) {
+                    if showDate, let dl = med.dateLabel {
+                        Text(dl)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
                     // Server-rendered wall-clock label — shown as given, never
                     // converted through the device timezone.
                     if let label = med.dueTimeLabel {
@@ -148,6 +209,18 @@ struct MedicationsDueCard: View {
                             .foregroundColor(.secondary)
                     }
                     statusChip(med)
+                    // build 72 — a correction MARKER only. The reason is not in
+                    // the payload and must never be shown on a MAR surface.
+                    if med.isCorrection == true {
+                        Text("C")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Theme.primary.opacity(0.15))
+                            .foregroundColor(Theme.primary)
+                            .cornerRadius(5)
+                            .accessibilityLabel("corrected record")
+                    }
                     if med.late {
                         Text("late")
                             .font(.caption2.weight(.semibold))
@@ -187,6 +260,24 @@ struct MedicationsDueCard: View {
                 .tint(med.canGive ? Theme.primary : Color.secondary)
                 .disabled(!online)
                 .opacity(online ? 1 : 0.5)
+            } else if med.offersCorrection {
+                // build 72 — server-decided (canCorrect). A missed or already
+                // recorded dose the SERVER says this person may correct.
+                HStack(spacing: 6) {
+                    if let initials = med.initials {
+                        Text(initials)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    Button("Correct") {
+                        correctTarget = med
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .tint(Theme.primary)
+                    .disabled(!online)
+                    .opacity(online ? 1 : 0.5)
+                }
             } else if let initials = med.initials {
                 Text(initials)
                     .font(.caption.weight(.semibold))
