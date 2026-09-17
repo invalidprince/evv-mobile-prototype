@@ -605,9 +605,26 @@ struct DocumentationTemplateResponse: Decodable {
     /// Where the service was delivered (CMS Place of Service) — nil on older
     /// servers or when no location types are configured.
     let serviceLocation: ServerServiceLocation?
+    /// 🖊 Staff signature attestation (server v0.4.537, ODP requirement).
+    /// Nick: "Staff MUST sign off to submit documentation... you must include
+    /// their credentials right now is the user role (masked if applicable)."
+    ///
+    /// The WORDING and the CREDENTIAL both come from the server and are never
+    /// hard-coded here: the text displayed must provably be the text stored,
+    /// and the credential is already masked server-side. nil on an older
+    /// server → the sign-off card is hidden and the app behaves as before.
+    let staffAttestationRequired: Bool?
+    let staffAttestationText: String?
+    let staffAttestationTextVersion: String?
+    let staffAttestationCredential: String?
+    let staffAttestationSignerName: String?
+    /// Any EXISTING signature already on this visit (edit case).
+    let staffAttestation: ServerStaffAttestation?
 
     enum CodingKeys: String, CodingKey {
         case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, noteRewriteEnabled, signatureCaptured, questions, serviceLocation
+        case staffAttestationRequired, staffAttestationText, staffAttestationTextVersion
+        case staffAttestationCredential, staffAttestationSignerName, staffAttestation
     }
 
     init(from decoder: Decoder) throws {
@@ -635,7 +652,31 @@ struct DocumentationTemplateResponse: Decodable {
         }
         // Best-effort: a malformed serviceLocation must never block the form.
         serviceLocation = (try? c.decodeIfPresent(ServerServiceLocation.self, forKey: .serviceLocation)) ?? nil
+        // v0.4.537 — all best-effort. A malformed attestation block must never
+        // block the form from LOADING; the server still refuses an unsigned
+        // POST, so the failure mode is a clear server message, not a silent
+        // bypass.
+        staffAttestationRequired = (try? c.decodeIfPresent(Bool.self, forKey: .staffAttestationRequired)) ?? nil
+        staffAttestationText = (try? c.decodeIfPresent(String.self, forKey: .staffAttestationText)) ?? nil
+        staffAttestationTextVersion = (try? c.decodeIfPresent(String.self, forKey: .staffAttestationTextVersion)) ?? nil
+        staffAttestationCredential = (try? c.decodeIfPresent(String.self, forKey: .staffAttestationCredential)) ?? nil
+        staffAttestationSignerName = (try? c.decodeIfPresent(String.self, forKey: .staffAttestationSignerName)) ?? nil
+        staffAttestation = (try? c.decodeIfPresent(ServerStaffAttestation.self, forKey: .staffAttestation)) ?? nil
     }
+}
+
+/// A FROZEN staff signature already stored on a visit (server v0.4.537).
+/// Rendered exactly as the server sent it — the app never re-derives the
+/// signer's name or credential from the logged-in user, because a signature is
+/// a point-in-time record of who signed under what credential.
+struct ServerStaffAttestation: Decodable {
+    let signerName: String?
+    let credential: String?
+    let signedAt: String?
+    let text: String?
+    let textVersion: String?
+    let channel: String?
+    let signedByActor: String?
 }
 
 struct DocumentationSubmitResponse: Decodable {
@@ -1712,7 +1753,7 @@ actor APIClient {
         }
     }
 
-    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, questionAnswers: [[String: Any]] = [], transportReviewedGoals: Bool? = nil, serviceLocation: String? = nil, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil) async throws -> DocumentationSubmitResponse {
+    func submitDocumentation(visitId: String, outcomes: [[String: Any]], additionalComments: String, questionAnswers: [[String: Any]] = [], transportReviewedGoals: Bool? = nil, serviceLocation: String? = nil, aiAssisted: Bool = false, aiInputText: String? = nil, aiModel: String? = nil, attested: Bool = false, attestationTextVersion: String? = nil) async throws -> DocumentationSubmitResponse {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/documentation")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1738,6 +1779,17 @@ actor APIClient {
             body["aiAssisted"] = true
             if let inputText = aiInputText { body["aiInputText"] = inputText }
             if let model = aiModel { body["aiModel"] = model }
+        }
+        // 🖊 Staff sign-off (server v0.4.537). The key is sent ONLY when the
+        // staff member actually ticked it — never defaulted to true, because
+        // that would forge a signature. `textVersion` ECHOES the wording this
+        // screen displayed so the stored signature provably covers the text
+        // the signer read; the server rejects a version it does not know
+        // rather than substituting its own.
+        if attested {
+            var attestation: [String: Any] = ["agreed": true]
+            if let v = attestationTextVersion, !v.isEmpty { attestation["textVersion"] = v }
+            body["staffAttestation"] = attestation
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = 15

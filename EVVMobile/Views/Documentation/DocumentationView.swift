@@ -22,6 +22,21 @@ struct DocumentationView: View {
     @State private var isSubmitting = false
     @State private var submitError: String?
 
+    // 🖊 Staff signature attestation — build 73 / server v0.4.537 (ODP).
+    // Nick: "Staff MUST sign off to submit documentation. This is an ODP
+    // requirement... We don't need a drawing signature, could be a virtual
+    // signature just clicking a button or something."
+    //
+    // 🔒 `attested` is NEVER persisted to a draft and never restored. A
+    // signature must be a deliberate act on THIS submission; silently
+    // re-applying yesterday's tick to today's edited note would forge it.
+    @State private var attested = false
+    @State private var attestationText: String?
+    @State private var attestationTextVersion: String?
+    @State private var attestationCredential: String?
+    @State private var attestationSignerName: String?
+    @State private var existingAttestation: ServerStaffAttestation?
+
     // AI Assist state
     @State private var aiAssistEnabled = false
     // ✨ AI Review per-field rewrite (server v0.4.458, Settings → AI toggle).
@@ -107,7 +122,25 @@ struct DocumentationView: View {
         return selectedServiceLocation != nil
     }
 
+    /// 🖊 Sign-off gate — build 73. Mirrors the server's gate so the button
+    /// explains itself instead of producing a 400. The SERVER is the real
+    /// enforcement (visit-core.submitDocumentation); this is a courtesy.
+    ///
+    /// An older server sends no attestation block, so `attestationText` is nil
+    /// and the card is hidden — the app then behaves exactly as before rather
+    /// than blocking submission against a server that does not want a
+    /// signature.
+    private var attestationRequired: Bool {
+        appState.mode == .server && attestationText != nil
+    }
+
+    private var attestationSatisfied: Bool {
+        !attestationRequired || attested
+    }
+
     private var noteComplete: Bool {
+        // Staff must sign off before this can be submitted (ODP).
+        guard attestationSatisfied else { return false }
         // Where the service was delivered is a required billing fact
         guard serviceLocationSatisfied else { return false }
         // Every required server-configured question must be answered
@@ -273,6 +306,11 @@ struct DocumentationView: View {
                         serviceLocationCard(sl, slOpts)
                     }
 
+                    // 🖊 Staff sign-off — build 73 / server v0.4.537 (ODP).
+                    // Rendered LAST before the buttons in the scroll order set
+                    // below; declared here only because the card helper needs
+                    // the template values. See attestationCard().
+
                     // Read-only health & safety info about the individual
                     DocSection(title: "Health & Safety", icon: "cross.case", expanded: $expanded) {
                         HealthSafetyInfoView(client: effectiveClient)
@@ -338,6 +376,13 @@ struct DocumentationView: View {
                         }
                     }
 
+                    if attestationRequired && !attested {
+                        Label("Sign off on this documentation before submitting.", systemImage: "signature")
+                            .font(.caption)
+                            .foregroundColor(Theme.danger)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     if !serviceLocationSatisfied {
                         Label("Select where this service was delivered before submitting.", systemImage: "mappin.and.ellipse")
                             .font(.caption)
@@ -368,6 +413,12 @@ struct DocumentationView: View {
                                 .foregroundColor(Theme.danger)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    // 🖊 Staff sign-off card — immediately above the buttons,
+                    // so the signature is the last thing read before Submit.
+                    if attestationRequired, let text = attestationText {
+                        attestationCard(text)
                     }
 
                     HStack(spacing: 12) {
@@ -492,6 +543,16 @@ struct DocumentationView: View {
                 // Capture AI Assist feature flag
                 aiAssistEnabled = template.aiAssistEnabled ?? false
                 noteRewriteEnabled = template.noteRewriteEnabled ?? false
+
+                // 🖊 Staff sign-off contract (server v0.4.537). nil on an older
+                // server → the card stays hidden and nothing is gated.
+                // `attested` is deliberately NOT restored here: re-loading a
+                // template must never re-apply a previous tick.
+                attestationText = template.staffAttestationText
+                attestationTextVersion = template.staffAttestationTextVersion
+                attestationCredential = template.staffAttestationCredential
+                attestationSignerName = template.staffAttestationSignerName
+                existingAttestation = template.staffAttestation
 
                 // Service Location — preselect the server's answer: a locked
                 // code, the value already stored on the visit, the service's
@@ -825,7 +886,11 @@ struct DocumentationView: View {
                 serviceLocation: svcLocToSend,
                 aiAssisted: aiDraftApplied,
                 aiInputText: aiInputText,
-                aiModel: aiModel
+                aiModel: aiModel,
+                // 🖊 Only ever the staff member's real tick — never defaulted
+                // to true. The version echoes the wording this screen showed.
+                attested: attested,
+                attestationTextVersion: attestationTextVersion
             )
             await MainActor.run {
                 isSubmitting = false
@@ -932,6 +997,68 @@ struct DocumentationView: View {
                         .foregroundColor(.secondary)
                 }
             }
+        }
+        .cardStyle()
+    }
+
+    // MARK: - 🖊 Staff sign-off card (build 73 / server v0.4.537, ODP)
+
+    /// Click-to-attest. Nick: "We don't need a drawing signature, could be a
+    /// virtual signature just clicking a button or something." So: a toggle,
+    /// no canvas.
+    ///
+    /// 🔑 The WORDING and the CREDENTIAL are rendered straight from the server
+    /// payload and are never composed here. The text displayed must provably
+    /// be the text stored with the signature, and the credential is already
+    /// masked server-side (Nick answer 2: the staff profile can mask a user
+    /// role to appear as something different).
+    @ViewBuilder
+    private func attestationCard(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Sign off", systemImage: "signature")
+                    .font(.headline)
+                Spacer()
+                Text("Required")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(attested ? .secondary : Theme.danger)
+            }
+
+            // An existing signature on an edit. Nick answer 5: no re-signing
+            // is forced — the earlier sign-off is shown, not replayed.
+            if let prior = existingAttestation, let who = prior.signerName {
+                Text("Previously signed by \(who)\(prior.credential.map { ", \($0)" } ?? "").")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Text(text)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: { attested.toggle() }) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: attested ? "checkmark.square.fill" : "square")
+                        .foregroundColor(attested ? Theme.primary : .secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("I, \(attestationSignerName ?? "the assigned staff member"), sign off on this documentation.")
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let cred = attestationCredential {
+                            Text("Credential on record: \(cred) · timestamped by the server.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .cardStyle()
     }
