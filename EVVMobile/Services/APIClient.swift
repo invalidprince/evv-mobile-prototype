@@ -1111,6 +1111,18 @@ struct MedicationsResponse: Decodable {
     let correctable: [DueMedication]?
     let correctionWindowHours: Int?
     let canCorrectAny: Bool?
+    /// build 74 / server v0.4.552 — "Can record eMAR for others"
+    /// (canRecordMedsForOthers): when true the correction sheet offers a
+    /// staff picker populated from `onBehalfStaff` (ACTIVE staff inside the
+    /// token's department scope). Optional: absent on older servers.
+    let canRecordForOthers: Bool?
+    let onBehalfStaff: [OnBehalfStaff]?
+}
+
+/// build 74 — a staff member a manager may attribute a correction to.
+struct OnBehalfStaff: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
 }
 
 /// build 72 — the body for POST /api/emar/administrations/:id/correct.
@@ -1120,6 +1132,9 @@ struct CorrectAdministrationBody: Encodable {
     let action: String
     let notes: String
     let given_at: String?
+    /// build 74 — blank/nil = myself; a staff id = record on their behalf
+    /// (server requires canRecordMedsForOthers, else 403).
+    let on_behalf_staff_id: String?
 }
 
 struct CorrectAdministrationResponse: Decodable {
@@ -2511,7 +2526,7 @@ actor APIClient {
     ///   • 200 with an unreadable body = COMMITTED (`responseUnreadable`).
     /// ⚠️ ONLINE-ONLY, NEVER queued: a replayed correction against a slot
     /// whose state moved is exactly what the 409s exist to refuse.
-    func correctMedAdministration(id: Int, action: String, notes: String, givenAt: Date?) async throws -> CorrectAdministrationResponse {
+    func correctMedAdministration(id: Int, action: String, notes: String, givenAt: Date?, onBehalfStaffId: String? = nil) async throws -> CorrectAdministrationResponse {
         let url = URL(string: "\(baseURL)/emar/administrations/\(id)/correct")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -2525,7 +2540,8 @@ actor APIClient {
             f.timeZone = TimeZone(identifier: "America/New_York")
             givenAtString = f.string(from: g)
         }
-        request.httpBody = try JSONEncoder().encode(CorrectAdministrationBody(action: action, notes: notes, given_at: givenAtString))
+        let behalf = onBehalfStaffId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.httpBody = try JSONEncoder().encode(CorrectAdministrationBody(action: action, notes: notes, given_at: givenAtString, on_behalf_staff_id: (behalf?.isEmpty == false) ? behalf : nil))
 
         let (data, response) = try await performRequest(request)
         try checkAuth(response, data: data)

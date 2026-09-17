@@ -15,7 +15,7 @@ ok() { if eval "$2"; then pass=$((pass+1)); echo "  ✓ $1"; else fail=$((fail+1
 swift_struct() { awk "/^struct $2[ :]/,/^}/" "$1"; }
 echo "[0] decoder — REAL structs"
 mkdir -p /tmp/evv-emarc
-{ echo "import Foundation"; swift_struct $API DueMedication; swift_struct $API PrnMedication; swift_struct $API MedicationsResponse; swift_struct $API CorrectAdministrationBody; swift_struct $API CorrectAdministrationResponse; grep -v "^import Foundation" docs/emar-correction-check/decode_test.swift; } > /tmp/evv-emarc/main.swift
+{ echo "import Foundation"; swift_struct $API DueMedication; swift_struct $API PrnMedication; swift_struct $API MedicationsResponse; swift_struct $API OnBehalfStaff; swift_struct $API CorrectAdministrationBody; swift_struct $API CorrectAdministrationResponse; grep -v "^import Foundation" docs/emar-correction-check/decode_test.swift; } > /tmp/evv-emarc/main.swift
 if swiftc -O -o /tmp/evv-emarc/run /tmp/evv-emarc/main.swift 2>/tmp/evv-emarc/compile.log && /tmp/evv-emarc/run docs/emar-correction-check/sample.json > /tmp/evv-emarc/out.log; then
   pass=$((pass+1)); echo "  ✓ decode_test.swift: $(tail -1 /tmp/evv-emarc/out.log)"
 else fail=$((fail+1)); echo "  ✗ decode_test.swift"; cat /tmp/evv-emarc/compile.log /tmp/evv-emarc/out.log | tail -20; fi
@@ -38,8 +38,12 @@ ok "sheet: reason required + labelled internal" 'grep -q "Correction reason (req
 ok "sheet: agency-timezone picker; default = scheduled time" 'grep -q "environment(\\\\.timeZone, Self.agencyZone)" $CS && grep -q "med.scheduledInstant" $CS'
 ok "sheet: 409 → refresh (never retry); 403 → forbidden prose + refresh; unreadable 200 = committed" 'grep -q "case .conflict(let why)? = apiErr" $CS && grep -q "case .forbidden(let why)? = apiErr" $CS && grep -q "case .responseUnreadable? = apiErr" $CS'
 ok "sheet: online-only guard" 'grep -q "Corrections are never queued" $CS && grep -q "guard online else" $CS'
+echo "[3b] build 74 — on behalf of another staff member (server v0.4.552)"
+ok "body carries on_behalf_staff_id (nil = myself)" 'grep -q "let on_behalf_staff_id: String?" $API && awk "/func correctMedAdministration/,/^    }/" $API | grep -q "on_behalf_staff_id: (behalf?.isEmpty == false) ? behalf : nil"'
+ok "AppState keeps the picker choices only when canRecordForOthers; cleared on sign-out" 'grep -q "medOnBehalfStaff = (response.canRecordForOthers == true) ? (response.onBehalfStaff ?? \[\]) : \[\]" $AS && awk "/func signOut/,/LocalCache.shared.clearAll/" $AS | grep -q "medOnBehalfStaff = \[\]"'
+ok "sheet: picker renders only when the server sent choices; defaults to Myself; sent with the POST" 'grep -q "if !appState.medOnBehalfStaff.isEmpty { onBehalfSection }" $CS && grep -q "Text(\"Myself\").tag(\"\")" $CS && grep -q "onBehalfStaffId: onBehalfStaffId.isEmpty ? nil : onBehalfStaffId" $CS'
 echo "[4] build number"
-ok "CFBundleVersion is 72" 'grep -A1 CFBundleVersion EVVMobile/Info.plist | grep -q "<string>72</string>"'
+ok "CFBundleVersion is 74" 'grep -A1 CFBundleVersion EVVMobile/Info.plist | grep -q "<string>74</string>"'
 if [ "${1:-}" != "--no-build" ]; then
   echo "[5] simulator compile"
   if xcodebuild -project EVVMobile.xcodeproj -scheme EVVMobile -destination "platform=iOS Simulator,name=iPhone 17 Pro" -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/evv-emarc/build.log 2>&1; then

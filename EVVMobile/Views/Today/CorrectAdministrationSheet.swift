@@ -35,6 +35,11 @@ struct CorrectAdministrationSheet: View {
     @State private var action = "given"
     @State private var givenAt: Date = Date()
     @State private var reason = ""
+    /// build 74 / server v0.4.552 — "Can record eMAR for others": empty =
+    /// myself; a staff id = the correction is attributed to that staff member
+    /// (their initials on the MAR; I stay the audit actor). The picker only
+    /// renders when the server sent choices (canRecordForOthers).
+    @State private var onBehalfStaffId = ""
     @State private var isSubmitting = false
     @State private var errorMessage: String?
     @State private var showSuccess = false
@@ -73,6 +78,7 @@ struct CorrectAdministrationSheet: View {
                     outcomeSection
                     if needsTime { timeSection }
                     reasonSection
+                    if !appState.medOnBehalfStaff.isEmpty { onBehalfSection }
                 }
                 if let err = errorMessage {
                     Section {
@@ -203,6 +209,26 @@ struct CorrectAdministrationSheet: View {
         }
     }
 
+    /// build 74 — staff picker for "Can record eMAR for others" (Lifesharing
+    /// Manager by default). Nick: "if it's past 48 hours and Kayla Kline
+    /// absolutely knows the medication was given, she can go record it on
+    /// behalf of another staff. Just keep the same process and give the option
+    /// to select a staff in a staff dropdown."
+    private var onBehalfSection: some View {
+        Section(
+            header: Text("Recorded on behalf of"),
+            footer: Text("Pick the staff member who administered the medication — their initials go on the MAR. You stay on record in the audit log as the person who entered the correction.")
+        ) {
+            Picker("Staff member", selection: $onBehalfStaffId) {
+                Text("Myself").tag("")
+                ForEach(appState.medOnBehalfStaff) { s in
+                    Text("\(s.name) (\(s.id))").tag(s.id)
+                }
+            }
+            .accessibilityIdentifier("emar-correct-on-behalf")
+        }
+    }
+
     private var submitSection: some View {
         Section {
             Button {
@@ -235,7 +261,8 @@ struct CorrectAdministrationSheet: View {
                 id: med.id,
                 action: action,
                 notes: trimmedReason,
-                givenAt: needsTime ? givenAt : nil
+                givenAt: needsTime ? givenAt : nil,
+                onBehalfStaffId: onBehalfStaffId.isEmpty ? nil : onBehalfStaffId
             )
             await appState.refreshDueMedications()
             isSubmitting = false

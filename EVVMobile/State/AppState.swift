@@ -53,6 +53,9 @@ final class AppState: ObservableObject {
     /// sign-out, never cached.
     @Published var correctableMedications: [DueMedication] = []
     @Published var medCorrectionWindowHours: Int? = nil
+    /// build 74 / server v0.4.552 — "Can record eMAR for others": the staff
+    /// picker's choices on the correction sheet (empty = no picker).
+    @Published var medOnBehalfStaff: [OnBehalfStaff] = []
     @Published var isLoadingMeds = false
 
     // MARK: - Missed shifts (server v0.4.505, build 71 — ONLINE-ONLY, never cached)
@@ -1293,6 +1296,7 @@ final class AppState: ObservableObject {
         prnMedications = []
         correctableMedications = []
         medCorrectionWindowHours = nil
+        medOnBehalfStaff = []
         missedShifts = []        // build 71 — individual names; memory only
         LocalCache.shared.clearAll()
         if let owner = queueOwner, !preservedPunches.isEmpty {
@@ -1541,6 +1545,7 @@ final class AppState: ObservableObject {
             prnMedications = response.prnMeds
             correctableMedications = response.correctable ?? []
             medCorrectionWindowHours = response.correctionWindowHours
+            medOnBehalfStaff = (response.canRecordForOthers == true) ? (response.onBehalfStaff ?? []) : []
         } catch {
             // Non-fatal: keep the previous in-memory list. The card's own
             // refresh path surfaces errors when the user acts on it.

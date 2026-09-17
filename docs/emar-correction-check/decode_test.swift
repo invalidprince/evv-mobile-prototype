@@ -25,6 +25,11 @@ let old = """
 let o = try! JSONDecoder().decode(MedicationsResponse.self, from: old)
 ok(o.correctable == nil && !o.due[0].offersCorrection, "old server: no Correct button, no crash")
 // body encodes given_at only when present
-let body = try! JSONEncoder().encode(CorrectAdministrationBody(action: "held", notes: "x", given_at: nil))
+let body = try! JSONEncoder().encode(CorrectAdministrationBody(action: "held", notes: "x", given_at: nil, on_behalf_staff_id: nil))
 ok(!String(data: body, encoding: .utf8)!.contains("2026"), "held body has no time")
+// build 74 — on-behalf choices decode; absent on old servers
+ok(r.canRecordForOthers == true && r.onBehalfStaff?.count == 2 && r.onBehalfStaff?[0].id == "S102", "canRecordForOthers + 2 staff choices")
+ok(o.canRecordForOthers == nil && o.onBehalfStaff == nil, "old server: no picker keys, no crash")
+let body2 = try! JSONEncoder().encode(CorrectAdministrationBody(action: "given", notes: "x", given_at: "2026-09-15T20:00:00-04:00", on_behalf_staff_id: "S102"))
+ok(String(data: body2, encoding: .utf8)!.contains("\"on_behalf_staff_id\":\"S102\""), "on-behalf body carries the staff id")
 print("\(n) decode checks passed")
