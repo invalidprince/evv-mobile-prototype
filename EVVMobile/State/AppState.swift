@@ -64,6 +64,10 @@ final class AppState: ObservableObject {
     /// moment a visit covers the shift or a reason is recorded, so a cached
     /// copy would nag about rows that no longer exist. Cleared on sign-out.
     @Published var missedShifts: [MissedShiftItem] = []
+    /// v0.4.569 — missed DAYS (📅) shown in History (Todoist 6hWwwJ8Jr64937GH).
+    /// Same online-only, memory-only discipline as `missedShifts`: never
+    /// queued, never persisted — both actions need the server's state checks.
+    @Published var missedDaily: [MissedDailyItem] = []
     /// The server's reason vocabulary (db.NOT_WORKED_REASONS) — the same list
     /// the web dialog renders, so the two surfaces cannot drift.
     @Published var missedShiftReasons: [String] = []
@@ -1298,6 +1302,7 @@ final class AppState: ObservableObject {
         medCorrectionWindowHours = nil
         medOnBehalfStaff = []
         missedShifts = []        // build 71 — individual names; memory only
+        missedDaily = []         // build 76 — same rule (individual names)
         LocalCache.shared.clearAll()
         if let owner = queueOwner, !preservedPunches.isEmpty {
             LocalCache.shared.saveOfflineQueue(preservedPunches, staffId: owner)
@@ -1566,12 +1571,16 @@ final class AppState: ObservableObject {
         do {
             let response = try await APIClient.shared.fetchMissedShifts()
             missedShifts = response.missedShifts
+            // v0.4.569 — absent key (older server) leaves the list EMPTY
+            // rather than stale, so the History section simply does not render.
+            missedDaily = response.missedDaily ?? []
             if !response.reasons.isEmpty { missedShiftReasons = response.reasons }
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
             if case .forbidden = apiErr {
                 // Role lacks canResolveOwnMissedShift — hide the surface.
                 missedShifts = []
+                missedDaily = []
                 return
             }
             // Non-fatal: keep the previous in-memory list. The sheet's own

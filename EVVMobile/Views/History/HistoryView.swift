@@ -14,6 +14,11 @@ struct HistoryView: View {
     @State private var showRequestShift = false
     @State private var requestedDocVisit: Visit?
     @State private var requestDocVisit: Visit?
+    // Build 76 — MISSED DAYS (📅) in History (server v0.4.569, Todoist
+    // 6hWwwJ8Jr64937GH). Nick, #evv 2026-09-17, with a History screenshot:
+    // show missed visits in iOS history with the same action items as the
+    // dashboard. The sheet carries both, driven by the server's flags.
+    @State private var dailyToResolve: MissedDailyItem?
 
     /// Build 56 — staff shift requests (server v0.4.393 'Shift request'
     /// exceptions from GET /me/requests). Shown as their own list so a
@@ -131,6 +136,16 @@ struct HistoryView: View {
                     DocumentationView(visit: visit)
                 }
             }
+            .sheet(item: $dailyToResolve, onDismiss: {
+                // Either action changes History: a created visit appears, a
+                // recorded reason clears the row. Refresh both lists.
+                Task {
+                    await appState.refreshHistory()
+                    await appState.refreshMissedShifts()
+                }
+            }) { item in
+                MissedDailyResolveSheet(item: item)
+            }
             .sheet(isPresented: $showRequestShift, onDismiss: {
                 // Same handoff WorkView uses: the request sheet hands back the
                 // pending visit; once it's gone, open DocumentationView.
@@ -156,6 +171,22 @@ struct HistoryView: View {
                 serverSummaryCard
 
                 requestShiftCard
+
+                // Build 76 — MISSED DAYS, ABOVE the visit list on purpose.
+                // A day nobody visited is the one thing on this screen that
+                // still needs doing; the rows below are already done. Renders
+                // only when the server sends rows (absent key → empty list →
+                // no section), so an older server changes nothing here.
+                if !appState.missedDaily.isEmpty {
+                    Text("Missed")
+                        .font(.title3.bold())
+                        .padding(.top, 4)
+                    ForEach(appState.missedDaily) { item in
+                        MissedDailyRow(item: item,
+                                       isOffline: !appState.effectivelyOnline,
+                                       onResolve: { dailyToResolve = item })
+                    }
+                }
 
                 if !shiftRequests.isEmpty {
                     Text("Shift requests")
@@ -206,6 +237,10 @@ struct HistoryView: View {
         }
         .refreshable {
             await appState.refreshHistory()
+            // Build 76 — pull-to-refresh must also refresh the Missed section,
+            // or a staff member who just created the visit elsewhere would
+            // keep seeing the row they already cleared.
+            await appState.refreshMissedShifts()
         }
         .onAppear {
             // Build 53: refresh EVERY time the tab is shown (debounced in
@@ -213,6 +248,10 @@ struct HistoryView: View {
             // list loaded before today's visit existed was never refetched —
             // the visit was on the server and absent from this screen.
             Task { await appState.refreshHistoryIfStale() }
+            // Build 76 — the missed-day list is memory-only and online-only,
+            // so it must be fetched when the tab appears or the section would
+            // be empty on a cold open of History.
+            Task { await appState.refreshMissedShifts() }
         }
     }
 

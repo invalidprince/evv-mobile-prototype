@@ -772,13 +772,82 @@ struct MissedShiftItem: Decodable, Identifiable {
     var offersRequest: Bool { canRequest == true }
 }
 
+// MARK: - Missed DAYS (📅) (server v0.4.569, Todoist 6hWwwJ8Jr64937GH)
+
+/// One DAY on which a "require daily visit" service had no visit of any kind,
+/// for an individual + service this staff member serves
+/// (GET /api/me/missed-shifts → `missedDaily`).
+///
+/// 🔑 A SEPARATE TYPE, AND A SEPARATE ARRAY ON THE WIRE, ON PURPOSE. A daily
+///    row is keyed individual × service × DAY and frequently has NO shift, so
+///    it cannot be a `MissedShiftItem` — that type's `shiftId` is a
+///    non-optional Int. Folding these into `missedShifts` would make the
+///    whole response fail to decode on build 75 and earlier, taking the
+///    working missed-SHIFT card down with it (the v0.4.392 contract-break
+///    lesson). Swift ignores unknown keys, so older builds are unaffected.
+///
+/// 🔑 THE SERVER SENDS THE ACTIONS; THIS APP NEVER GUESSES. `canCreateVisit` /
+///    `createMode` come from the same builder the dashboard uses, so there is
+///    deliberately NO service-type list anywhere in this app.
+struct MissedDailyItem: Decodable, Identifiable {
+    let key: String             // "<clientId>|<service>|<date>"
+    let clientId: String
+    let clientName: String?
+    let service: String?        // service CODE (what the create POST wants)
+    let serviceName: String?    // description — what the row shows
+    let date: String            // YYYY-MM-DD (agency day)
+    let daysAgo: Int?
+    /// Context only: a shift may or may not exist on the day. The day is
+    /// required either way — the obligation is the AUTHORIZATION's.
+    let start: String?
+    let end: String?
+    /// May this staff member record a reason? (server: canResolveOwnMissedShift)
+    let canRecordReason: Bool?
+    /// May they create the visit right now? Only ever true for a manual-time
+    /// service inside their backdate window.
+    let canCreateVisit: Bool?
+    /// "direct" = create the visit immediately (manual-time service).
+    /// "request" = it needs the request/approval path instead.
+    let createMode: String?
+    /// Why create is withheld (outside the entry window, etc.) — shown as-is.
+    let createBlockedReason: String?
+    let manualService: Bool?
+
+    var id: String { key }
+    var offersCreate: Bool { canCreateVisit == true }
+    var offersReason: Bool { canRecordReason == true }
+    var isDirectCreate: Bool { (createMode ?? "request") == "direct" }
+}
+
+struct MissedDailyResolveBody: Encodable {
+    let clientId: String
+    let service: String
+    let date: String
+    let reason: String
+    let comment: String?
+}
+
+struct MissedDailyResolveResponse: Decodable {
+    let ok: Bool
+    let clientId: String?
+    let service: String?
+    let date: String?
+    let reason: String?
+}
+
 struct MissedShiftsResponse: Decodable {
     let missedShifts: [MissedShiftItem]
+    /// v0.4.569 — missed DAYS. Optional so the app keeps decoding against an
+    /// older server that does not send the key at all.
+    let missedDaily: [MissedDailyItem]?
     /// The ONE reason vocabulary (db.NOT_WORKED_REASONS) — shared with the web
     /// dialog so the lists cannot drift. "Other" requires a comment.
     let reasons: [String]
     let requiredFrom: String?
     let shiftRequestMaxDays: Int?
+    /// v0.4.569 — the role's backdate window, for messaging only (the server
+    /// already applied it to `canCreateVisit`).
+    let manualBackdateMaxDays: Int?
 }
 
 struct MissedShiftResolveBody: Encodable {
@@ -2219,6 +2288,56 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(MissedShiftResolveResponse.self, from: data)
+        } catch {
+            // 200 reached: the reason is RECORDED server-side.
+            throw APIError.responseUnreadable(error)
+        }
+    }
+
+    // MARK: - Missed DAYS (📅) (server v0.4.569, Todoist 6hWwwJ8Jr64937GH)
+
+    /// "There was no visit that day, and here's why." Mirrors the web POST
+    /// /visits/missed-daily/resolve; both share the server's one state rule
+    /// and one reason vocabulary.
+    ///
+    /// 409 = the day's state changed under us (a visit finally synced, or the
+    /// reason was already recorded). The caller refreshes rather than retrying.
+    ///
+    /// ⚠️ There is deliberately no `createMissedDailyVisit` here. Creating the
+    ///    visit reuses `startUnscheduledVisit` (POST /shifts/unscheduled with
+    ///    date + startTime + endTime), which this app already ships and which
+    ///    independently enforces manual-time-only, individual visibility and
+    ///    the backdate window. A second creator would be a second set of
+    ///    validations to keep in step.
+    func resolveMissedDaily(clientId: String, service: String, date: String,
+                            reason: String, comment: String?) async throws -> MissedDailyResolveResponse {
+        let url = URL(string: "\(baseURL)/me/missed-daily/resolve")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(
+            MissedDailyResolveBody(clientId: clientId, service: service, date: date,
+                                   reason: reason, comment: comment))
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Your role cannot resolve missed visits."
+            throw APIError.forbidden(errBody)
+        }
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "That day is no longer waiting on a reason."
+            throw APIError.conflict(errBody)
+        }
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not record the reason."
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(MissedDailyResolveResponse.self, from: data)
         } catch {
             // 200 reached: the reason is RECORDED server-side.
             throw APIError.responseUnreadable(error)

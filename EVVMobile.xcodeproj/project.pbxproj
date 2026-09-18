@@ -29,6 +29,7 @@
 		A1B2C3D4E5F6A7B8C9D00004 /* RequestShiftSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00005 /* RequestShiftSheet.swift */; };
 		A1B2C3D4E5F6A7B8C9D00011 /* MedicationsDueCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00012 /* MedicationsDueCard.swift */; };
 		A1B2C3D4E5F6A7B8C9D00071 /* MissedShiftCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00072 /* MissedShiftCard.swift */; };
+		A1B2C3D4E5F6A7B8C9D00081 /* MissedDailyRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00082 /* MissedDailyRow.swift */; };
 		A1B2C3D4E5F6A7B8C9D00073 /* CorrectAdministrationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00074 /* CorrectAdministrationSheet.swift */; };
 		197C77B7E3264DCE4E41A48A /* MyDocumentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9B0053227B7767FBF1CE1F /* MyDocumentsView.swift */; };
 		435EC21574D8B09A02E118C0 /* ManualTimeEntrySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E0254F44C15851827B14A0 /* ManualTimeEntrySheet.swift */; };
@@ -88,6 +89,7 @@
 		1DC5F0D5661B4B523FCCFD64 /* ClockInConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockInConfirmSheet.swift; sourceTree = "<group>"; };
 		396E0ABD8D7B9E36B78889C6 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		40799C6376F8F4D66B813AA7 /* HistoryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRow.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D00082 /* MissedDailyRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissedDailyRow.swift; sourceTree = "<group>"; };
 		423A0C42C98BB37FAF17E3F7 /* NonBillableSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NonBillableSheet.swift; sourceTree = "<group>"; };
 		42FA4720945BDEC8C6A36C46 /* OutcomeEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutcomeEntryView.swift; sourceTree = "<group>"; };
 		59D85001A0AB1FEC33B1F24F /* ClockInSuccessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockInSuccessView.swift; sourceTree = "<group>"; };
@@ -265,6 +267,7 @@
 			children = (
 				675AD19AC65A993CD6C7C0A2 /* DeleteRequestSheet.swift */,
 				40799C6376F8F4D66B813AA7 /* HistoryRow.swift */,
+				A1B2C3D4E5F6A7B8C9D00082 /* MissedDailyRow.swift */,
 				7D3E24BD9E02EC479B9857CB /* HistoryView.swift */,
 				F1FA0D83CA7654E736EAEA3A /* TimeFixSheet.swift */,
 			);
@@ -444,6 +447,7 @@
 				4A6A747B079FB1628A9C55F7 /* GoogleAuthConfig.swift in Sources */,
 				0C7817D804E0D3DB0F5E5E50 /* GoogleAuthService.swift in Sources */,
 				87CC7A1829076198FBA32C88 /* HistoryRow.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D00081 /* MissedDailyRow.swift in Sources */,
 				3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */,
 				1C90215AE4AD63A2C1A60AF7 /* LocalCache.swift in Sources */,
 				9272594B07C6D7B50A5C5F1D /* LocationManager.swift in Sources */,
