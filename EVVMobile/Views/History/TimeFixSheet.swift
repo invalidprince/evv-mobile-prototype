@@ -114,6 +114,8 @@ struct TimeFixSheet: View {
                 Text("Your change request will be submitted when you\u{2019}re back online.")
             }
         }
+        // Build 75: supervisor comment field.
+        .keyboardDismissable()
     }
 
     private func submit() {

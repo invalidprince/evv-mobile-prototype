@@ -57,6 +57,8 @@ struct NonBillableSheet: View {
                 Text("Your \(category.lowercased()) time has been recorded.")
             }
         }
+        // Build 75: minutes + note fields — Done bar / drag / tap-outside.
+        .keyboardDismissable()
     }
 
     // MARK: - Server mode fields

@@ -187,6 +187,8 @@ struct MissedShiftResolveSheet: View {
                 }
             }
         }
+        // Build 75: missed-shift reason comment field.
+        .keyboardDismissable()
         .sheet(isPresented: $showRequest, onDismiss: {
             if let v = requestedDocVisit {
                 requestedDocVisit = nil

@@ -347,6 +347,8 @@ struct RequestShiftSheet: View {
                 Task { await appState.refreshIndividuals() }
             }
         }
+        // Build 75: individual search + 'e.g. Forgot to clock in' reason.
+        .keyboardDismissable()
     }
 
     /// Build 71 — seed the form from the missed scheduled shift. Runs once

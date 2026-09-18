@@ -48,6 +48,7 @@
 		BC6517613BF8B062885D1C43 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */; };
 		C2B795D7F0DC9FF417F17D9D /* EVVMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */; };
 		C47A7068FCEA6C8B0F3B62B6 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CABA5A108F36DC92A278BCD /* Theme.swift */; };
+		A1B2C3D4E5F6A7B8C9D00075 /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00076 /* KeyboardDismiss.swift */; };
 		CC0AC163EF01DAAC3898CAC7 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE6BC3B85F893A88BCBE38F1 /* ScheduleView.swift */; };
 		D7CC043160A4225A73026B3D /* SignaturePadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7F813C89D17059CDF3507FC /* SignaturePadView.swift */; };
 		D8023CDFE17E0B42DD5FBA9D /* ClockOutFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 837D6C9277FF607206D6D2E7 /* ClockOutFlow.swift */; };
@@ -78,6 +79,7 @@
 		A1B2C3D4E5F6A7B8C9D00074 /* CorrectAdministrationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectAdministrationSheet.swift; sourceTree = "<group>"; };
 		0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
 		0CABA5A108F36DC92A278BCD /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D00076 /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
 		0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EVVMobileApp.swift; sourceTree = "<group>"; };
 		15BE09C32C84B4CB482C21E2 /* ActiveVisitCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveVisitCard.swift; sourceTree = "<group>"; };
 		1A77C2BA6F8CD8A0E2A5A367 /* LocalCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCache.swift; sourceTree = "<group>"; };
@@ -288,6 +290,7 @@
 			isa = PBXGroup;
 			children = (
 				0CABA5A108F36DC92A278BCD /* Theme.swift */,
+				A1B2C3D4E5F6A7B8C9D00076 /* KeyboardDismiss.swift */,
 			);
 			path = Theme;
 			sourceTree = "<group>";
@@ -461,6 +464,7 @@
 				D7CC043160A4225A73026B3D /* SignaturePadView.swift in Sources */,
 				2AAD97A6EE616BD576774C86 /* SpeechRecognizer.swift in Sources */,
 				C47A7068FCEA6C8B0F3B62B6 /* Theme.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D00075 /* KeyboardDismiss.swift in Sources */,
 				0376BEBCD3AF6049465FD4E6 /* TimeFixSheet.swift in Sources */,
 				2F389F8408447CC5DCA4B2EB /* TodayView.swift in Sources */,
 				EE1E5B614A13991388147ADD /* UnscheduledVisitSheet.swift in Sources */,

@@ -43,7 +43,14 @@ ok "body carries on_behalf_staff_id (nil = myself)" 'grep -q "let on_behalf_staf
 ok "AppState keeps the picker choices only when canRecordForOthers; cleared on sign-out" 'grep -q "medOnBehalfStaff = (response.canRecordForOthers == true) ? (response.onBehalfStaff ?? \[\]) : \[\]" $AS && awk "/func signOut/,/LocalCache.shared.clearAll/" $AS | grep -q "medOnBehalfStaff = \[\]"'
 ok "sheet: picker renders only when the server sent choices; defaults to Myself; sent with the POST" 'grep -q "if !appState.medOnBehalfStaff.isEmpty { onBehalfSection }" $CS && grep -q "Text(\"Myself\").tag(\"\")" $CS && grep -q "onBehalfStaffId: onBehalfStaffId.isEmpty ? nil : onBehalfStaffId" $CS'
 echo "[4] build number"
-ok "CFBundleVersion is 74" 'grep -A1 CFBundleVersion EVVMobile/Info.plist | grep -q "<string>74</string>"'
+# Build 75 (keyboard dismissal) changed this from an equality pin to a floor.
+# An exact-equality build pin fires on EVERY later card, which makes it noise
+# rather than a signal: four sibling suites (missed-shift 71, voice 69,
+# ai-review 66, incomplete-notes 70) are red on HEAD for exactly this reason.
+# What this suite actually cares about is that the on-behalf work SHIPPED, so
+# assert the floor and let later cards move the number.
+ok "CFBundleVersion >= 74 (on-behalf work shipped in 74)" \
+   '[ "$(grep -A1 CFBundleVersion EVVMobile/Info.plist | grep -oE "[0-9]+" | head -1)" -ge 74 ]'
 if [ "${1:-}" != "--no-build" ]; then
   echo "[5] simulator compile"
   if xcodebuild -project EVVMobile.xcodeproj -scheme EVVMobile -destination "platform=iOS Simulator,name=iPhone 17 Pro" -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/evv-emarc/build.log 2>&1; then

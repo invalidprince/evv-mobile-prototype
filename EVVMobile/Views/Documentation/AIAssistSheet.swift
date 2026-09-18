@@ -113,6 +113,8 @@ struct AIAssistSheet: View {
                 }
             }
         }
+        // Build 75: AI assist free-text input.
+        .keyboardDismissable()
     }
 
     private func generateDraft() {

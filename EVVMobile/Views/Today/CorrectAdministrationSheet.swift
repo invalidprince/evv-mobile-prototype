@@ -112,6 +112,8 @@ struct CorrectAdministrationSheet: View {
                 Text("The record now shows \(action). The original entry stays in the audit chain.")
             }
         }
+        // Build 75: eMAR correction reason / time fields.
+        .keyboardDismissable()
     }
 
     private var headerSection: some View {

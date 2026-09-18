@@ -150,6 +150,8 @@ struct MyDocumentsView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { disputeTarget = nil } } }
             }
+            // Build 75: dispute-note field.
+            .keyboardDismissable()
         }
         // v0.4.368 — fix-date sheet. Earlier than the AI reading accepts freely;
         // later routes to HR review (server decides — we show its message).

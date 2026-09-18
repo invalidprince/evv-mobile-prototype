@@ -554,6 +554,8 @@ struct ServerUnscheduledContent: View {
                 Task { _ = await LocationManager.shared.acquireLocation() }
             }
         }
+        // Build 75: unlisted-name / individual search / fallback-address fields.
+        .keyboardDismissable()
     }
 
     private func toggleIndividual(_ individual: ServerIndividualOption) {
@@ -828,6 +830,8 @@ struct MockUnscheduledContent: View {
                 ClockInSuccessView()
             }
         }
+        // Build 75: service search field.
+        .keyboardDismissable()
     }
 
     private func toggle(_ client: Client) {

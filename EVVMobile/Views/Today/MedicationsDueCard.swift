@@ -384,6 +384,8 @@ struct RecordAdministrationSheet: View {
                 Text(wasLate ? "Recorded as \(action) (late — past the due window)." : "Recorded as \(action).")
             }
         }
+        // Build 75: administration notes.
+        .keyboardDismissable()
     }
 
     private var headerSection: some View {
@@ -649,6 +651,8 @@ struct PRNSheet: View {
                 Text("The PRN administration was recorded.")
             }
         }
+        // Build 75: PRN reason / result / notes (MultilineTextBox).
+        .keyboardDismissable()
     }
 
     private func submit() async {

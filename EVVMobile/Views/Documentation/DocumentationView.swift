@@ -496,6 +496,11 @@ struct DocumentationView: View {
         } message: {
             Text("Your visit note has been saved and queued to sync.")
         }
+        // Build 75: the screen this card was filed against. Stacked required
+        // questions + free-text meant the keyboard covered the lower fields
+        // (police involvement) with no way to hide it. Done bar + drag down +
+        // tap outside; the Yes/No option Buttons still register on one tap.
+        .keyboardDismissable()
     }
 
     // MARK: - Server template loading

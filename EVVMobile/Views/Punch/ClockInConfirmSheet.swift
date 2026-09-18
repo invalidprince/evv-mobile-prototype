@@ -190,6 +190,8 @@ struct ClockInConfirmSheet: View {
                 }
             }
         }
+        // Build 75: manual address street/city/state/zip fields.
+        .keyboardDismissable()
     }
 
     private var manualAddressCard: some View {

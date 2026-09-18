@@ -515,6 +515,8 @@ struct ServerAddNoteSheet: View {
                 Text("Your note has been saved.")
             }
         }
+        // Build 75: 'Update Note' TextEditor.
+        .keyboardDismissable()
     }
 
     private func submit() {

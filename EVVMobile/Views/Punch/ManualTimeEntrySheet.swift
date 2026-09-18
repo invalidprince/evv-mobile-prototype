@@ -141,6 +141,8 @@ struct ManualTimeEntrySheet: View {
                 Text(msg)
             }
         }
+        // Build 75: manual time entry.
+        .keyboardDismissable()
     }
 
     private func confirm() {

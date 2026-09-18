@@ -124,6 +124,11 @@ struct LoginView: View {
                 .padding(.bottom, 8)
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+        // Build 75: email + password. No scroll container here, so drag is a
+        // no-op by construction — Done bar and tap-outside are what matter,
+        // and the modifier is applied whole so login can't drift from the
+        // rest of the app later.
+        .keyboardDismissable()
     }
 
     // MARK: - Account Login

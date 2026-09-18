@@ -92,6 +92,8 @@ struct DeleteRequestSheet: View {
                 Text("Your supervisor will review and respond.")
             }
         }
+        // Build 75: supervisor comment field.
+        .keyboardDismissable()
     }
 
     private func submit() {

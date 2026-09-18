@@ -176,6 +176,8 @@ struct SignatureSkipReasonSheet: View {
                 }
             }
         }
+        // Build 75: 'reason for skipping' free text. interactiveDrag:false — the pad owns its own drag gesture for drawing.
+        .keyboardDismissable(interactiveDrag: false)
     }
 }
 
