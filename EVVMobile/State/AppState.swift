@@ -68,6 +68,15 @@ final class AppState: ObservableObject {
     /// Same online-only, memory-only discipline as `missedShifts`: never
     /// queued, never persisted — both actions need the server's state checks.
     @Published var missedDaily: [MissedDailyItem] = []
+    /// Build 79 (server v0.4.594) — the rows whose reason is already ON FILE,
+    /// both kinds. Nick, #evv 2026-09-21: "When I saved a reason, it
+    /// disappeared from the iOS. I don't want that to happen. Similar to the
+    /// dashboard I just want it to say missed and the reason and not just
+    /// disappear." History merges these with the owing rows under the same
+    /// day headers; Today / Work keep reading `missedShifts` only (a reasoned
+    /// shift owes nothing). Same memory-only, online-only discipline.
+    @Published var missedShiftsReasoned: [MissedShiftItem] = []
+    @Published var missedDailyReasoned: [MissedDailyItem] = []
     /// The server's reason vocabulary (db.NOT_WORKED_REASONS) — the same list
     /// the web dialog renders, so the two surfaces cannot drift.
     @Published var missedShiftReasons: [String] = []
@@ -1303,6 +1312,8 @@ final class AppState: ObservableObject {
         medOnBehalfStaff = []
         missedShifts = []        // build 71 — individual names; memory only
         missedDaily = []         // build 76 — same rule (individual names)
+        missedShiftsReasoned = [] // build 79 — same rule
+        missedDailyReasoned = []
         LocalCache.shared.clearAll()
         if let owner = queueOwner, !preservedPunches.isEmpty {
             LocalCache.shared.saveOfflineQueue(preservedPunches, staffId: owner)
@@ -1561,6 +1572,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Build 79 — the instant a reason is saved from THIS phone, move the row
+    /// from the owing list to the reasoned list so History keeps showing it
+    /// (marked missed, with the reason) rather than dropping it. The server's
+    /// refresh that follows is the authoritative word.
+    @MainActor
+    func markMissedDailyReasoned(_ item: MissedDailyItem, reason: String, comment: String?) {
+        let by = serverStaff?.email ?? currentStaff.name
+        let updated = item.reasoned(reason: reason, comment: comment, by: by)
+        missedDaily.removeAll { $0.key == item.key }
+        missedDailyReasoned.removeAll { $0.key == item.key }
+        missedDailyReasoned.append(updated)
+    }
+
+    @MainActor
+    func markMissedShiftReasoned(_ item: MissedShiftItem, reason: String, comment: String?) {
+        let by = serverStaff?.email ?? currentStaff.name
+        let updated = item.reasoned(reason: reason, comment: comment, by: by)
+        missedShifts.removeAll { $0.shiftId == item.shiftId }
+        missedShiftsReasoned.removeAll { $0.shiftId == item.shiftId }
+        missedShiftsReasoned.append(updated)
+    }
+
     /// Missed shifts that owe a reason, for the Today card and the Work tab's
     /// `native == "missedshift"` rows (server v0.4.505, build 71). ONLINE-ONLY:
     /// never queued, never persisted. A 403 means the role cannot resolve
@@ -1574,6 +1607,9 @@ final class AppState: ObservableObject {
             // v0.4.569 — absent key (older server) leaves the list EMPTY
             // rather than stale, so the History section simply does not render.
             missedDaily = response.missedDaily ?? []
+            // Build 79 — reasoned rows (absent on an older server → empty).
+            missedShiftsReasoned = response.missedShiftsReasoned ?? []
+            missedDailyReasoned = response.missedDailyReasoned ?? []
             if !response.reasons.isEmpty { missedShiftReasons = response.reasons }
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
@@ -1581,6 +1617,8 @@ final class AppState: ObservableObject {
                 // Role lacks canResolveOwnMissedShift — hide the surface.
                 missedShifts = []
                 missedDaily = []
+                missedShiftsReasoned = []
+                missedDailyReasoned = []
                 return
             }
             // Non-fatal: keep the previous in-memory list. The sheet's own

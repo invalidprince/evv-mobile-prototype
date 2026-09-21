@@ -86,6 +86,36 @@ enum MissedHistoryEntry: Identifiable {
         case .daily: return "📅 MISSED"
         }
     }
+
+    // Build 79 (server v0.4.594) — a reason on file. Nick, #evv 2026-09-21:
+    // "When I saved a reason, it disappeared from the iOS. I don't want that to
+    // happen. Similar to the dashboard I just want it to say missed and the
+    // reason and not just disappear." The web's v0.4.593 rule: a reasoned row
+    // STAYS, in neutral (muted) styling, reading "no visit — <reason>" and
+    // "reason by <name>", with "Change reason" in place of "Record reason".
+
+    /// Whether a reason is already recorded for this row.
+    var isReasoned: Bool {
+        switch self {
+        case .shift(let s): return s.isReasoned
+        case .daily(let d): return d.isReasoned
+        }
+    }
+
+    var resolution: MissedResolution? {
+        switch self {
+        case .shift(let s): return s.resolution
+        case .daily(let d): return d.resolution
+        }
+    }
+
+    /// "Change reason" offered by the server for this row.
+    var offersChangeReason: Bool {
+        switch self {
+        case .shift(let s): return s.offersChangeReason
+        case .daily(let d): return d.offersChangeReason
+        }
+    }
 }
 
 /// A missed item drawn in the History row format. Actions are text buttons
@@ -102,7 +132,22 @@ struct MissedHistoryRow: View {
     /// 📅 day → "Record reason".
     var onDailyReason: () -> Void = {}
 
-    private var accent: Color { Theme.danger }
+    /// Red only while the row still OWES a reason. Once a reason is on file the
+    /// row is acknowledged — "it was missed, that's OK as we know the reason"
+    /// (Nick, 2026-09-21) — and reads in the app's neutral secondary tone, the
+    /// same way the web's chip drops from chip-danger to chip-muted.
+    private var accent: Color { entry.isReasoned ? .secondary : Theme.danger }
+
+    /// Does this row render any button at all? A reasoned row with nothing
+    /// to change has none, so the offline hint would be noise.
+    private var hasActions: Bool {
+        switch entry {
+        case .shift(let s):
+            return s.isReasoned ? s.offersChangeReason : true
+        case .daily(let d):
+            return d.offersCreate || (d.isReasoned ? d.offersChangeReason : d.offersReason)
+        }
+    }
 
     /// Scheduled span when a shift exists, else the web's "not scheduled".
     private var timeText: String {
@@ -140,7 +185,13 @@ struct MissedHistoryRow: View {
             // Status chips row — same slot the real rows use.
             HStack(spacing: 6) {
                 StatusBadge(text: entry.chipText, color: accent)
-                StatusBadge(text: "No visit recorded", color: .secondary)
+                if let res = entry.resolution, entry.isReasoned {
+                    // Web: "no visit — <reason>" (chip-muted). ONE chip carries
+                    // the state and the reason; nothing red remains.
+                    StatusBadge(text: "No visit — \(res.reasonText)", color: .secondary)
+                } else {
+                    StatusBadge(text: "No visit recorded", color: .secondary)
+                }
                 if case .daily(let d) = entry, !d.offersCreate, d.isDirectCreate,
                    let blocked = d.createBlockedReason, !blocked.isEmpty {
                     // Manual service whose entry window has closed — the
@@ -150,24 +201,56 @@ struct MissedHistoryRow: View {
                 Spacer()
             }
 
+            if let res = entry.resolution, entry.isReasoned {
+                // Web: the optional comment on its own muted line, then
+                // "reason by <name>".
+                VStack(alignment: .leading, spacing: 2) {
+                    if let c = res.comment, !c.isEmpty {
+                        Text(c)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if let by = res.by, !by.isEmpty {
+                        Text("Reason by \(by)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("missedHistoryReason-\(entry.id)")
+            }
+
             // Action buttons — the dashboard's, driven by the server's flags.
+            // A reasoned row keeps only what the web partials keep: "Change
+            // reason" (both kinds) and "Create visit" (a day on a manual
+            // service inside the window). Nothing else.
             HStack(spacing: 16) {
                 switch entry {
                 case .shift(let s):
-                    if s.offersRequest && MissedShiftPrefill(item: s) != nil {
-                        Button(action: onRequestShift) {
-                            Label("I worked this shift", systemImage: "square.and.pencil")
+                    if s.isReasoned {
+                        if s.offersChangeReason {
+                            Button(action: onShiftReason) {
+                                Label("Change reason", systemImage: "pencil.circle")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundColor(isOffline ? .secondary : Theme.primary)
+                            }
+                            .disabled(isOffline)
+                        }
+                    } else {
+                        if s.offersRequest && MissedShiftPrefill(item: s) != nil {
+                            Button(action: onRequestShift) {
+                                Label("I worked this shift", systemImage: "square.and.pencil")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundColor(isOffline ? .secondary : Theme.primary)
+                            }
+                            .disabled(isOffline)
+                        }
+                        Button(action: onShiftReason) {
+                            Label("It was missed", systemImage: "xmark.circle")
                                 .font(.subheadline.weight(.medium))
-                                .foregroundColor(isOffline ? .secondary : Theme.primary)
+                                .foregroundColor(isOffline ? .secondary : accent)
                         }
                         .disabled(isOffline)
                     }
-                    Button(action: onShiftReason) {
-                        Label("It was missed", systemImage: "xmark.circle")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(isOffline ? .secondary : accent)
-                    }
-                    .disabled(isOffline)
                 case .daily(let d):
                     if d.offersCreate {
                         Button(action: onCreateVisit) {
@@ -177,7 +260,16 @@ struct MissedHistoryRow: View {
                         }
                         .disabled(isOffline)
                     }
-                    if d.offersReason {
+                    if d.isReasoned {
+                        if d.offersChangeReason {
+                            Button(action: onDailyReason) {
+                                Label("Change reason", systemImage: "pencil.circle")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundColor(isOffline ? .secondary : Theme.primary)
+                            }
+                            .disabled(isOffline)
+                        }
+                    } else if d.offersReason {
                         Button(action: onDailyReason) {
                             Label("Record reason", systemImage: "xmark.circle")
                                 .font(.subheadline.weight(.medium))
@@ -189,7 +281,7 @@ struct MissedHistoryRow: View {
                 Spacer()
             }
 
-            if isOffline {
+            if isOffline && hasActions {
                 Label("Connect to the internet to resolve", systemImage: "wifi.slash")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -197,10 +289,13 @@ struct MissedHistoryRow: View {
         }
         .cardStyle()
         .overlay(
+            // Red outline only while a reason is owed; a reasoned row gets the
+            // faint neutral hairline (the web drops its #fff6f6 row tint).
             RoundedRectangle(cornerRadius: 14)
-                .stroke(accent.opacity(0.45), lineWidth: 1)
+                .stroke(accent.opacity(entry.isReasoned ? 0.25 : 0.45), lineWidth: 1)
         )
         .accessibilityIdentifier("missedHistoryRow-\(entry.id)")
+        .accessibilityValue(entry.isReasoned ? "reasoned" : "owes reason")
     }
 }
 
@@ -265,6 +360,12 @@ struct MissedDailyResolveSheet: View {
         case .choose: initial = .choose
         }
         _path = State(initialValue: initial)
+        // Build 79 — "Change reason": start from what is on file, like the
+        // web dialog pre-selects the recorded reason and comment.
+        if let res = item.resolution, item.isReasoned {
+            _selectedReason = State(initialValue: res.reason ?? "")
+            _comment = State(initialValue: res.comment ?? "")
+        }
     }
 
     private var online: Bool { appState.effectivelyOnline }
@@ -314,7 +415,7 @@ struct MissedDailyResolveSheet: View {
 
                 if savedReason {
                     Section {
-                        Label("Reason recorded. This day stays on the Missed visits list for your manager to acknowledge.", systemImage: "checkmark.circle.fill")
+                        Label("Reason recorded. This day stays in your History marked missed, with the reason — the same way your manager sees it.", systemImage: "checkmark.circle.fill")
                             .foregroundColor(Theme.success)
                     }
                 } else {
@@ -333,7 +434,7 @@ struct MissedDailyResolveSheet: View {
                     }
                 }
             }
-            .navigationTitle("Missed Day")
+            .navigationTitle(item.isReasoned ? "Change Reason" : "Missed Day")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -500,9 +601,13 @@ struct MissedDailyResolveSheet: View {
                 await MainActor.run {
                     isSubmitting = false
                     savedReason = true
-                    // Drop it locally so the row is gone the moment the sheet
-                    // closes; the next refresh is the server's word.
-                    appState.missedDaily.removeAll { $0.key == item.key }
+                    // Build 79 — the row STAYS. Move it from "owes a reason" to
+                    // "reason on file" locally so History shows the reasoned
+                    // state the moment the sheet closes (Nick, #evv 2026-09-21:
+                    // "I don't want it to disappear"); the refresh that follows
+                    // is the server's word.
+                    appState.markMissedDailyReasoned(item, reason: selectedReason,
+                                                     comment: trimmedComment.isEmpty ? nil : trimmedComment)
                 }
                 await appState.refreshMissedShifts()
                 await MainActor.run { onChanged() }

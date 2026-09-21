@@ -136,8 +136,19 @@ struct HistoryView: View {
     /// Missed rows the server currently reports for me — both kinds. Absent
     /// keys / an older server / a 403 leave these empty and the list is the
     /// plain visit history.
+    ///
+    /// Build 79 (server v0.4.594) — the REASONED rows ride along too. Nick,
+    /// #evv 2026-09-21: "When I saved a reason, it disappeared from the iOS. I
+    /// don't want that to happen. Similar to the dashboard I just want it to
+    /// say missed and the reason and not just disappear." A row whose reason
+    /// is on file stays under its day header in neutral styling with the
+    /// reason; only the owing rows are red. De-duplicated by id in case the
+    /// optimistic local move and a refresh briefly overlap.
     private var missedEntries: [MissedHistoryEntry] {
-        appState.missedShifts.map { .shift($0) } + appState.missedDaily.map { .daily($0) }
+        let owing: [MissedHistoryEntry] = appState.missedShifts.map { .shift($0) } + appState.missedDaily.map { .daily($0) }
+        let reasoned: [MissedHistoryEntry] = appState.missedShiftsReasoned.map { .shift($0) } + appState.missedDailyReasoned.map { .daily($0) }
+        var seen = Set<String>()
+        return (owing + reasoned).filter { seen.insert($0.id).inserted }
     }
 
     /// Day groups, newest first. A day that holds ONLY missed rows still gets
@@ -217,7 +228,8 @@ struct HistoryView: View {
             }
             .sheet(item: $dailyToResolve, onDismiss: {
                 // Either action changes History: a created visit appears, a
-                // recorded reason clears the row. Refresh both lists.
+                // recorded reason moves the row to its reasoned state (build
+                // 79: it stays visible). Refresh both lists.
                 Task {
                     await appState.refreshHistory()
                     await appState.refreshMissedShifts()
@@ -226,8 +238,8 @@ struct HistoryView: View {
                 MissedDailyResolveSheet(item: req.item, start: req.start)
             }
             .sheet(item: $shiftReasonToResolve, onDismiss: {
-                // The missed line clears itself server-side once a reason is
-                // recorded; refetch so the row leaves the day it sat under.
+                // Build 79: a recorded reason keeps the row under its day, now
+                // neutral with the reason; refetch so it reflects the server.
                 Task { await appState.refreshMissedShifts() }
             }) { item in
                 MissedShiftResolveSheet(item: item, startOnReason: true)

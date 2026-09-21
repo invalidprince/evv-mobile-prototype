@@ -110,7 +110,14 @@ struct MissedShiftResolveSheet: View {
     /// Today / Work keep the default chooser.
     init(item: MissedShiftItem, startOnReason: Bool = false) {
         self.item = item
-        _path = State(initialValue: startOnReason ? .reason : .choose)
+        // Build 79 — a reasoned row (History's "Change reason") lands straight
+        // on the picker with what is on file pre-selected, like the web dialog.
+        let reasoned = item.isReasoned
+        _path = State(initialValue: (startOnReason || reasoned) ? .reason : .choose)
+        if reasoned, let res = item.resolution {
+            _selectedReason = State(initialValue: res.reason ?? "")
+            _comment = State(initialValue: res.comment ?? "")
+        }
     }
     @State private var comment: String = ""
     @State private var isSubmitting = false
@@ -169,7 +176,7 @@ struct MissedShiftResolveSheet: View {
 
                 if saved {
                     Section {
-                        Label("Reason recorded. This shift stays on the Missed visits list for your manager to acknowledge.", systemImage: "checkmark.circle.fill")
+                        Label("Reason recorded. This shift stays in your History marked missed, with the reason — the same way your manager sees it.", systemImage: "checkmark.circle.fill")
                             .foregroundColor(Theme.success)
                     }
                 } else {
@@ -187,7 +194,7 @@ struct MissedShiftResolveSheet: View {
                     }
                 }
             }
-            .navigationTitle("Missed Shift")
+            .navigationTitle(item.isReasoned ? "Change Reason" : "Missed Shift")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -320,9 +327,12 @@ struct MissedShiftResolveSheet: View {
                 await MainActor.run {
                     isSubmitting = false
                     saved = true
-                    // Drop the row locally so the card is gone the moment the
-                    // sheet closes; the next refresh is the server's word.
-                    appState.missedShifts.removeAll { $0.shiftId == item.shiftId }
+                    // Build 79 — the Today card goes (it owes nothing now) but
+                    // the History row STAYS, moved to the reasoned list with
+                    // the saved reason (Nick, #evv 2026-09-21: "I don't want
+                    // it to disappear"); the refresh is the server's word.
+                    appState.markMissedShiftReasoned(item, reason: selectedReason,
+                                                     comment: trimmedComment.isEmpty ? nil : trimmedComment)
                 }
                 await appState.refreshMissedShifts()
             } catch {

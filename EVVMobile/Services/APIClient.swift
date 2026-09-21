@@ -746,10 +746,29 @@ struct ShiftRequestBody: Encodable {
 
 // MARK: - Missed shifts (server v0.4.505, build 71)
 
-/// One scheduled shift of MINE that was never started and still OWES a
-/// reason (GET /api/me/missed-shifts). Derived server-side from the same
-/// builder the web To-Do renders (todo-core.missedShiftsForStaff); the row
-/// disappears on its own once a visit covers the shift or a reason is recorded.
+/// Build 79 (server v0.4.594) — the reason on file for a missed row, in ONE
+/// shape for both kinds. Nick, #evv 2026-09-21: "When I saved a reason, it
+/// disappeared from the iOS. I don't want that to happen. Similar to the
+/// dashboard I just want it to say missed and the reason and not just
+/// disappear." `outcome` is "reason" (staff recorded why) or "not_worked" (a
+/// manager marked the shift not worked); `by` is whoever recorded it.
+struct MissedResolution: Decodable, Equatable {
+    let outcome: String?
+    let reason: String?
+    let comment: String?
+    let by: String?
+    let at: String?
+
+    /// "Staff no-show" — the label History prints after "Missed —".
+    var reasonText: String { reason ?? (outcome == "not_worked" ? "Shift not worked" : "Reason recorded") }
+}
+
+/// One scheduled shift of MINE that was never started (GET /api/me/missed-shifts).
+/// Derived server-side from the same builders the web renders. `missedShifts`
+/// holds the rows that still OWE a reason (the Today card / To-Do meaning);
+/// build 79 also reads `missedShiftsReasoned` — the rows whose reason is
+/// already on file — so History keeps showing them, marked missed, with the
+/// reason (dashboard parity). A visit covering the shift clears both.
 /// Manual-time services and daily-visit rows never appear here by construction.
 struct MissedShiftItem: Decodable, Identifiable {
     let key: String
@@ -768,8 +787,29 @@ struct MissedShiftItem: Decodable, Identifiable {
     /// Older rows can only take a reason.
     let canRequest: Bool?
     let requestMinDate: String?
+    /// Build 79 (server v0.4.594) — state. Older servers send neither key:
+    /// `needsReason` nil reads as "owes" (the only rows they ever sent).
+    let needsReason: Bool?
+    let resolution: MissedResolution?
+    /// "Change reason" is offered (server: never_started + a recorded reason).
+    let canChangeReason: Bool?
     var id: String { key }
     var offersRequest: Bool { canRequest == true }
+    /// A reason is on file — render neutral, with the reason, not as an alert.
+    var isReasoned: Bool { resolution != nil && needsReason != true }
+    var offersChangeReason: Bool { canChangeReason == true }
+
+    /// The row as it looks the instant a reason has just been saved from this
+    /// phone, before the server's refresh confirms it. Same identity, same
+    /// times; only the state fields change.
+    func reasoned(reason: String, comment: String?, by: String) -> MissedShiftItem {
+        MissedShiftItem(key: key, shiftId: shiftId, staffId: staffId, date: date, start: start, end: end,
+                        clientId: clientId, clientName: clientName, service: service, serviceName: serviceName,
+                        lateMinutes: lateMinutes, canRequest: false, requestMinDate: requestMinDate,
+                        needsReason: false,
+                        resolution: MissedResolution(outcome: "reason", reason: reason, comment: comment, by: by, at: nil),
+                        canChangeReason: true)
+    }
 }
 
 // MARK: - Missed DAYS (📅) (server v0.4.569, Todoist 6hWwwJ8Jr64937GH)
@@ -812,11 +852,31 @@ struct MissedDailyItem: Decodable, Identifiable {
     /// Why create is withheld (outside the entry window, etc.) — shown as-is.
     let createBlockedReason: String?
     let manualService: Bool?
+    /// Build 79 (server v0.4.594) — state. nil on an older server = owes.
+    let needsReason: Bool?
+    let resolution: MissedResolution?
+    /// "Change reason" replaces "Record reason" on a reasoned row.
+    let canChangeReason: Bool?
 
     var id: String { key }
     var offersCreate: Bool { canCreateVisit == true }
     var offersReason: Bool { canRecordReason == true }
     var isDirectCreate: Bool { (createMode ?? "request") == "direct" }
+    /// A reason is on file — render neutral, with the reason, not as an alert.
+    var isReasoned: Bool { resolution != nil && needsReason != true }
+    var offersChangeReason: Bool { canChangeReason == true }
+
+    /// The row as it looks the instant a reason has just been saved from this
+    /// phone, before the server's refresh confirms it.
+    func reasoned(reason: String, comment: String?, by: String) -> MissedDailyItem {
+        MissedDailyItem(key: key, clientId: clientId, clientName: clientName, service: service, serviceName: serviceName,
+                        date: date, daysAgo: daysAgo, start: start, end: end,
+                        canRecordReason: canRecordReason, canCreateVisit: canCreateVisit, createMode: createMode,
+                        createBlockedReason: createBlockedReason, manualService: manualService,
+                        needsReason: false,
+                        resolution: MissedResolution(outcome: "reason", reason: reason, comment: comment, by: by, at: nil),
+                        canChangeReason: canRecordReason)
+    }
 }
 
 struct MissedDailyResolveBody: Encodable {
@@ -840,6 +900,12 @@ struct MissedShiftsResponse: Decodable {
     /// v0.4.569 — missed DAYS. Optional so the app keeps decoding against an
     /// older server that does not send the key at all.
     let missedDaily: [MissedDailyItem]?
+    /// v0.4.594 (build 79) — rows whose reason is already ON FILE, both kinds.
+    /// Optional: an older server omits them and History simply shows only the
+    /// owing rows, as before. Separate arrays so builds ≤ 78 never see a
+    /// reasoned shift in their Today "owes a reason" card.
+    let missedShiftsReasoned: [MissedShiftItem]?
+    let missedDailyReasoned: [MissedDailyItem]?
     /// The ONE reason vocabulary (db.NOT_WORKED_REASONS) — shared with the web
     /// dialog so the lists cannot drift. "Other" requires a comment.
     let reasons: [String]
