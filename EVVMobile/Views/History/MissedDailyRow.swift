@@ -1,37 +1,212 @@
 import SwiftUI
 
-// MARK: - Missed DAY (📅) in History (server v0.4.569, build 76)
+// MARK: - Missed visits INLINE in History (build 77, Todoist 6hWwwJ8Jr64937GH)
 //
-// Todoist 6hWwwJ8Jr64937GH. Nick, #evv 2026-09-17 20:22, with a History-tab
-// screenshot: "Spec and add a card in development to show missed visits in iOS
-// history with same action items as the dashboard (request form be created or
-// just create if it's a manual service like lifesharing)". Then 20:41: a
-// missed lifesharing day (Ray Varner) must ACTIVELY request a reason or the
-// visit's creation — not sit passively on the Missed tab.
+// Build 76 rendered missed DAYS (📅) in their own "Missed" section bolted
+// above the visit list. Nick, #evv 2026-09-21: "I want the missing visits to
+// literally show in the history on iOS like it does web. Same format, just
+// shows missed. in iOS it shows at the top in a different section, not with
+// the same day headers, etc."
 //
-// 🔑 THE SERVER DECIDES THE ACTIONS. This file contains NO service-type list
-//    and no knowledge of what "lifesharing" is. It renders what the payload's
-//    `canCreateVisit` / `createMode` / `canRecordReason` flags say, which come
-//    from the SAME builder the dashboard row uses
-//    (evv-poc/daily-visit-resolve.actionsFor). That is the spec's explicit
-//    requirement and the reason the two surfaces cannot drift.
+// So this file is now the HISTORY ROW for a missed item — the SAME layout as
+// `ServerHistoryRow` (avatar · name · service | duration · times, a chips row,
+// a text-button actions row, `.cardStyle()`), plus a 🚫/📅 MISSED chip. The
+// row is interleaved into the day-grouped list by HistoryView, under the
+// day's own header, exactly as the web's All Visits table co-sorts its
+// `missed_shift` / `missed_daily` pseudo-rows with real visits (v0.4.546).
 //
-// 🔑 A DAY, NOT A SHIFT. The row is keyed individual × service × date and
-//    often has no shift at all — the obligation belongs to the AUTHORIZATION.
-//    So this is deliberately NOT a `Visit` and not a `MissedShiftItem`; it
-//    cannot be, since that type's `shiftId` is non-optional.
+// Two kinds, mirroring the web table:
+//   🚫 missed SHIFT — a scheduled shift of mine never started
+//      (MissedShiftItem; actions: "I worked this shift" → request form,
+//      "It was missed" → reason).
+//   📅 missed DAY   — a "require daily visit" day with no visit of any kind
+//      (MissedDailyItem; actions: "Create visit" (manual service, inside the
+//      window) / "Record reason").
+//
+// 🔑 THE SERVER DECIDES THE ACTIONS. There is NO service-type list here and
+//    no knowledge of what "lifesharing" is. `canRequest`, `canCreateVisit`,
+//    `createMode`, `canRecordReason` come from the SAME builders the
+//    dashboard rows use, so the two surfaces cannot drift.
 //
 // ONLINE-ONLY, like MissedShiftCard: both paths need the server's state
-// checks (a visit may have synced since the last refresh), so offline it is a
-// passive notice and nothing is ever queued.
+// checks, so offline the buttons are disabled and nothing is ever queued.
 
-struct MissedDailyRow: View {
-    let item: MissedDailyItem
+/// One missed item to render in History — either kind, one row format.
+enum MissedHistoryEntry: Identifiable {
+    case shift(MissedShiftItem)
+    case daily(MissedDailyItem)
+
+    var id: String {
+        switch self {
+        case .shift(let s): return "missed-shift-\(s.key)"
+        case .daily(let d): return "missed-daily-\(d.key)"
+        }
+    }
+
+    /// YYYY-MM-DD agency day the row belongs under.
+    var date: String {
+        switch self {
+        case .shift(let s): return s.date
+        case .daily(let d): return d.date
+        }
+    }
+
+    var start: String? {
+        switch self {
+        case .shift(let s): return s.start
+        case .daily(let d): return d.start
+        }
+    }
+
+    var end: String? {
+        switch self {
+        case .shift(let s): return s.end
+        case .daily(let d): return d.end
+        }
+    }
+
+    var clientName: String {
+        switch self {
+        case .shift(let s): return s.clientName ?? s.clientId ?? "No individual"
+        case .daily(let d): return d.clientName ?? d.clientId
+        }
+    }
+
+    var serviceLabel: String {
+        switch self {
+        case .shift(let s): return s.serviceName ?? s.service ?? ""
+        case .daily(let d): return d.serviceName ?? d.service ?? ""
+        }
+    }
+
+    /// Same wording as the web chips: "🚫 Missed" (shift) / "📅 Missed" (day).
+    var chipText: String {
+        switch self {
+        case .shift: return "🚫 MISSED"
+        case .daily: return "📅 MISSED"
+        }
+    }
+}
+
+/// A missed item drawn in the History row format. Actions are text buttons
+/// on the last line, like Add Note / Time Fix / Delete on a real visit.
+struct MissedHistoryRow: View {
+    let entry: MissedHistoryEntry
     var isOffline: Bool = false
-    let onResolve: () -> Void
+    /// 🚫 shift → "I worked this shift" (the pre-filled request form).
+    var onRequestShift: () -> Void = {}
+    /// 🚫 shift → "It was missed" (reason).
+    var onShiftReason: () -> Void = {}
+    /// 📅 day → "Create visit" (manual-time service, inside the window).
+    var onCreateVisit: () -> Void = {}
+    /// 📅 day → "Record reason".
+    var onDailyReason: () -> Void = {}
 
     private var accent: Color { Theme.danger }
 
+    /// Scheduled span when a shift exists, else the web's "not scheduled".
+    private var timeText: String {
+        if let st = entry.start, let en = entry.end { return "\(st) – \(en)" }
+        if let st = entry.start { return st }
+        return "Not scheduled"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 12) {
+                    AvatarView(name: entry.clientName, size: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.clientName).font(.headline)
+                        if !entry.serviceLabel.isEmpty {
+                            Text(entry.serviceLabel)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    // No visit → no hours. The web prints "—" in Units.
+                    Text("—")
+                        .font(.headline)
+                        .foregroundColor(accent)
+                    Text(timeText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            // Status chips row — same slot the real rows use.
+            HStack(spacing: 6) {
+                StatusBadge(text: entry.chipText, color: accent)
+                StatusBadge(text: "No visit recorded", color: .secondary)
+                if case .daily(let d) = entry, !d.offersCreate, d.isDirectCreate,
+                   let blocked = d.createBlockedReason, !blocked.isEmpty {
+                    // Manual service whose entry window has closed — the
+                    // server's words, shown as-is.
+                    StatusBadge(text: blocked, color: Theme.warning)
+                }
+                Spacer()
+            }
+
+            // Action buttons — the dashboard's, driven by the server's flags.
+            HStack(spacing: 16) {
+                switch entry {
+                case .shift(let s):
+                    if s.offersRequest && MissedShiftPrefill(item: s) != nil {
+                        Button(action: onRequestShift) {
+                            Label("I worked this shift", systemImage: "square.and.pencil")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(isOffline ? .secondary : Theme.primary)
+                        }
+                        .disabled(isOffline)
+                    }
+                    Button(action: onShiftReason) {
+                        Label("It was missed", systemImage: "xmark.circle")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(isOffline ? .secondary : accent)
+                    }
+                    .disabled(isOffline)
+                case .daily(let d):
+                    if d.offersCreate {
+                        Button(action: onCreateVisit) {
+                            Label("Create visit", systemImage: "plus.circle")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(isOffline ? .secondary : Theme.primary)
+                        }
+                        .disabled(isOffline)
+                    }
+                    if d.offersReason {
+                        Button(action: onDailyReason) {
+                            Label("Record reason", systemImage: "xmark.circle")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(isOffline ? .secondary : accent)
+                        }
+                        .disabled(isOffline)
+                    }
+                }
+                Spacer()
+            }
+
+            if isOffline {
+                Label("Connect to the internet to resolve", systemImage: "wifi.slash")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .cardStyle()
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(accent.opacity(0.45), lineWidth: 1)
+        )
+        .accessibilityIdentifier("missedHistoryRow-\(entry.id)")
+    }
+}
+
+/// Build 76 helper kept for the resolve sheet's header. "yesterday" or
+/// "EEE, MMM d" in the agency's calendar.
+enum MissedDailyRow {
     static func whenText(_ item: MissedDailyItem) -> String {
         guard let d = MissedShiftPrefill.parse(date: item.date, time: nil) else { return item.date }
         if Calendar.current.isDateInYesterday(d) { return "yesterday" }
@@ -39,59 +214,13 @@ struct MissedDailyRow: View {
         f.dateFormat = "EEE, MMM d"
         return f.string(from: d)
     }
+}
 
-    /// What the row asks for, in the staff member's words. Driven entirely by
-    /// the server's flags — never by the service code.
-    private var askText: String {
-        if item.offersCreate {
-            return "No visit was entered for this day. Create it if the day was worked, or record why there was none."
-        }
-        if item.isDirectCreate {
-            // Manual service, but create is withheld (outside the entry window).
-            return item.createBlockedReason ?? "No visit was entered for this day. Record why there was none."
-        }
-        return "No visit was entered for this day. This service needs a manager-approved request, or record why there was none."
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "calendar.badge.exclamationmark")
-                    .foregroundColor(accent)
-                Text("No visit — \(item.clientName ?? item.clientId), \(Self.whenText(item))")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-            }
-            if let svc = item.serviceName, !svc.isEmpty {
-                Text(svc)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Text(askText)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: onResolve) {
-                Label(item.offersCreate ? "Create visit / record reason" : "Record reason",
-                      systemImage: "checkmark.circle")
-            }
-            .buttonStyle(PrimaryButtonStyle(color: isOffline ? .gray : accent))
-            .disabled(isOffline || !(item.offersReason || item.offersCreate))
-            if isOffline {
-                Label("Connect to the internet to resolve", systemImage: "wifi.slash")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(14)
-        .background(accent.opacity(0.12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(accent.opacity(0.5), lineWidth: 1)
-        )
-        .cornerRadius(14)
-        .accessibilityIdentifier("missedDailyRow-\(item.key)")
-    }
+/// Which path the missed-DAY sheet opens on. Build 77: the History row has
+/// one button per action, so each lands straight on its path; `.choose` is
+/// the build-76 chooser and remains the default.
+enum MissedDailyStart {
+    case choose, reason, create
 }
 
 // MARK: - Resolve sheet (the two paths)
@@ -110,7 +239,7 @@ struct MissedDailyResolveSheet: View {
     var onChanged: () -> Void = {}
 
     private enum Path { case choose, reason, create }
-    @State private var path: Path = .choose
+    @State private var path: Path
     @State private var selectedReason: String = ""
     @State private var comment: String = ""
     // Lifesharing days are entered as a full 12:00 AM → 12:00 AM span (Nick
@@ -123,6 +252,20 @@ struct MissedDailyResolveSheet: View {
     @State private var savedReason = false
     @State private var createdVisit: Visit?
     @State private var docVisit: Visit?
+
+    init(item: MissedDailyItem, start: MissedDailyStart = .choose, onChanged: @escaping () -> Void = {}) {
+        self.item = item
+        self.onChanged = onChanged
+        // Only land on a path the server actually offers; otherwise fall back
+        // to the chooser, which explains why.
+        let initial: Path
+        switch start {
+        case .create: initial = item.offersCreate ? .create : .choose
+        case .reason: initial = item.offersReason ? .reason : .choose
+        case .choose: initial = .choose
+        }
+        _path = State(initialValue: initial)
+    }
 
     private var online: Bool { appState.effectivelyOnline }
 

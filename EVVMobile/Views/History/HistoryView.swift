@@ -18,7 +18,26 @@ struct HistoryView: View {
     // 6hWwwJ8Jr64937GH). Nick, #evv 2026-09-17, with a History screenshot:
     // show missed visits in iOS history with the same action items as the
     // dashboard. The sheet carries both, driven by the server's flags.
-    @State private var dailyToResolve: MissedDailyItem?
+    // Build 77 — the row has one button per action, so the request carries
+    // which path to open on.
+    @State private var dailyToResolve: MissedDailyResolveRequest?
+    // Build 77 — missed SHIFTS (🚫) are in History too, like the web's All
+    // Visits table: "It was missed" → reason sheet; "I worked this shift" →
+    // the pre-filled request form + the same documentation handoff the
+    // "Request a shift" card uses.
+    @State private var shiftReasonToResolve: MissedShiftItem?
+    @State private var missedRequestPrefill: MissedShiftPrefillRequest?
+
+    /// `.sheet(item:)` payloads for the two missed-row sheets.
+    struct MissedDailyResolveRequest: Identifiable {
+        let item: MissedDailyItem
+        let start: MissedDailyStart
+        var id: String { item.key }
+    }
+    struct MissedShiftPrefillRequest: Identifiable {
+        let prefill: MissedShiftPrefill
+        var id: Int { prefill.shiftId }
+    }
 
     /// Build 56 — staff shift requests (server v0.4.393 'Shift request'
     /// exceptions from GET /me/requests). Shown as their own list so a
@@ -61,37 +80,97 @@ struct HistoryView: View {
         return merged
     }
 
-    private var serverGroupedVisits: [(label: String, visits: [Visit])] {
+    // MARK: - One stream: visits + missed, grouped by day (build 77)
+
+    /// One line of the History list — a real visit or a missed pseudo-row.
+    /// Build 77 (Todoist 6hWwwJ8Jr64937GH, Nick #evv 2026-09-21: "I want the
+    /// missing visits to literally show in the history on iOS like it does
+    /// web. Same format, just shows missed."). The web's All Visits table
+    /// co-sorts `missed_shift` / `missed_daily` pseudo-rows with real visits
+    /// (v0.4.546) instead of a block above it; this is the same merge, under
+    /// the same day headers. A missed row is NOT a visit: it never counts
+    /// toward `mergedHistoryVisits`, the hours or the Visits number.
+    enum HistoryEntry: Identifiable {
+        case visit(Visit)
+        case missed(MissedHistoryEntry)
+
+        var id: String {
+            switch self {
+            case .visit(let v): return "visit-\(v.id.uuidString)"
+            case .missed(let m): return m.id
+            }
+        }
+    }
+
+    /// A missed item's agency day ("yyyy-MM-dd"), placed on the DEVICE's
+    /// calendar so it lands in the same bucket the visit rows use
+    /// (`cal.startOfDay(for:)` on the device). Falls back to the agency zone.
+    private static func localDay(_ ymd: String, calendar cal: Calendar) -> Date? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = cal.timeZone
+        f.dateFormat = "yyyy-MM-dd"
+        if let d = f.date(from: ymd) { return cal.startOfDay(for: d) }
+        return MissedShiftPrefill.parse(date: ymd, time: nil).map { cal.startOfDay(for: $0) }
+    }
+
+    /// Sort key inside a day: a visit by its start; a missed item by its
+    /// scheduled start, or the day's midnight when nothing was scheduled (so
+    /// an unscheduled missed day sits at the bottom of its day).
+    private static func sortKey(_ entry: HistoryEntry, day: Date, calendar cal: Calendar) -> Date {
+        switch entry {
+        case .visit(let v):
+            return v.actualStart ?? v.scheduledStart
+        case .missed(let m):
+            if let st = m.start {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.timeZone = cal.timeZone
+                f.dateFormat = "yyyy-MM-dd h:mm a"
+                if let d = f.date(from: "\(m.date) \(st)") { return d }
+            }
+            return day
+        }
+    }
+
+    /// Missed rows the server currently reports for me — both kinds. Absent
+    /// keys / an older server / a 403 leave these empty and the list is the
+    /// plain visit history.
+    private var missedEntries: [MissedHistoryEntry] {
+        appState.missedShifts.map { .shift($0) } + appState.missedDaily.map { .daily($0) }
+    }
+
+    /// Day groups, newest first. A day that holds ONLY missed rows still gets
+    /// its header — that is the point of putting them in the history.
+    private var serverGroupedEntries: [(label: String, day: Date, entries: [HistoryEntry])] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
 
-        var groups: [String: (date: Date, visits: [Visit])] = [:]
+        var groups: [Date: [HistoryEntry]] = [:]
         for visit in mergedHistoryVisits {
             let day = cal.startOfDay(for: visit.actualStart ?? visit.scheduledStart)
-            let label: String
-            if cal.isDate(day, inSameDayAs: today) {
-                label = "Today"
-            } else if cal.isDate(day, inSameDayAs: yesterday) {
-                label = "Yesterday"
-            } else {
-                let f = DateFormatter()
-                f.dateFormat = "EEEE, MMM d"
-                label = f.string(from: day)
-            }
-            if groups[label] == nil {
-                groups[label] = (date: day, visits: [])
-            }
-            groups[label]!.visits.append(visit)
+            groups[day, default: []].append(.visit(visit))
         }
-        return groups.values
-            .sorted { $0.date > $1.date }
-            .map { (label: $0.visits.first.flatMap { v in
-                let day = cal.startOfDay(for: v.actualStart ?? v.scheduledStart)
-                if cal.isDate(day, inSameDayAs: today) { return "Today" }
-                if cal.isDate(day, inSameDayAs: yesterday) { return "Yesterday" }
-                let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f.string(from: day)
-            } ?? "", visits: $0.visits.sorted { ($0.actualStart ?? $0.scheduledStart) > ($1.actualStart ?? $1.scheduledStart) }) }
+        for m in missedEntries {
+            guard let day = Self.localDay(m.date, calendar: cal) else { continue }
+            groups[day, default: []].append(.missed(m))
+        }
+
+        func label(for day: Date) -> String {
+            if cal.isDate(day, inSameDayAs: today) { return "Today" }
+            if cal.isDate(day, inSameDayAs: yesterday) { return "Yesterday" }
+            let f = DateFormatter()
+            f.dateFormat = "EEEE, MMM d"
+            return f.string(from: day)
+        }
+
+        return groups.keys.sorted(by: >).map { day in
+            let entries = groups[day]!.sorted {
+                Self.sortKey($0, day: day, calendar: cal) > Self.sortKey($1, day: day, calendar: cal)
+            }
+            return (label: label(for: day), day: day, entries: entries)
+        }
     }
 
     private var totalHoursServer: Double {
@@ -143,8 +222,31 @@ struct HistoryView: View {
                     await appState.refreshHistory()
                     await appState.refreshMissedShifts()
                 }
+            }) { req in
+                MissedDailyResolveSheet(item: req.item, start: req.start)
+            }
+            .sheet(item: $shiftReasonToResolve, onDismiss: {
+                // The missed line clears itself server-side once a reason is
+                // recorded; refetch so the row leaves the day it sat under.
+                Task { await appState.refreshMissedShifts() }
             }) { item in
-                MissedDailyResolveSheet(item: item)
+                MissedShiftResolveSheet(item: item, startOnReason: true)
+            }
+            .sheet(item: $missedRequestPrefill, onDismiss: {
+                // Same handoff as "Request a shift" below: the request sheet
+                // hands back the pending visit; once it's gone, open
+                // DocumentationView. The linked request also clears the
+                // missed row server-side, so refresh that list too.
+                Task { await appState.refreshMissedShifts() }
+                if let v = requestedDocVisit {
+                    requestedDocVisit = nil
+                    requestDocVisit = v
+                }
+            }) { req in
+                RequestShiftSheet(prefill: req.prefill) { visit in
+                    requestedDocVisit = visit
+                    missedRequestPrefill = nil
+                }
             }
             .sheet(isPresented: $showRequestShift, onDismiss: {
                 // Same handoff WorkView uses: the request sheet hands back the
@@ -172,21 +274,10 @@ struct HistoryView: View {
 
                 requestShiftCard
 
-                // Build 76 — MISSED DAYS, ABOVE the visit list on purpose.
-                // A day nobody visited is the one thing on this screen that
-                // still needs doing; the rows below are already done. Renders
-                // only when the server sends rows (absent key → empty list →
-                // no section), so an older server changes nothing here.
-                if !appState.missedDaily.isEmpty {
-                    Text("Missed")
-                        .font(.title3.bold())
-                        .padding(.top, 4)
-                    ForEach(appState.missedDaily) { item in
-                        MissedDailyRow(item: item,
-                                       isOffline: !appState.effectivelyOnline,
-                                       onResolve: { dailyToResolve = item })
-                    }
-                }
+                // Build 77 — the build-76 "Missed" block that sat here is
+                // GONE. Missed rows are interleaved under their day headers
+                // in the list below, the way the web's All Visits table does
+                // it (Nick, #evv 2026-09-21: "Same format, just shows missed").
 
                 if !shiftRequests.isEmpty {
                     Text("Shift requests")
@@ -208,7 +299,7 @@ struct HistoryView: View {
                     .padding(.vertical, 20)
                 }
 
-                if !appState.isLoadingHistory && mergedHistoryVisits.isEmpty {
+                if !appState.isLoadingHistory && mergedHistoryVisits.isEmpty && missedEntries.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.largeTitle)
@@ -220,16 +311,42 @@ struct HistoryView: View {
                     .padding(.vertical, 30)
                 }
 
-                ForEach(serverGroupedVisits, id: \.label) { group in
+                ForEach(serverGroupedEntries, id: \.day) { group in
                     Text(group.label)
                         .font(.title3.bold())
                         .padding(.top, 4)
-                    ForEach(group.visits) { visit in
-                        ServerHistoryRow(visit: visit,
-                                         onTimeFix: { timeFixVisit = visit },
-                                         onRequestDelete: { deleteVisit = visit },
-                                         onAddNote: { addNoteVisit = visit },
-                                         onFinishNote: { noteVisit = visit })
+                    ForEach(group.entries) { entry in
+                        switch entry {
+                        case .visit(let visit):
+                            ServerHistoryRow(visit: visit,
+                                             onTimeFix: { timeFixVisit = visit },
+                                             onRequestDelete: { deleteVisit = visit },
+                                             onAddNote: { addNoteVisit = visit },
+                                             onFinishNote: { noteVisit = visit })
+                        case .missed(let m):
+                            MissedHistoryRow(
+                                entry: m,
+                                isOffline: !appState.effectivelyOnline,
+                                onRequestShift: {
+                                    if case .shift(let s) = m, let p = MissedShiftPrefill(item: s) {
+                                        missedRequestPrefill = MissedShiftPrefillRequest(prefill: p)
+                                    }
+                                },
+                                onShiftReason: {
+                                    if case .shift(let s) = m { shiftReasonToResolve = s }
+                                },
+                                onCreateVisit: {
+                                    if case .daily(let d) = m {
+                                        dailyToResolve = MissedDailyResolveRequest(item: d, start: .create)
+                                    }
+                                },
+                                onDailyReason: {
+                                    if case .daily(let d) = m {
+                                        dailyToResolve = MissedDailyResolveRequest(item: d, start: .reason)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -237,7 +354,7 @@ struct HistoryView: View {
         }
         .refreshable {
             await appState.refreshHistory()
-            // Build 76 — pull-to-refresh must also refresh the Missed section,
+            // Build 76 — pull-to-refresh must also refresh the missed rows,
             // or a staff member who just created the visit elsewhere would
             // keep seeing the row they already cleared.
             await appState.refreshMissedShifts()
@@ -248,9 +365,9 @@ struct HistoryView: View {
             // list loaded before today's visit existed was never refetched —
             // the visit was on the server and absent from this screen.
             Task { await appState.refreshHistoryIfStale() }
-            // Build 76 — the missed-day list is memory-only and online-only,
-            // so it must be fetched when the tab appears or the section would
-            // be empty on a cold open of History.
+            // Build 76 — the missed lists are memory-only and online-only,
+            // so they must be fetched when the tab appears or the rows would
+            // be absent on a cold open of History.
             Task { await appState.refreshMissedShifts() }
         }
     }

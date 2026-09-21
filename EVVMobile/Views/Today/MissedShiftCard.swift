@@ -102,8 +102,16 @@ struct MissedShiftResolveSheet: View {
     let item: MissedShiftItem
 
     private enum Path { case choose, reason }
-    @State private var path: Path = .choose
+    @State private var path: Path
     @State private var selectedReason: String = ""
+
+    /// `startOnReason` — build 77: History's inline missed row has a separate
+    /// "It was missed" button, so it lands straight on the reason picker.
+    /// Today / Work keep the default chooser.
+    init(item: MissedShiftItem, startOnReason: Bool = false) {
+        self.item = item
+        _path = State(initialValue: startOnReason ? .reason : .choose)
+    }
     @State private var comment: String = ""
     @State private var isSubmitting = false
     @State private var submitError: String?
