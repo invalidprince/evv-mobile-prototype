@@ -128,6 +128,14 @@ final class AppState: ObservableObject {
     @Published var pendingSyncCount = 2
     @Published var lastSync = Date().addingTimeInterval(-14 * 60)
     @Published var isSyncing = false
+    /// Build 82 — set when a BACKGROUND refresh (shifts / history /
+    /// individuals on resume, reconnect, tab appear, pull-to-refresh) still
+    /// failed after the transport layer's transient retries; cleared by the
+    /// next successful refresh. Drives a passive line in SyncStatusBanner
+    /// ("Couldn't reach the server — will retry automatically") instead of the
+    /// modal "Error / Connection error: The network connection was lost."
+    /// alert Nick kept hitting every time he switched apps and came back.
+    @Published var backgroundRefreshFailedAt: Date?
 
     /// Fires whenever a new pending item is created; debounced into a single
     /// syncNow() call so rapid clock-out / note / request bursts coalesce.
@@ -1323,6 +1331,8 @@ final class AppState: ObservableObject {
         missedDaily = []         // build 76 — same rule (individual names)
         missedShiftsReasoned = [] // build 79 — same rule
         missedDailyReasoned = []
+        backgroundRefreshFailedAt = nil // build 82 — passive banner state is per-session
+        scheduleLoadError = nil
         LocalCache.shared.clearAll()
         if let owner = queueOwner, !preservedPunches.isEmpty {
             LocalCache.shared.saveOfflineQueue(preservedPunches, staffId: owner)
@@ -1443,6 +1453,7 @@ final class AppState: ObservableObject {
             // count is now the fastest way to tell a scoping change apart from
             // a UI problem.
             DiagnosticLogger.shared.logSync("Loaded \(fetched.count) individuals from server")
+            backgroundRefreshFailedAt = nil
             // Persist to disk for offline use
             LocalCache.shared.saveIndividuals(fetched)
         } catch is CancellationError {
@@ -1456,10 +1467,10 @@ final class AppState: ObservableObject {
             if apiErr.isNetworkError && serverIndividuals.isEmpty {
                 loadCachedIndividuals()
             }
-            // Only surface non-network errors (network errors are expected offline)
-            if !apiErr.isNetworkError {
-                surfaceServerError(apiErr)
-            }
+            // Build 82 — was: alert on any non-network error. The roster
+            // refresh is a cache warm-up nobody is waiting on; the sheets that
+            // USE the roster surface their own errors when the user acts.
+            surfaceBackgroundRefreshError(apiErr, context: "Individuals refresh")
         }
     }
 
@@ -1532,6 +1543,7 @@ final class AppState: ObservableObject {
             serverOpenShifts = response.openShifts ?? []
             serverOpenRules = response.openRules ?? []
             lastSync = Date()
+            backgroundRefreshFailedAt = nil
             startTimerIfNeeded()
             // Build 60 — reconcile the local missed-punch reminders against the
             // fresh Today list using the server's policy (same minutes as the
@@ -1549,9 +1561,16 @@ final class AppState: ObservableObject {
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
             if !apiErr.isCancellation {
-                scheduleLoadError = apiErr.localizedDescription
+                // Inline Schedule banner (B5) keeps working — it is passive and
+                // has its own Retry. Network failures get human copy rather
+                // than the NSURLError prose.
+                scheduleLoadError = apiErr.isNetworkError
+                    ? "Couldn\u{2019}t reach the server \u{2014} showing your last synced schedule."
+                    : apiErr.localizedDescription
             }
-            surfaceServerError(apiErr)
+            // Build 82 — a refresh is never something the user is waiting on
+            // with a modal: log it, light the passive banner, move on.
+            surfaceBackgroundRefreshError(apiErr, context: "Shift refresh")
         }
     }
 
@@ -2281,11 +2300,14 @@ final class AppState: ObservableObject {
             serverExceptions = exceptions
             historyVisits = serverVisits.compactMap { mapHistoryVisit($0, exceptions: exceptions) }
             lastHistoryRefreshAt = Date()
+            backgroundRefreshFailedAt = nil
         } catch is CancellationError {
             // Structured-task cancellation (async let sibling failed,
             // view lifecycle, etc.) — silently ignore.
         } catch {
-            surfaceServerError(error as? APIError ?? .networkError(error))
+            // Build 82 — background refresh: passive banner + diagnostic log,
+            // never the modal alert (History keeps its last good list).
+            surfaceBackgroundRefreshError(error as? APIError ?? .networkError(error), context: "History refresh")
         }
     }
 
@@ -2575,6 +2597,34 @@ final class AppState: ObservableObject {
         serverError = error.localizedDescription
         showServerError = true
         DiagnosticLogger.shared.logAPI(error.localizedDescription)
+    }
+
+    /// Build 82 — the NON-modal sibling of `surfaceServerError` for refreshes
+    /// the app runs on its own (foreground resume, reconnect, tab appear,
+    /// pull-to-refresh, post-sync cache warm-up). The user did not ask for
+    /// these and is not waiting on them, so a failure must never interrupt
+    /// with an alert — by the time they read it the next attempt has usually
+    /// already succeeded (the 2026-09-21 resume diagnostic). Instead:
+    ///   • cancellation → nothing (benign, as before);
+    ///   • session ended → the central sign-out path, exactly like the alert
+    ///     path (a dead token is not a transient glitch);
+    ///   • anything else → diagnostic log (category api, so the evidence
+    ///     trail that found this bug stays intact) + light the passive line
+    ///     in SyncStatusBanner. The screens keep their last good data.
+    /// User-initiated writes (Save / Clock In / …) keep using
+    /// `surfaceServerError` — those the user IS waiting on.
+    func surfaceBackgroundRefreshError(_ error: APIError, context: String) {
+        if error.isCancellation { return }
+        if case .unauthorized = error, mode == .server, isLoggedIn {
+            handleSessionExpired(serverReason: error.localizedDescription)
+            return
+        }
+        DiagnosticLogger.shared.logAPI("\(context) failed (not shown to user): \(error.localizedDescription)")
+        // Only light the banner while we believe we are online — offline the
+        // banner already says "Offline", and a network failure is expected.
+        if effectivelyOnline {
+            backgroundRefreshFailedAt = Date()
+        }
     }
 
     func haptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {

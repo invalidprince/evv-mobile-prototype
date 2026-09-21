@@ -2845,27 +2845,88 @@ actor APIClient {
 
     /// One transport call with a single retry on transient cancellation.
     /// (Pre-build-46 this WAS performRequest — the 401 handling now wraps it.)
+    ///
+    /// Build 82 — TRANSIENT-ERROR RETRY FOR IDEMPOTENT REQUESTS. When the app
+    /// is suspended iOS tears down its TCP connections; the first request
+    /// after foregrounding then fails with NSURLErrorNetworkConnectionLost
+    /// (-1005) and the immediate retry succeeds (Nick's diagnostic, mobile_logs
+    /// id 7, 2026-09-21: "Connection error: The network connection was lost."
+    /// followed IN THE SAME SECOND by "Loaded 1 individuals from server").
+    /// Every GET (and the token refresh) is safe to replay, so those retry
+    /// here — up to `maxTransientRetries` with a short backoff — BEFORE the
+    /// error can reach any caller, let alone a screen. Non-idempotent writes
+    /// (clock-in/out, notes, …) are NOT retried here: the offline queue owns
+    /// them (it retains + replays under the server's idempotency check), and
+    /// a blind transport replay of a POST could double-write.
+    private static let maxTransientRetries = 2
+
+    /// URLError codes that mean "the pipe broke / never opened", i.e. the
+    /// server cannot have acted on the request and a moment later it is very
+    /// likely to work. `.timedOut` is included but only retried once (see
+    /// `transientRetryBudget`) because each attempt already costs the full
+    /// timeoutInterval.
+    private static let transientURLErrorCodes: Set<URLError.Code> = [
+        .networkConnectionLost, .timedOut, .cannotConnectToHost, .cannotFindHost,
+        .dnsLookupFailed, .notConnectedToInternet, .secureConnectionFailed,
+        .resourceUnavailable,
+    ]
+
+    /// True for requests whose replay is side-effect free on the server.
+    private static func isIdempotent(_ request: URLRequest) -> Bool {
+        let method = (request.httpMethod ?? "GET").uppercased()
+        if method == "GET" || method == "HEAD" { return true }
+        // The sliding-session refresh is a POST but replaying it only mints
+        // another token for the same session — safe, and it is exactly the
+        // call that fires first on foreground resume (handleSceneActive).
+        if let path = request.url?.path, path.hasSuffix("/token/refresh") { return true }
+        return false
+    }
+
+    /// How many transient retries this error is allowed on an idempotent
+    /// request (0 = not transient / not retried).
+    private static func transientRetryBudget(for error: Error) -> Int {
+        guard let urlError = error as? URLError, transientURLErrorCodes.contains(urlError.code) else { return 0 }
+        return urlError.code == .timedOut ? 1 : maxTransientRetries
+    }
+
     private func transportRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        do {
-            return try await URLSession.shared.data(for: request)
-        } catch let error as URLError where error.code == .cancelled {
-            // Retry once after a brief pause — cancellations are often
-            // transient (structured-task teardown, network path change).
-            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 s
+        let idempotent = Self.isIdempotent(request)
+        let label = "\(request.httpMethod ?? "GET") \(request.url?.path ?? "?")"
+        var attempt = 0
+        while true {
             do {
                 return try await URLSession.shared.data(for: request)
+            } catch let error as URLError where error.code == .cancelled {
+                // Retry once after a brief pause — cancellations are often
+                // transient (structured-task teardown, network path change).
+                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 s
+                do {
+                    return try await URLSession.shared.data(for: request)
+                } catch {
+                    throw APIError.networkError(error)
+                }
+            } catch is CancellationError {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                do {
+                    return try await URLSession.shared.data(for: request)
+                } catch {
+                    throw APIError.networkError(error)
+                }
             } catch {
-                throw APIError.networkError(error)
+                let budget = idempotent ? Self.transientRetryBudget(for: error) : 0
+                guard attempt < budget else {
+                    if budget > 0 {
+                        DiagnosticLogger.shared.logAPI("Transient failure on \(label) persisted after \(attempt) retr\(attempt == 1 ? "y" : "ies"): \(error.localizedDescription)")
+                    }
+                    throw APIError.networkError(error)
+                }
+                attempt += 1
+                // Keep the evidence — this log line is how the resume pattern
+                // was found in the first place. Category stays `api`.
+                DiagnosticLogger.shared.logAPI("Transient failure on \(label) (\((error as? URLError)?.code.rawValue ?? 0)): \(error.localizedDescription) — retrying \(attempt)/\(budget)")
+                // 0.5 s, then 1.0 s.
+                try? await Task.sleep(nanoseconds: UInt64(500_000_000) * UInt64(attempt))
             }
-        } catch is CancellationError {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            do {
-                return try await URLSession.shared.data(for: request)
-            } catch {
-                throw APIError.networkError(error)
-            }
-        } catch {
-            throw APIError.networkError(error)
         }
     }
 

@@ -110,6 +110,20 @@ struct SyncStatusBanner: View {
                 // Optional manual fallback
                 Button("Sync Now") { appState.syncNow() }
                     .font(.footnote.weight(.semibold))
+            } else if appState.backgroundRefreshFailedAt != nil {
+                // ⚠️ Build 82 — a background refresh failed even after the
+                // transport retries, while we believe we're online. Passive
+                // copy in the sync banner's own voice; the screens still show
+                // their last synced data. Replaces the modal "Connection
+                // error" alert on app resume.
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.footnote)
+                    .foregroundColor(Theme.warning)
+                Text("Couldn\u{2019}t reach the server \u{2014} will retry automatically")
+                    .font(.footnote.weight(.medium))
+                Spacer()
+                Button("Retry") { appState.syncNow() }
+                    .font(.footnote.weight(.semibold))
             } else {
                 // ✓ Everything synced
                 Image(systemName: "checkmark.circle.fill")
@@ -129,7 +143,8 @@ struct SyncStatusBanner: View {
 
     private var bannerBackground: some View {
         Group {
-            if appState.isSyncing || appState.pendingSyncCount > 0 {
+            if appState.isSyncing || appState.pendingSyncCount > 0
+                || (appState.effectivelyOnline && appState.backgroundRefreshFailedAt != nil) {
                 Theme.warning.opacity(0.18)
             } else if !appState.effectivelyOnline {
                 Theme.danger.opacity(0.14)
