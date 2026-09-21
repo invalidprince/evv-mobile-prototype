@@ -27,6 +27,11 @@ struct HistoryView: View {
     // "Request a shift" card uses.
     @State private var shiftReasonToResolve: MissedShiftItem?
     @State private var missedRequestPrefill: MissedShiftPrefillRequest?
+    // Build 83 — clock out of a STILL CLOCKED IN row straight from History
+    // (server v0.4.604 returns an open visit however old). The flow acts on
+    // `appState.activeVisit` (Today's copy of the same visit, carried over
+    // by mergeStaleOpenVisitsIntoToday / the shifts payload).
+    @State private var clockOutVisit: Visit?
 
     /// `.sheet(item:)` payloads for the two missed-row sheets.
     struct MissedDailyResolveRequest: Identifiable {
@@ -226,6 +231,16 @@ struct HistoryView: View {
                     DocumentationView(visit: visit)
                 }
             }
+            .fullScreenCover(item: $clockOutVisit, onDismiss: {
+                // Either clocked out or backed out — re-read both feeds so the
+                // STILL CLOCKED IN row and the Today banner follow the server.
+                Task {
+                    await appState.refreshServerShifts()
+                    await appState.refreshHistory()
+                }
+            }) { visit in
+                ClockOutFlow(visit: visit)
+            }
             .sheet(item: $dailyToResolve, onDismiss: {
                 // Either action changes History: a created visit appears, a
                 // recorded reason moves the row to its reasoned state (build
@@ -334,7 +349,12 @@ struct HistoryView: View {
                                              onTimeFix: { timeFixVisit = visit },
                                              onRequestDelete: { deleteVisit = visit },
                                              onAddNote: { addNoteVisit = visit },
-                                             onFinishNote: { noteVisit = visit })
+                                             onFinishNote: { noteVisit = visit },
+                                             onClockOut: {
+                                                 // Prefer Today's copy (clockOut() reads todayVisits);
+                                                 // fall back to this row for display.
+                                                 clockOutVisit = appState.todayVisits.first(where: { $0.serverVisitId == visit.serverVisitId && $0.status == .inProgress }) ?? visit
+                                             })
                         case .missed(let m):
                             MissedHistoryRow(
                                 entry: m,
@@ -496,6 +516,10 @@ struct ServerHistoryRow: View {
     let onRequestDelete: () -> Void
     let onAddNote: () -> Void
     let onFinishNote: () -> Void
+    /// Build 83 — clock out from History (a STILL CLOCKED IN row from a
+    /// prior day has no Today card of its own to find). Optional so the
+    /// mock/other call sites need no change.
+    var onClockOut: (() -> Void)? = nil
 
     /// Build 53: a visit that is clocked in but not out. It appears here
     /// under "Today" AND on the Today tab (Nick, 2026-09-02: "It should").
@@ -505,22 +529,35 @@ struct ServerHistoryRow: View {
         visit.status == .inProgress || (visit.actualStart != nil && visit.actualEnd == nil)
     }
 
+    /// Build 83 — running, and the clock-in was on a PRIOR day. Nick, #evv
+    /// 2026-09-21: "even if over 2 weeks (should NEVER happen), if you're
+    /// clocked in still show that visit in history." The server now returns
+    /// such rows regardless of its 14-day window; this row says so loudly.
+    private var isStaleOpen: Bool { isInProgress && visit.isStaleOpen }
+
     private var timeText: String {
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
         let start = visit.actualStart ?? visit.scheduledStart
         let end = visit.actualEnd
         let startStr = f.string(from: start)
-        let endStr = end != nil ? f.string(from: end!) : "now"
+        // A stale open row reads "10:46 AM – no clock-out", never "– now":
+        // "now" implies today.
+        let endStr = end != nil ? f.string(from: end!) : (isStaleOpen ? "no clock-out" : "now")
         return "\(startStr) – \(endStr)"
     }
 
     /// Elapsed-so-far for a running visit (no clock-out yet), else the
     /// stored duration. Never "0h 0m" for a visit that is still going.
+    /// A prior-day open visit shows days, not a 400-hour figure.
     private var durationLabel: String {
         guard isInProgress else { return visit.durationText }
         guard let start = visit.actualStart else { return "—" }
         let mins = max(0, Int(Date().timeIntervalSince(start) / 60))
+        if isStaleOpen {
+            let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: start), to: Calendar.current.startOfDay(for: Date())).day ?? 0
+            return days <= 1 ? "since yesterday" : "\(days) days open"
+        }
         return "\(mins / 60)h \(mins % 60)m"
     }
 
@@ -540,7 +577,7 @@ struct ServerHistoryRow: View {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(durationLabel)
                         .font(.headline)
-                        .foregroundColor(isInProgress ? Theme.primary : .primary)
+                        .foregroundColor(isStaleOpen ? Theme.danger : (isInProgress ? Theme.primary : .primary))
                     Text(timeText)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -553,7 +590,12 @@ struct ServerHistoryRow: View {
                 // docStatus for a running visit is also "in progress", which
                 // as a doc chip reads like a documentation state; suppressed
                 // below while the visit itself is running.
-                if isInProgress {
+                // Build 83: a prior-day running visit is a problem, not a
+                // state — red, and it says what to do.
+                if isStaleOpen {
+                    StatusBadge(text: "STILL CLOCKED IN", color: Theme.danger)
+                        .accessibilityIdentifier("history.stillClockedIn")
+                } else if isInProgress {
                     StatusBadge(text: "IN PROGRESS", color: Theme.primary)
                 }
                 // Unsynced badge for offline events
@@ -586,8 +628,23 @@ struct ServerHistoryRow: View {
                 Spacer()
             }
 
+            if isStaleOpen {
+                Label("You never clocked out of this visit. Clock out now so you can clock in again.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             // Action buttons
             HStack(spacing: 16) {
+                if isInProgress, let onClockOut = onClockOut {
+                    Button(action: onClockOut) {
+                        Label("Clock Out", systemImage: "stop.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(Theme.danger)
+                    }
+                    .accessibilityIdentifier("history.clockOut")
+                }
                 Button(action: onAddNote) {
                     Label(visit.hasNote ? "Update Note" : "Add Note", systemImage: "square.and.pencil")
                         .font(.subheadline.weight(.medium))

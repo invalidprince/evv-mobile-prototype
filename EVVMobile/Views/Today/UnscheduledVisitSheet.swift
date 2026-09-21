@@ -83,6 +83,18 @@ struct ServerUnscheduledContent: View {
     @State private var isSubmittingManual = false
     @State private var manualSubmitError: String?
     @State private var successMessage: String?
+    // Build 83 — LIVE clock-ins await the server too (the build-57 contract,
+    // finally applied to this sheet). Nick, #evv 2026-09-21: his Alex Rivera
+    // clock-in was refused 409 ("You already have a visit in progress" —
+    // the Sep 3 Erik Hoover punch was still open) and the app "just said
+    // 'clocked in' and didn't work": `showSuccess = true` fired before the
+    // request left, and the refusal went to the root alert, which cannot
+    // present behind a sheet + cover. Now: spinner while the server is asked,
+    // green cover ONLY for `.synced` / `.queued`, and a refusal INLINE — with
+    // the blocking visit named and a button to go to it.
+    @State private var isSubmittingLive = false
+    @State private var liveSubmitError: String?
+    @State private var liveBlockingVisit: BlockingVisit?
     // Build 80 — HOW is this visit delivered? Nick, #evv 2026-09-21 (video:
     // Connor Couldridge → Behavioral Supports – Level 1 → Clock In Now, no
     // question asked): "it never asked consult or direct". The dashboard has
@@ -132,7 +144,7 @@ struct ServerUnscheduledContent: View {
 
     /// Combined enable check for the live clock-in buttons.
     private var clockInAllowed: Bool {
-        !punchBlocked && !locationManager.isAcquiring && locationRequirementMet
+        !punchBlocked && !locationManager.isAcquiring && locationRequirementMet && !isSubmittingLive
     }
 
     /// True when the currently selected service does not require live EVV
@@ -524,9 +536,18 @@ struct ServerUnscheduledContent: View {
                 if !manualEntryActive {
                     if punchBlocked {
                         Section {
-                            Label("Clock out of your current visit first.", systemImage: "exclamationmark.triangle.fill")
+                            // Build 83 — names the running visit (and says
+                            // "from another day" when it is a stale one).
+                            Label(appState.punchBlockedMessage, systemImage: "exclamationmark.triangle.fill")
                                 .font(.subheadline)
                                 .foregroundColor(Theme.danger)
+                            Button {
+                                onDismiss()
+                            } label: {
+                                Label("Go to that visit to clock out", systemImage: "arrow.uturn.backward.circle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .accessibilityIdentifier("unscheduledGoToBlockingVisit")
                         }
                     } else if locationManager.isAcquiring {
                         Section(header: Text("Location")) {
@@ -547,6 +568,28 @@ struct ServerUnscheduledContent: View {
                                 .textFieldStyle(.roundedBorder)
                         }
                     }
+
+                    if let err = liveSubmitError {
+                        Section(footer: Text("You were NOT clocked in. Nothing was saved.")) {
+                            Label(err, systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(Theme.danger)
+                                .accessibilityIdentifier("unscheduledRejected")
+                            if liveBlockingVisit != nil {
+                                // The refusal already triggered a Today +
+                                // History refresh, so the blocking visit is
+                                // on Today (CLOCKED IN card + banner) by the
+                                // time this sheet closes.
+                                Button {
+                                    onDismiss()
+                                } label: {
+                                    Label("Go to that visit to clock out", systemImage: "arrow.uturn.backward.circle.fill")
+                                        .font(.subheadline.weight(.semibold))
+                                }
+                                .accessibilityIdentifier("unscheduledGoToBlockingVisit")
+                            }
+                        }
+                    }
                 }
 
                 Section {
@@ -560,8 +603,7 @@ struct ServerUnscheduledContent: View {
                         } else {
                             // F2: Unlisted clock-in
                             Button(action: startUnlistedVisit) {
-                                Label(punchBlocked ? "Clock out first" : (deliveryChoicePending ? "Choose In person or Consult" : "Clock In Now"), systemImage: "play.circle.fill")
-                                    .frame(maxWidth: .infinity)
+                                liveClockInLabel
                             }
                             .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty || !clockInAllowed || deliveryChoicePending)
                         }
@@ -573,15 +615,14 @@ struct ServerUnscheduledContent: View {
                         .disabled(selectedIndividualIds.isEmpty || !manualTimesValid || isSubmittingManual)
                     } else {
                         Button(action: startVisit) {
-                            Label(punchBlocked ? "Clock out first" : (deliveryChoicePending ? "Choose In person or Consult" : "Clock In Now"), systemImage: "play.circle.fill")
-                                .frame(maxWidth: .infinity)
+                            liveClockInLabel
                         }
                         .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty || !clockInAllowed || deliveryChoicePending)
 
                         // "Clock In Without Service" fallback
                         if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
                             Button(action: startVisitWithoutService) {
-                                Label(punchBlocked ? "Clock out first" : "Clock In Without Service", systemImage: "exclamationmark.triangle.fill")
+                                Label(punchBlocked ? "Clock out first" : (isSubmittingLive ? "Clocking in…" : "Clock In Without Service"), systemImage: "exclamationmark.triangle.fill")
                                     .frame(maxWidth: .infinity)
                                     .foregroundColor(.orange)
                             }
@@ -609,13 +650,17 @@ struct ServerUnscheduledContent: View {
                 if manualDate < range.lowerBound { manualDate = range.lowerBound }
                 if manualDate > range.upperBound { manualDate = range.upperBound }
             }
-            .interactiveDismissDisabled(isSubmittingManual)
+            .interactiveDismissDisabled(isSubmittingManual || isSubmittingLive)
             // Build 80 — a stale answer must never ride onto another service:
             // any change to what is being started clears the choice.
             .onChange(of: selectedServiceName) { _ in deliveryChoice = nil }
             .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
             .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil }
             .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
+            // A refusal is about what was just tried; changing the attempt
+            // clears it.
+            .onChange(of: selectedIndividualIds) { _ in liveSubmitError = nil; liveBlockingVisit = nil }
+            .onChange(of: isUnlisted) { _ in liveSubmitError = nil; liveBlockingVisit = nil }
             // Build 55: the desktop's two confirm() prompts (untouched 12:00 AM
             // placeholder / end time not yet reached) — a question, not a block.
             .alert("Confirm times", isPresented: $showManualConfirm, presenting: manualConfirmMessage) { _ in
@@ -675,10 +720,51 @@ struct ServerUnscheduledContent: View {
         }
     }
 
+    /// "Clock In Now" / "Clocking in…" / "Clock out first" — one label for
+    /// both live clock-in buttons.
+    private var liveClockInLabel: some View {
+        Group {
+            if isSubmittingLive {
+                HStack {
+                    ProgressView()
+                    Text("Clocking in…")
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                Label(punchBlocked ? "Clock out first" : (deliveryChoicePending ? "Choose In person or Consult" : "Clock In Now"), systemImage: "play.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Build 83 — success ONLY for a confirmed or durably-queued punch. A
+    /// refusal keeps the sheet open with the server's message; a "still
+    /// clocked in" refusal also names the blocking visit and offers to go to
+    /// it. Mirrors `finishManual` (build 54) for the live path.
+    private func finishLive(_ outcome: AppState.PunchOutcome) {
+        isSubmittingLive = false
+        switch outcome {
+        case .synced:
+            successMessage = nil          // "Clocked in h:mm a"
+            showSuccess = true
+        case .queued:
+            successMessage = "Clock-in saved — will sync when online"
+            showSuccess = true
+        case .rejected(let message):
+            liveSubmitError = message
+            liveBlockingVisit = nil
+        case .stillClockedIn(let message, let blocker):
+            liveSubmitError = message
+            liveBlockingVisit = blocker
+        }
+    }
+
     private func startVisit() {
+        guard !isSubmittingLive else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
-            appState.surfacePunchBlocked()
+            appState.haptic(.error)
+            liveSubmitError = appState.punchBlockedMessage
             return
         }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
@@ -697,16 +783,25 @@ struct ServerUnscheduledContent: View {
         }
         // Map selected service description to a ServiceType for backward compat
         let serviceType = mapServiceNameToType(selectedServiceName)
-        appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: selectedServiceName,
-                                       manualAddress: trimmedFallbackAddress,
-                                       deliveryMode: deliveryModeParam)
-        showSuccess = true
+        let serviceName = selectedServiceName
+        let address = trimmedFallbackAddress
+        let mode = deliveryModeParam
+        isSubmittingLive = true
+        liveSubmitError = nil
+        liveBlockingVisit = nil
+        Task { @MainActor in
+            let outcome = await appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: serviceName,
+                                                               manualAddress: address, deliveryMode: mode)
+            finishLive(outcome)
+        }
     }
 
     private func startVisitWithoutService() {
+        guard !isSubmittingLive else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
-            appState.surfacePunchBlocked()
+            appState.haptic(.error)
+            liveSubmitError = appState.punchBlockedMessage
             return
         }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
@@ -720,8 +815,14 @@ struct ServerUnscheduledContent: View {
                 city: ""
             )
         }
-        appState.startUnscheduledVisitWithoutService(clients: clients, manualAddress: trimmedFallbackAddress)
-        showSuccess = true
+        let address = trimmedFallbackAddress
+        isSubmittingLive = true
+        liveSubmitError = nil
+        liveBlockingVisit = nil
+        Task { @MainActor in
+            let outcome = await appState.startUnscheduledVisitWithoutService(clients: clients, manualAddress: address)
+            finishLive(outcome)
+        }
     }
 
     /// "Record Time" button content — spinner while the server is being asked.
@@ -752,7 +853,7 @@ struct ServerUnscheduledContent: View {
         case .queued:
             successMessage = "Time saved — will sync when online"
             showSuccess = true
-        case .rejected(let message):
+        case .rejected(let message), .stillClockedIn(let message, _):
             manualSubmitError = message
         }
     }
@@ -826,9 +927,11 @@ struct ServerUnscheduledContent: View {
 
     // F2: Start visit for unlisted individual
     private func startUnlistedVisit() {
+        guard !isSubmittingLive else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
-            appState.surfacePunchBlocked()
+            appState.haptic(.error)
+            liveSubmitError = appState.punchBlockedMessage
             return
         }
         let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -838,11 +941,18 @@ struct ServerUnscheduledContent: View {
         // Create a dummy Client with empty address (no server ID)
         let client = Client(id: UUID(), name: name, address: "", city: "")
         let serviceType = mapServiceNameToType(unlistedServiceName)
-        appState.startUnscheduledVisit(clients: [client], service: serviceType,
-                                       serviceName: unlistedServiceName, unlistedName: name,
-                                       manualAddress: trimmedFallbackAddress,
-                                       deliveryMode: deliveryModeParam)
-        showSuccess = true
+        let serviceName = unlistedServiceName
+        let address = trimmedFallbackAddress
+        let mode = deliveryModeParam
+        isSubmittingLive = true
+        liveSubmitError = nil
+        liveBlockingVisit = nil
+        Task { @MainActor in
+            let outcome = await appState.startUnscheduledVisit(clients: [client], service: serviceType,
+                                                               serviceName: serviceName, unlistedName: name,
+                                                               manualAddress: address, deliveryMode: mode)
+            finishLive(outcome)
+        }
     }
 
     private func mapServiceNameToType(_ name: String) -> ServiceType {
@@ -960,8 +1070,12 @@ struct MockUnscheduledContent: View {
             appState.surfacePunchBlocked()
             return
         }
-        appState.startUnscheduledVisit(clients: chosenClients, service: service)
-        showSuccess = true
+        let clients = chosenClients
+        Task { @MainActor in
+            // Mock mode never refuses — synchronous local append.
+            _ = await appState.startUnscheduledVisit(clients: clients, service: service)
+            showSuccess = true
+        }
     }
 
     private func quickPunch() {
@@ -970,7 +1084,9 @@ struct MockUnscheduledContent: View {
             return
         }
         let client = chosenClients.isEmpty ? [MockData.clients[0]] : chosenClients
-        appState.startUnscheduledVisit(clients: client, service: service)
-        showSuccess = true
+        Task { @MainActor in
+            _ = await appState.startUnscheduledVisit(clients: client, service: service)
+            showSuccess = true
+        }
     }
 }

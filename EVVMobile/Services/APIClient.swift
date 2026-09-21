@@ -86,6 +86,10 @@ struct ServerShift: Decodable {
     let requiresClockIn: Bool?
     /// Whether GPS capture is required on punches for this service.
     let gpsRequired: Bool?
+    /// Server v0.4.604 — true when this PRIOR-day shift is on the list only
+    /// because the staff member is still clocked in on it (Today needs a
+    /// Clock Out surface for a punch from another day). Older servers omit it.
+    let openVisitCarryover: Bool?
 }
 
 struct ShiftsResponse: Decodable {
@@ -208,6 +212,12 @@ struct ServerHistoryVisit: Decodable, Identifiable {
     /// v0.4.348 — "pending" on a staff-requested shift awaiting manager
     /// approval; absent/nil on every normal visit.
     let approvalStatus: String?
+    /// Server v0.4.604 — true while the visit is clocked in with no clock-out.
+    /// Such rows are returned regardless of the 14-day window (Nick: "even if
+    /// over 2 weeks … if you're clocked in still show that visit in history").
+    /// Older servers omit it; the app then derives in-progress from
+    /// `clockOut == nil` exactly as before.
+    let stillOpen: Bool?
 }
 
 struct HistoryVisitsResponse: Decodable {
@@ -228,6 +238,64 @@ struct HistoryVisitsResponse: Decodable {
 }
 
 // MARK: - Requests (GET /me/requests)
+
+// MARK: - "Still clocked in" refusal (server v0.4.604)
+
+/// One of the caller's OWN running visits, as named by the server's 409 when
+/// a clock-in is refused because another visit is still open. Self-scoped by
+/// construction on the server — never someone else's visit.
+struct BlockingVisit: Decodable, Equatable {
+    let id: String
+    let shiftId: Int?
+    let individualId: String?
+    let individualName: String?
+    /// Agency day, "yyyy-MM-dd".
+    let date: String?
+    /// "h:mm a" clock-in label on that day.
+    let clockIn: String?
+    let service: String?
+
+    /// "Erik Hoover, Sep 3 10:46 AM" — what the alert says.
+    var summary: String {
+        var parts: [String] = []
+        if let n = individualName, !n.isEmpty { parts.append(n) }
+        var when: [String] = []
+        if let d = date, let day = BlockingVisit.shortDay(d) { when.append(day) }
+        if let t = clockIn, !t.isEmpty { when.append(t) }
+        if !when.isEmpty { parts.append(when.joined(separator: " ")) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// "Sep 3" from "2026-09-03" (agency day; the label is date-only so the
+    /// device zone cannot shift it across midnight).
+    static func shortDay(_ ymd: String) -> String? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: ymd) else { return nil }
+        let out = DateFormatter()
+        out.locale = Locale(identifier: "en_US_POSIX")
+        out.timeZone = f.timeZone
+        out.dateFormat = "MMM d"
+        return out.string(from: d)
+    }
+}
+
+/// The 409 body both clock-in routes send when the caller already has a visit
+/// in progress. Every key except `error` is optional so the pre-v0.4.604 shape
+/// (`{error, activeVisitId}`) still decodes.
+struct ClockInRefusalBody: Decodable {
+    let error: String?
+    let reason: String?
+    let activeVisitId: String?
+    let blockingVisit: BlockingVisit?
+    let blockingVisits: [BlockingVisit]?
+
+    var isVisitInProgress: Bool {
+        reason == "visit_in_progress" || (reason == nil && activeVisitId != nil)
+    }
+}
 
 struct ServerException: Decodable, Identifiable {
     let id: String
@@ -1311,12 +1379,18 @@ enum APIError: LocalizedError {
     /// the V-2032 incident (2026-08-28) was a saved punch the app deleted
     /// because the 201 body was unreadable.
     case responseUnreadable(Error)
+    /// Build 83 — a clock-in the server refused (409 `visit_in_progress`)
+    /// because the caller is STILL CLOCKED IN on another visit. Carries the
+    /// server's human message and, on server v0.4.604+, the blocking visit
+    /// so the UI can name it and take the user to it. Nothing was saved.
+    case stillClockedIn(String, BlockingVisit?)
 
     var errorDescription: String? {
         switch self {
         case .unauthorized(let msg): return msg
         case .conflict(let msg): return msg
         case .forbidden(let msg): return msg
+        case .stillClockedIn(let msg, _): return msg
         case .networkError(let err):
             if isCancellation { return "Request was interrupted" }
             return "Connection error: \(err.localizedDescription)"
@@ -1325,6 +1399,18 @@ enum APIError: LocalizedError {
         case .responseUnreadable:
             return "Your punch was recorded but the app couldn't read the response \u{2014} it will re-sync automatically."
         }
+    }
+
+    /// Build 83 — classify a 409 from a clock-in route: the "still clocked
+    /// in" refusal becomes `.stillClockedIn` (with the named blocker when the
+    /// server sent one); any other 409 stays `.conflict` with the server text.
+    static func clockInConflict(_ data: Data, fallback: String) -> APIError {
+        let body = try? JSONDecoder().decode(ClockInRefusalBody.self, from: data)
+        let msg = body?.error ?? fallback
+        if let b = body, b.isVisitInProgress {
+            return .stillClockedIn(msg, b.blockingVisit ?? b.blockingVisits?.first)
+        }
+        return .conflict(msg)
     }
 
     var isNetworkError: Bool {
@@ -1669,8 +1755,9 @@ actor APIClient {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
 
         if statusCode == 409 {
-            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Already clocked in"
-            throw APIError.conflict(errBody)
+            // Build 83 — "still clocked in" is its own case, carrying the
+            // blocking visit the server names (v0.4.604).
+            throw APIError.clockInConflict(data, fallback: "Already clocked in")
         }
         guard statusCode == 200 || statusCode == 201 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Clock in failed"
@@ -2249,6 +2336,12 @@ actor APIClient {
         let (data, response) = try await performRequest(request)
         try checkAuth(response, data: data)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 {
+            // Build 83 — Nick's 2026-09-21 unscheduled punch was refused with
+            // this exact 409 and the app said nothing. The refusal now carries
+            // the blocking visit (server v0.4.604) and surfaces as its own case.
+            throw APIError.clockInConflict(data, fallback: "Failed to create unscheduled visit")
+        }
         guard statusCode == 200 || statusCode == 201 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to create unscheduled visit"
             throw APIError.serverError(statusCode, errBody)

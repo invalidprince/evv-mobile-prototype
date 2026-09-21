@@ -18,6 +18,10 @@ struct ClockInConfirmSheet: View {
     /// the only error surface was RootView's alert, which cannot present
     /// behind this sheet + the success cover — so a 409 looked like success.
     @State private var submitError: String?
+    /// Build 83 — the visit the server says is still running (409
+    /// `visit_in_progress`, server v0.4.604 names it). Renders the
+    /// "Go to that visit" button under the refusal.
+    @State private var blockingVisit: BlockingVisit?
 
     // Manual address entry (GPS-unavailable fallback)
     @State private var manualStreet = ""
@@ -123,7 +127,7 @@ struct ClockInConfirmSheet: View {
                 }
 
                 if punchBlocked {
-                    Label("Clock out of your current visit first.", systemImage: "exclamationmark.triangle.fill")
+                    Label(appState.punchBlockedMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(Theme.danger)
                         .padding(10)
@@ -141,6 +145,18 @@ struct ClockInConfirmSheet: View {
                         Text("You were NOT clocked in. Nothing was saved.")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                        if blockingVisit != nil {
+                            // Build 83 — the blocking visit is now on Today
+                            // (CLOCKED IN card + banner) after the refresh
+                            // the refusal triggered; close this sheet to it.
+                            Button {
+                                dismiss()
+                            } label: {
+                                Label("Go to that visit to clock out", systemImage: "arrow.uturn.backward.circle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .accessibilityIdentifier("clockInGoToBlockingVisit")
+                        }
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -257,7 +273,10 @@ struct ClockInConfirmSheet: View {
         guard !isSubmitting else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
-            appState.surfacePunchBlocked()
+            // Build 83 — INLINE, named. The root alert cannot present behind
+            // this sheet, which is how a refusal used to vanish.
+            appState.haptic(.error)
+            submitError = appState.punchBlockedMessage
             return
         }
         var location: ManualLocation?
@@ -289,6 +308,9 @@ struct ClockInConfirmSheet: View {
                 showSuccess = true
             case .rejected(let message):
                 submitError = message
+            case .stillClockedIn(let message, let blocker):
+                submitError = message
+                blockingVisit = blocker
             }
         }
     }

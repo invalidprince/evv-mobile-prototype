@@ -279,9 +279,12 @@ struct ClockOutFlow: View {
                     // the root alert (nothing else is presented by then).
                     Task { @MainActor in
                         let outcome = await appState.clockIn(visitId: next.id, serverShiftId: next.serverShiftId)
-                        if case .rejected(let message) = outcome {
+                        switch outcome {
+                        case .rejected(let message), .stillClockedIn(let message, _):
                             appState.serverError = "Could not clock into the next visit: \(message)"
                             appState.showServerError = true
+                        case .synced, .queued:
+                            break
                         }
                     }
                 }

@@ -161,10 +161,55 @@ final class AppState: ObservableObject {
             || historyVisits.contains { $0.status == .inProgress }
     }
 
+    /// Build 83 — THE running visit the local guard is protecting, wherever
+    /// it lives (Today, a prior-day carry-over, or History). nil when nothing
+    /// is running.
+    var localBlockingVisit: Visit? {
+        todayVisits.first { $0.status == .inProgress }
+            ?? pastVisits.first { $0.status == .inProgress }
+            ?? historyVisits.first { $0.status == .inProgress }
+    }
+
+    /// Build 83 — running visits whose clock-in is on a PRIOR day, one per
+    /// server visit (Today's carry-over row and History's row are the same
+    /// visit). Drives the Today banner. Nick, #evv 2026-09-21: his Sep 3
+    /// Erik Hoover punch blocked every clock-in for 18 days, invisibly.
+    var staleOpenVisits: [Visit] {
+        var seen = Set<String>()
+        var out: [Visit] = []
+        for v in todayVisits + pastVisits + historyVisits where v.isStaleOpen {
+            let key = v.serverVisitId ?? v.id.uuidString
+            if seen.insert(key).inserted { out.append(v) }
+        }
+        return out.sorted { ($0.actualStart ?? .distantPast) > ($1.actualStart ?? .distantPast) }
+    }
+
+    /// "Erik Hoover, Sep 3 10:46 AM" for a local visit — same wording as the
+    /// server's `BlockingVisit.summary`, so the local guard and the 409 read
+    /// alike.
+    static func blockingSummary(_ v: Visit) -> String {
+        var parts = [v.clients.map { $0.name }.joined(separator: " & ")]
+        if let start = v.actualStart {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = Calendar.current.isDateInToday(start) ? "h:mm a" : "MMM d h:mm a"
+            parts.append(f.string(from: start))
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    /// Build 83 — the local "you can't clock in" text NAMES the visit instead
+    /// of the bare "Clock out of your current visit first."
+    var punchBlockedMessage: String {
+        guard let v = localBlockingVisit else { return "Clock out of your current visit first." }
+        let stale = v.isStaleOpen ? " from another day" : ""
+        return "You're still clocked in on \(Self.blockingSummary(v))\(stale). Clock out of that visit first."
+    }
+
     /// Surface the blocked-punch message (also haptic-fails) when a clock-in
     /// is attempted while another visit is running.
     func surfacePunchBlocked() {
-        serverError = "Clock out of your current visit first."
+        serverError = punchBlockedMessage
         showServerError = true
         haptic(.error)
     }
@@ -479,7 +524,7 @@ final class AppState: ObservableObject {
         // tap through.
         guard !hasActiveVisit else {
             haptic(.error)
-            return .rejected("Clock out of your current visit first.")
+            return .rejected(punchBlockedMessage)
         }
         guard let idx = todayIndex(forVisitId: visitId, serverShiftId: hintShiftId) else {
             DiagnosticLogger.shared.logAPI("Clock-in target not found locally (visit \(visitId), shift \(hintShiftId.map(String.init) ?? "nil")) — refused, nothing sent")
@@ -588,6 +633,14 @@ final class AppState: ObservableObject {
             haptic(.error)
             DiagnosticLogger.shared.logAPI("Clock-in REJECTED for shift \(shiftId) (nothing saved): \(error.localizedDescription)")
             Task { await self.refreshServerShifts() }
+            if case .stillClockedIn(let msg, let blocker) = error {
+                // Build 83 — the server says another visit is still running.
+                // Pull History too so the blocking visit (however old) shows
+                // up on the phone with its STILL CLOCKED IN row + Today banner.
+                DiagnosticLogger.shared.logAPI("Clock-in blocked by open visit \(blocker?.id ?? "?") (\(blocker?.date ?? "?") \(blocker?.clockIn ?? "?"))")
+                refreshHistoryInBackground()
+                return .stillClockedIn(msg, blocker)
+            }
             return .rejected(punchRejectionMessage(error))
         } catch {
             // Unknown error type — most likely a transport-layer throw. Treat
@@ -605,6 +658,7 @@ final class AppState: ObservableObject {
         case .serverError(_, let msg): return msg
         case .conflict(let msg): return msg
         case .forbidden(let msg): return msg
+        case .stillClockedIn(let msg, _): return msg
         default: return error.errorDescription ?? "The clock-in could not be saved."
         }
     }
@@ -763,6 +817,11 @@ final class AppState: ObservableObject {
         /// The server REFUSED (4xx/5xx). Nothing was saved anywhere; the
         /// message is what staff should read to fix their entry.
         case rejected(String)
+        /// Build 83 — the server REFUSED because the staff member is STILL
+        /// CLOCKED IN on another visit (409 `visit_in_progress`). Nothing was
+        /// saved. Carries the server's message and, on server v0.4.604+, the
+        /// blocking visit so the sheet can name it and offer to go to it.
+        case stillClockedIn(String, BlockingVisit?)
     }
 
     /// Staff-readable message for a manual-time rejection. The server's own
@@ -986,141 +1045,28 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil, deliveryMode: String? = nil) {
+    /// Start a LIVE unscheduled visit. Returns only after the server has
+    /// answered (or the punch is durably queued offline) — the same contract
+    /// as `clockIn` (build 57): the sheet renders the green cover ONLY for
+    /// `.synced` / `.queued`, and a refusal INLINE.
+    ///
+    /// 🚨 Build 83 (2026-09-21): this used to fire-and-forget. The sheet set
+    /// `showSuccess = true` synchronously, the server answered 409 "You already
+    /// have a visit in progress" (Nick's Sep 3 Erik Hoover punch was still
+    /// open), the rejection went to the ROOT-level alert — which cannot present
+    /// behind a sheet + full-screen cover — and the only thing on screen was
+    /// "Clocked in". The diagnostic log had the 409; the user had nothing.
+    /// Same shape as build 57's scheduled-path fix, on the unscheduled path.
+    @MainActor
+    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil, deliveryMode: String? = nil) async -> PunchOutcome {
         // Hard guard: never start a second visit, even if a stale UI let the
-        // tap through. Surfaces an explanation instead of failing silently.
+        // tap through. Names the visit instead of failing silently.
         guard !hasActiveVisit else {
-            surfacePunchBlocked()
-            return
+            haptic(.error)
+            return .rejected(punchBlockedMessage)
         }
 
-        if mode == .server {
-            // Server mode: POST to server, then refresh
-            let now = Date()
-            let localVisitId = UUID()
-            var visit = Visit(id: localVisitId, clients: clients, service: service,
-                              scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
-                              actualStart: now, actualEnd: nil,
-                              status: .inProgress, isGroup: clients.count > 1)
-            visit.unlistedIndividualName = unlistedName
-            todayVisits.append(visit)
-            startTimerIfNeeded()
-            haptic(.success)
-
-            // Collect all server individual IDs (stored in address field); empty for unlisted
-            let serverClientIds = clients.map { $0.address }.filter { !$0.isEmpty }
-            // Use the original service description if provided (matches what the API expects)
-            let apiServiceName: String? = noService ? nil : (serviceName ?? service.rawValue)
-
-            if !effectivelyOnline {
-                // Offline: keep local visit, queue for later sync
-                if let i = todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                    todayVisits[i].syncState = .pending
-                }
-                enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
-                                     unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
-                                     unschedService: apiServiceName,
-                                     unschedClientName: unlistedName,
-                                     localVisitId: localVisitId,
-                                     punchAddress: manualAddress,
-                                     deliveryMode: deliveryMode)
-                DiagnosticLogger.shared.logOffline("Unscheduled visit queued offline")
-                scheduleAutoSync()
-                return
-            }
-
-            Task { @MainActor in
-                do {
-                    var coords = LocationManager.shared.currentCoordinates
-                    if coords == nil {
-                        _ = await LocationManager.shared.acquireLocation()
-                        coords = LocationManager.shared.currentCoordinates
-                    }
-                    // GPS-unavailable fallback: send the manually entered
-                    // address so the punch never lands with no location AND
-                    // no address.
-                    let fallbackAddress = coords == nil ? manualAddress : nil
-                    if coords == nil && fallbackAddress == nil {
-                        DiagnosticLogger.shared.logAPI("WARNING: unscheduled clock-in has no GPS and no address")
-                    }
-                    let response = try await APIClient.shared.createUnscheduledVisit(
-                        clientIds: serverClientIds,
-                        service: apiServiceName,
-                        lat: coords?.lat,
-                        lng: coords?.lng,
-                        accuracy: coords?.accuracy,
-                        address: fallbackAddress,
-                        unlistedName: unlistedName,
-                        deliveryMode: deliveryMode
-                    )
-                    // Update the local visit with server IDs so clock-out works
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                        self.todayVisits[i].serverVisitId = response.visit.id
-                        // Store all visit IDs for 1:2 clock-out
-                        if let allVisits = response.visits, allVisits.count > 1 {
-                            self.todayVisits[i].serverVisitIds = allVisits.map { $0.id }
-                        } else {
-                            self.todayVisits[i].serverVisitIds = [response.visit.id]
-                        }
-                        if let shift = response.shift {
-                            self.todayVisits[i].serverShiftId = shift.id
-                        }
-                        self.todayVisits[i].syncState = .synced
-                    }
-                    // Build 53: in-progress visits show under History → Today.
-                    self.refreshHistoryInBackground()
-                } catch let error as APIError {
-                    if error.isRetainable {
-                        // Network error OR unreadable 2xx (.responseUnreadable
-                        // — the visit IS committed server-side; this exact
-                        // case deleted Nick's V-2032 Erik Hoover punch).
-                        // Keep the local visit, queue for re-sync — the
-                        // server-side idempotency check dedups the replay.
-                        if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                            self.todayVisits[i].syncState = .pending
-                        }
-                        self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
-                                                  unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
-                                                  unschedService: apiServiceName,
-                                                  unschedClientName: unlistedName,
-                                                  localVisitId: localVisitId,
-                                                  punchAddress: manualAddress,
-                                                  deliveryMode: deliveryMode)
-                        if case .responseUnreadable = error {
-                            self.surfaceServerError(error)
-                            DiagnosticLogger.shared.logAPI("Unscheduled visit response unreadable — punch retained and queued")
-                        } else {
-                            DiagnosticLogger.shared.logOffline("Unscheduled visit queued (network error)")
-                        }
-                        self.scheduleAutoSync()
-                    } else {
-                        // Genuine server rejection (4xx): nothing persisted,
-                        // so removing the optimistic visit is correct — a
-                        // retained phantom would block future punches via
-                        // hasActiveVisit.
-                        self.surfaceServerError(error)
-                        DiagnosticLogger.shared.logAPI("Unscheduled visit failed: \(error.localizedDescription)")
-                        self.todayVisits.removeAll { $0.id == localVisitId }
-                        self.startTimerIfNeeded()
-                    }
-                } catch {
-                    // Unknown error — treat like network: keep + queue
-                    // (build 45; previously this deleted the punch).
-                    if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
-                        self.todayVisits[i].syncState = .pending
-                    }
-                    self.enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
-                                              unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
-                                              unschedService: apiServiceName,
-                                              unschedClientName: unlistedName,
-                                              localVisitId: localVisitId,
-                                              punchAddress: manualAddress,
-                                              deliveryMode: deliveryMode)
-                    self.surfaceServerError(APIError.networkError(error))
-                    self.scheduleAutoSync()
-                }
-            }
-        } else {
+        guard mode == .server else {
             // Mock mode
             let now = Date()
             let visit = Visit(id: UUID(), clients: clients, service: service,
@@ -1130,13 +1076,135 @@ final class AppState: ObservableObject {
             todayVisits.append(visit)
             startTimerIfNeeded()
             haptic(.success)
+            return .synced
+        }
+
+        // Server mode: optimistic local row (the timer starts at the tap, not
+        // at the response), then POST; REVERTED on a genuine rejection.
+        let now = Date()
+        let localVisitId = UUID()
+        var visit = Visit(id: localVisitId, clients: clients, service: service,
+                          scheduledStart: now, scheduledEnd: now.addingTimeInterval(2 * 3600),
+                          actualStart: now, actualEnd: nil,
+                          status: .inProgress, isGroup: clients.count > 1)
+        visit.unlistedIndividualName = unlistedName
+        todayVisits.append(visit)
+        startTimerIfNeeded()
+        haptic(.success)
+
+        // Collect all server individual IDs (stored in address field); empty for unlisted
+        let serverClientIds = clients.map { $0.address }.filter { !$0.isEmpty }
+        // Use the original service description if provided (matches what the API expects)
+        let apiServiceName: String? = noService ? nil : (serviceName ?? service.rawValue)
+
+        func queue(_ why: String) {
+            if let i = todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                todayVisits[i].syncState = .pending
+            }
+            enqueueOfflineAction(.unscheduledVisit, shiftId: nil, visitId: nil,
+                                 unschedClientIds: serverClientIds.isEmpty ? nil : serverClientIds,
+                                 unschedService: apiServiceName,
+                                 unschedClientName: unlistedName,
+                                 localVisitId: localVisitId,
+                                 punchAddress: manualAddress,
+                                 deliveryMode: deliveryMode)
+            DiagnosticLogger.shared.logOffline("Unscheduled visit queued (\(why))")
+            scheduleAutoSync()
+        }
+        func revert() {
+            todayVisits.removeAll { $0.id == localVisitId }
+            startTimerIfNeeded()
+        }
+
+        if !effectivelyOnline {
+            queue("offline")
+            return .queued
+        }
+
+        do {
+            var coords = LocationManager.shared.currentCoordinates
+            if coords == nil {
+                _ = await LocationManager.shared.acquireLocation()
+                coords = LocationManager.shared.currentCoordinates
+            }
+            // GPS-unavailable fallback: send the manually entered address so
+            // the punch never lands with no location AND no address.
+            let fallbackAddress = coords == nil ? manualAddress : nil
+            if coords == nil && fallbackAddress == nil {
+                DiagnosticLogger.shared.logAPI("WARNING: unscheduled clock-in has no GPS and no address")
+            }
+            let response = try await APIClient.shared.createUnscheduledVisit(
+                clientIds: serverClientIds,
+                service: apiServiceName,
+                lat: coords?.lat,
+                lng: coords?.lng,
+                accuracy: coords?.accuracy,
+                address: fallbackAddress,
+                unlistedName: unlistedName,
+                deliveryMode: deliveryMode
+            )
+            // Update the local visit with server IDs so clock-out works
+            if let i = todayVisits.firstIndex(where: { $0.id == localVisitId }) {
+                todayVisits[i].serverVisitId = response.visit.id
+                // Store all visit IDs for 1:2 clock-out
+                if let allVisits = response.visits, allVisits.count > 1 {
+                    todayVisits[i].serverVisitIds = allVisits.map { $0.id }
+                } else {
+                    todayVisits[i].serverVisitIds = [response.visit.id]
+                }
+                if let shift = response.shift {
+                    todayVisits[i].serverShiftId = shift.id
+                }
+                todayVisits[i].syncState = .synced
+            }
+            DiagnosticLogger.shared.logAPI("Unscheduled visit confirmed → visit \(response.visit.id)")
+            // Build 53: in-progress visits show under History → Today.
+            refreshHistoryInBackground()
+            return .synced
+        } catch let error as APIError {
+            if error.isRetainable {
+                // Network error OR unreadable 2xx (.responseUnreadable — the
+                // visit IS committed server-side; this exact case deleted
+                // Nick's V-2032 Erik Hoover punch). Keep the local visit,
+                // queue for re-sync — the server-side idempotency check
+                // dedups the replay.
+                queue(error.isNetworkError ? "network error" : "unreadable 2xx")
+                if case .responseUnreadable = error {
+                    DiagnosticLogger.shared.logAPI("Unscheduled visit response unreadable — punch retained and queued")
+                    return .synced
+                }
+                return .queued
+            }
+            // Genuine server rejection (4xx): nothing persisted, so removing
+            // the optimistic visit is correct — a retained phantom would block
+            // future punches via hasActiveVisit. The CALLER shows the message
+            // inline; the root alert cannot present behind the sheet.
+            revert()
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("Unscheduled visit REJECTED (nothing saved): \(error.localizedDescription)")
+            if case .stillClockedIn(let msg, let blocker) = error {
+                // Build 83 — another visit is still running. Pull Today AND
+                // History so the blocking visit (however old) shows up with
+                // its Clock Out surface + STILL CLOCKED IN row.
+                DiagnosticLogger.shared.logAPI("Unscheduled visit blocked by open visit \(blocker?.id ?? "?") (\(blocker?.date ?? "?") \(blocker?.clockIn ?? "?"))")
+                Task { await self.refreshServerShifts() }
+                refreshHistoryInBackground()
+                return .stillClockedIn(msg, blocker)
+            }
+            return .rejected(punchRejectionMessage(error))
+        } catch {
+            // Unknown error — treat like network: keep + queue (build 45;
+            // previously this deleted the punch).
+            queue("unknown error: \(error.localizedDescription)")
+            return .queued
         }
     }
 
-    func startUnscheduledVisitWithoutService(clients: [Client], manualAddress: String? = nil) {
+    @MainActor
+    func startUnscheduledVisitWithoutService(clients: [Client], manualAddress: String? = nil) async -> PunchOutcome {
         // Reuse the same offline-capable flow but with noService=true
         // (active-visit guard lives inside startUnscheduledVisit)
-        startUnscheduledVisit(clients: clients, service: .inHomeSupport, serviceName: nil, unlistedName: nil, noService: true, manualAddress: manualAddress)
+        await startUnscheduledVisit(clients: clients, service: .inHomeSupport, serviceName: nil, unlistedName: nil, noService: true, manualAddress: manualAddress)
     }
 
     func acceptOpenShift(_ shift: OpenShift) {
@@ -1512,7 +1580,13 @@ final class AppState: ObservableObject {
             var newPast: [Visit] = []
 
             for visit in mapped {
-                if cal.isDate(visit.scheduledStart, inSameDayAs: today) ||
+                // Build 83 — a visit that is STILL RUNNING belongs on Today
+                // whatever day it started (server v0.4.604 sends the prior-
+                // day shift as `openVisitCarryover`). `activeVisit` and
+                // `clockOut()` read todayVisits only; a Sep 3 punch filed
+                // under pastVisits had no Clock Out anywhere on the phone.
+                if visit.status == .inProgress ||
+                   cal.isDate(visit.scheduledStart, inSameDayAs: today) ||
                    visit.scheduledStart >= today {
                     newToday.append(visit)
                 } else {
@@ -1540,6 +1614,7 @@ final class AppState: ObservableObject {
 
             todayVisits = newToday
             pastVisits = newPast
+            mergeStaleOpenVisitsIntoToday()
             serverOpenShifts = response.openShifts ?? []
             serverOpenRules = response.openRules ?? []
             lastSync = Date()
@@ -2299,6 +2374,7 @@ final class AppState: ObservableObject {
 
             serverExceptions = exceptions
             historyVisits = serverVisits.compactMap { mapHistoryVisit($0, exceptions: exceptions) }
+            mergeStaleOpenVisitsIntoToday()
             lastHistoryRefreshAt = Date()
             backgroundRefreshFailedAt = nil
         } catch is CancellationError {
@@ -2391,10 +2467,19 @@ final class AppState: ObservableObject {
         visit.hasNote = sv.hasNote ?? false
         visit.serverDocStatus = sv.docStatus
         visit.approvalStatus = sv.approvalStatus
+        // Build 83 — server v0.4.604 flags a clocked-in / not-clocked-out row
+        // explicitly (and returns it however old). Honour it as in-progress
+        // even if the verification text is something the switch above does
+        // not know; a row with a clock-out is never "open".
+        visit.stillOpen = (sv.stillOpen ?? false) && sv.clockOut == nil
+        if visit.stillOpen && visit.status != .inProgress {
+            visit.status = .inProgress
+            visit.actualEnd = nil
+        }
         // Build 64 — the server's minutes are authoritative for History and
         // Total Hours (14d); the local span math is only the fallback.
         visit.serverDurationMinutes = sv.duration
-        if let dur = sv.duration {
+        if let dur = sv.duration, !visit.stillOpen {
             // Use duration from server (minutes) to compute end if missing
             if actualEnd == nil, let start = actualStart {
                 visit.actualEnd = start.addingTimeInterval(Double(dur) * 60)
@@ -2403,6 +2488,33 @@ final class AppState: ObservableObject {
         }
 
         return visit
+    }
+
+    /// Build 83 — make every STILL-OPEN visit History knows about reachable
+    /// from Today. With server v0.4.604 the prior-day shift already arrives
+    /// in the shifts payload (`openVisitCarryover`) and is matched here by
+    /// server visit id, so nothing is duplicated; against an older server the
+    /// History row is copied onto Today so `activeVisit` (the CLOCKED IN card
+    /// with its Clock Out button) and `clockOut()` — which read todayVisits
+    /// only — can still close it. Self-scoped by construction: History is
+    /// the signed-in staff member's own feed.
+    @MainActor
+    private func mergeStaleOpenVisitsIntoToday() {
+        guard mode == .server else { return }
+        let known = Set(todayVisits.compactMap { $0.serverVisitId })
+        let knownShifts = Set(todayVisits.compactMap { $0.serverShiftId })
+        var changed = false
+        for h in historyVisits where h.status == .inProgress && h.actualEnd == nil {
+            guard let sid = h.serverVisitId, !known.contains(sid) else { continue }
+            if let shift = h.serverShiftId, knownShifts.contains(shift) { continue }
+            var copy = h
+            copy.syncState = .synced
+            copy.stillOpen = true
+            todayVisits.append(copy)
+            changed = true
+            DiagnosticLogger.shared.logAPI("Open visit \(sid) from History carried onto Today (clocked in \(h.actualStart.map { ISO8601DateFormatter().string(from: $0) } ?? "?"), no clock-out)")
+        }
+        if changed { startTimerIfNeeded() }
     }
 
     // MARK: - Server Note Submission

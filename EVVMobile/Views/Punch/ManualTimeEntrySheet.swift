@@ -179,6 +179,11 @@ struct ManualTimeEntrySheet: View {
                 showSuccess = true
             case .rejected(let message):
                 submitError = message
+            case .stillClockedIn(let message, _):
+                // Cannot happen on a manual entry (the server skips the
+                // one-active-visit rule for typed times) — render like any
+                // other refusal if it ever does.
+                submitError = message
             }
         }
     }

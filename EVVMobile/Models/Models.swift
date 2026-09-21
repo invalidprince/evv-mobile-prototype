@@ -150,6 +150,20 @@ struct Visit: Identifiable {
     /// is how bad billing happens.
     var isPendingApproval: Bool { approvalStatus == "pending" }
 
+    /// Build 83 — server v0.4.604 `stillOpen`: the visit is clocked in with
+    /// no clock-out, and was returned by History REGARDLESS of the 14-day
+    /// window. Derived locally when the server did not send the key.
+    var stillOpen: Bool = false
+
+    /// Build 83 — a running visit whose clock-in is on a PRIOR day. Nick's
+    /// V-2048 (Sep 3, never clocked out) blocked every clock-in for 18 days
+    /// while nothing on the phone showed it. Today shows a persistent banner
+    /// for these and History marks the row STILL CLOCKED IN.
+    var isStaleOpen: Bool {
+        guard status == .inProgress, actualEnd == nil, let start = actualStart else { return false }
+        return start < Calendar.current.startOfDay(for: Date())
+    }
+
     var client: Client { clients[0] }
 
     // MARK: - Same-day note rule

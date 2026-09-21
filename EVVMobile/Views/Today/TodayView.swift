@@ -37,6 +37,14 @@ struct TodayView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
+                    // Build 83 — a visit still running from a PRIOR day is a
+                    // problem that blocks every clock-in; say so at the top of
+                    // Today until it is closed. Nick's Sep 3 Erik Hoover punch
+                    // sat open for 18 days with nothing on the phone saying so.
+                    ForEach(appState.staleOpenVisits, id: \.id) { visit in
+                        StaleOpenVisitBanner(visit: visit)
+                    }
+
                     if appState.activeVisit != nil {
                         ActiveVisitCard()
                     }
@@ -393,5 +401,71 @@ struct IncompleteNoteCard: View {
                 .stroke(accent.opacity(0.5), lineWidth: 1)
         )
         .cornerRadius(14)
+    }
+}
+
+// MARK: - Stale open visit banner (build 83)
+
+/// "You're still clocked in on Erik Hoover from Sep 3 — clock out." A visit
+/// that is running from a PRIOR day blocks every clock-in (server one-active-
+/// visit rule) and, before build 83 / server v0.4.604, was visible nowhere on
+/// the phone. Persistent on Today until the visit is closed. Same red accent
+/// as a LATE note: this is a problem, not a state. Lives in TodayView.swift
+/// on purpose — no new file, so no hand-edited pbxproj (the v0.4.430 trap).
+struct StaleOpenVisitBanner: View {
+    @EnvironmentObject var appState: AppState
+    let visit: Visit
+    @State private var showClockOut = false
+
+    private var whenText: String {
+        guard let start = visit.actualStart else { return "another day" }
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInYesterday(start) ? "'yesterday,' h:mm a" : "EEE, MMM d 'at' h:mm a"
+        return f.string(from: start)
+    }
+
+    /// The Today copy of this visit (what `clockOut()` acts on); this row
+    /// itself when Today has not caught up yet.
+    private var target: Visit {
+        appState.todayVisits.first(where: { $0.serverVisitId == visit.serverVisitId && $0.status == .inProgress }) ?? visit
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .foregroundColor(Theme.danger)
+                Text("You're still clocked in on \(visit.clients.map { $0.name }.joined(separator: " & ")) from \(whenText)")
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            }
+            Text("You can't clock in anywhere else until this visit is clocked out.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Button {
+                showClockOut = true
+            } label: {
+                Label("Clock Out of That Visit", systemImage: "stop.circle.fill")
+            }
+            .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
+            .accessibilityIdentifier("today.staleOpenClockOut")
+        }
+        .padding(14)
+        .background(Theme.danger.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Theme.danger.opacity(0.5), lineWidth: 1)
+        )
+        .cornerRadius(14)
+        .accessibilityIdentifier("today.staleOpenBanner")
+        .fullScreenCover(isPresented: $showClockOut, onDismiss: {
+            Task {
+                await appState.refreshServerShifts()
+                await appState.refreshHistory()
+            }
+        }) {
+            ClockOutFlow(visit: target)
+        }
     }
 }

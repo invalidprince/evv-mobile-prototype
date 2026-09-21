@@ -16,7 +16,10 @@ struct ActiveVisitCard: View {
         if let visit = appState.activeVisit {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    StatusBadge(text: "CLOCKED IN", color: Theme.success)
+                    // Build 83 — a prior-day clock-in is not a happy green
+                    // state; it is the thing blocking every other punch.
+                    StatusBadge(text: visit.isStaleOpen ? "STILL CLOCKED IN" : "CLOCKED IN",
+                                color: visit.isStaleOpen ? Theme.danger : Theme.success)
                     Spacer()
                     if visit.ratio == "2:1" {
                         StatusBadge(text: "2:1", color: Theme.primary)
@@ -72,10 +75,24 @@ struct ActiveVisitCard: View {
                     Spacer()
                 }
 
-                Text(appState.elapsedText)
-                    .font(.system(size: 44, weight: .bold, design: .monospaced))
+                if visit.isStaleOpen, let start = visit.actualStart {
+                    // Days-old punch: the date matters more than a 400-hour
+                    // running clock.
+                    VStack(spacing: 2) {
+                        Text("Clocked in \(Self.staleWhen(start))")
+                            .font(.title3.weight(.bold))
+                            .foregroundColor(Theme.danger)
+                        Text("never clocked out")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                     .frame(maxWidth: .infinity)
-                    .foregroundColor(Theme.primary)
+                } else {
+                    Text(appState.elapsedText)
+                        .font(.system(size: 44, weight: .bold, design: .monospaced))
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(Theme.primary)
+                }
 
                 Button(action: {
                     clockOutAndNext = false
@@ -112,5 +129,12 @@ struct ActiveVisitCard: View {
                 }
             }
         }
+    }
+
+    /// "Wed, Sep 3 at 10:46 AM" for a prior-day clock-in.
+    static func staleWhen(_ start: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInYesterday(start) ? "'yesterday at' h:mm a" : "EEE, MMM d 'at' h:mm a"
+        return f.string(from: start)
     }
 }
