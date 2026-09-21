@@ -344,6 +344,12 @@ struct MissedDailyResolveSheet: View {
     @State private var endTime: String = "12:00 AM"
     @State private var isSubmitting = false
     @State private var submitError: String?
+    // Build 80 — a refusal is ALSO raised as an alert. Nick, #evv 2026-09-21:
+    // "I signed in as BSS and it never saved." The inline error row below the
+    // Save/Back buttons sits at the bottom of a scrolling Form and can be off
+    // screen when the picker is tall; an alert cannot be missed. Only a 2xx
+    // flips `savedReason` — nothing here ever dismisses on a failure.
+    @State private var showSubmitErrorAlert = false
     @State private var savedReason = false
     @State private var createdVisit: Visit?
     @State private var docVisit: Visit?
@@ -440,6 +446,12 @@ struct MissedDailyResolveSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(savedReason ? "Done" : "Cancel") { dismiss() }
                 }
+            }
+            .interactiveDismissDisabled(isSubmitting)
+            .alert("Couldn't save", isPresented: $showSubmitErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text((submitError ?? "Could not record the reason.") + "\n\nNothing was saved. You can try again or Cancel.")
             }
         }
         // Build 75's app-wide keyboard dismissal: this sheet has a comment
@@ -658,6 +670,8 @@ struct MissedDailyResolveSheet: View {
         isSubmitting = false
         let apiErr = error as? APIError ?? .networkError(error)
         submitError = apiErr.errorDescription ?? fallback
+        showSubmitErrorAlert = true
+        DiagnosticLogger.shared.logAPI("Missed-day resolve FAILED (nothing saved): \(submitError ?? fallback)")
         // 409 = the day's state changed under us (a visit synced, or the
         // reason was already recorded). The list is stale — refresh.
         if case .conflict = apiErr {

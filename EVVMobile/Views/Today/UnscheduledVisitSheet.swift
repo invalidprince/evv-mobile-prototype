@@ -83,6 +83,24 @@ struct ServerUnscheduledContent: View {
     @State private var isSubmittingManual = false
     @State private var manualSubmitError: String?
     @State private var successMessage: String?
+    // Build 80 — HOW is this visit delivered? Nick, #evv 2026-09-21 (video:
+    // Connor Couldridge → Behavioral Supports – Level 1 → Clock In Now, no
+    // question asked): "it never asked consult or direct". The dashboard has
+    // asked since v0.4.509/v0.4.579 (delivery-mode.js): a consult-capable
+    // service works EITHER as an in-person punch OR as a consult with typed
+    // times. The server publishes which services qualify (`consultServices`
+    // on the roster) and VALIDATES the answer on the POST — a consult on a
+    // service that has not opted in is refused (400 consult_not_allowed)
+    // regardless of what this sheet showed.
+    //
+    // 🔑 REQUIRED, NO DEFAULT. nil until the staff member taps one; the
+    //    Clock In / Record Time button stays disabled until they do. The
+    //    web pre-ticks "In person"; on a phone a pre-ticked radio is exactly
+    //    how a consult gets punched by accident. Reset whenever the service
+    //    or individual selection changes so a stale answer can never ride
+    //    onto a different service.
+    enum DeliveryChoice: String { case inPerson = "in_person", consult = "consult" }
+    @State private var deliveryChoice: DeliveryChoice?
     // Location state (GPS-unavailable address fallback)
     @ObservedObject private var locationManager = LocationManager.shared
     @State private var fallbackAddress = ""
@@ -131,8 +149,40 @@ struct ServerUnscheduledContent: View {
         return appState.serverIndividuals.contains { ($0.nonEvvServices ?? []).contains(unlistedServiceName) }
     }
 
+    /// Build 80 — the selected service MAY be delivered as a consult (server-
+    /// decided per service). Never true for a never-punch service: that one
+    /// is already typed times every time, so there is nothing to ask.
+    private var selectedServiceIsConsultCapable: Bool {
+        guard !selectedServiceName.isEmpty, !selectedServiceIsNonEvv else { return false }
+        return appState.serverIndividuals
+            .filter { selectedIndividualIds.contains($0.id) }
+            .contains { ($0.consultServices ?? []).contains(selectedServiceName) }
+    }
+
+    private var unlistedServiceIsConsultCapable: Bool {
+        guard !unlistedServiceName.isEmpty, !unlistedServiceIsNonEvv else { return false }
+        return appState.serverIndividuals.contains { ($0.consultServices ?? []).contains(unlistedServiceName) }
+    }
+
+    /// The In person / Consult question is on screen and must be answered.
+    private var consultPromptActive: Bool {
+        isUnlisted ? unlistedServiceIsConsultCapable : selectedServiceIsConsultCapable
+    }
+
+    /// The question is showing and nothing has been chosen yet — every
+    /// start button is disabled while this is true.
+    private var deliveryChoicePending: Bool { consultPromptActive && deliveryChoice == nil }
+
+    /// The staff member chose Consult on a consult-capable service: the visit
+    /// is a manual time entry (typed times, no punch), exactly as the web.
+    private var consultChosen: Bool { consultPromptActive && deliveryChoice == .consult }
+
+    /// What the POST carries. nil for every service that never asked (older
+    /// servers and punch-only services see the byte-identical old payload).
+    private var deliveryModeParam: String? { consultPromptActive ? deliveryChoice?.rawValue : nil }
+
     private var manualEntryActive: Bool {
-        isUnlisted ? unlistedServiceIsNonEvv : selectedServiceIsNonEvv
+        (isUnlisted ? unlistedServiceIsNonEvv : selectedServiceIsNonEvv) || consultChosen
     }
 
     /// Build 55: mirrors the desktop — there is NO "end must be after start"
@@ -145,7 +195,9 @@ struct ServerUnscheduledContent: View {
     /// Footer under Visit Times: what the section is for, plus the role's
     /// actual back-date window (the desktop's per-role hint, v0.4.364).
     private var manualTimesFooter: String {
-        "This service doesn't use live clock in/out — pick the date and enter the visit start and end times. "
+        (consultChosen
+            ? "Consult delivery — enter the start and end times you worked. No clock in/out. "
+            : "This service doesn't use live clock in/out — pick the date and enter the visit start and end times. ")
             + ManualSpan.backdateHint(maxDays: manualPolicy.maxDays)
     }
 
@@ -407,6 +459,26 @@ struct ServerUnscheduledContent: View {
                     }
                 }
 
+                // Build 80 — the In person / Consult question, only for a
+                // service the server says works both ways. Two tappable rows
+                // (the app's own selection language — a checkmark on the
+                // chosen row, like the individual picker above), REQUIRED.
+                if consultPromptActive {
+                    Section(header: Text("How is this visit delivered?"),
+                            footer: Text(deliveryChoicePending
+                                ? "Choose one to continue. In person clocks you in and out. Consult lets you enter the times you worked by hand — same authorization, same service, same units."
+                                : (consultChosen
+                                    ? "Consult — enter your start and end times below."
+                                    : "In person — you will clock in and out."))) {
+                        deliveryChoiceRow(.inPerson, title: "In person",
+                                          detail: "Clock in and out with location",
+                                          icon: "figure.walk")
+                        deliveryChoiceRow(.consult, title: "Consult",
+                                          detail: "Enter the times you worked",
+                                          icon: "bubble.left.and.bubble.right")
+                    }
+                }
+
                 if manualEntryActive {
                     Section(header: Text("Visit Times"), footer: Text(manualTimesFooter)) {
                         // Build 62 — the DATE, the desktop's `<input type="date"
@@ -479,7 +551,7 @@ struct ServerUnscheduledContent: View {
 
                 Section {
                     if isUnlisted {
-                        if unlistedServiceIsNonEvv {
+                        if unlistedServiceIsNonEvv || consultChosen {
                             // Non-EVV service: manual time entry
                             Button(action: startUnlistedManualVisit) {
                                 manualRecordLabel
@@ -488,12 +560,12 @@ struct ServerUnscheduledContent: View {
                         } else {
                             // F2: Unlisted clock-in
                             Button(action: startUnlistedVisit) {
-                                Label(punchBlocked ? "Clock out first" : "Clock In Now", systemImage: "play.circle.fill")
+                                Label(punchBlocked ? "Clock out first" : (deliveryChoicePending ? "Choose In person or Consult" : "Clock In Now"), systemImage: "play.circle.fill")
                                     .frame(maxWidth: .infinity)
                             }
-                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty || !clockInAllowed)
+                            .disabled(unlistedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || unlistedServiceName.isEmpty || !clockInAllowed || deliveryChoicePending)
                         }
-                    } else if selectedServiceIsNonEvv {
+                    } else if selectedServiceIsNonEvv || consultChosen {
                         // Non-EVV service: manual time entry
                         Button(action: startManualVisit) {
                             manualRecordLabel
@@ -501,10 +573,10 @@ struct ServerUnscheduledContent: View {
                         .disabled(selectedIndividualIds.isEmpty || !manualTimesValid || isSubmittingManual)
                     } else {
                         Button(action: startVisit) {
-                            Label(punchBlocked ? "Clock out first" : "Clock In Now", systemImage: "play.circle.fill")
+                            Label(punchBlocked ? "Clock out first" : (deliveryChoicePending ? "Choose In person or Consult" : "Clock In Now"), systemImage: "play.circle.fill")
                                 .frame(maxWidth: .infinity)
                         }
-                        .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty || !clockInAllowed)
+                        .disabled(selectedIndividualIds.isEmpty || selectedServiceName.isEmpty || !clockInAllowed || deliveryChoicePending)
 
                         // "Clock In Without Service" fallback
                         if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
@@ -538,6 +610,12 @@ struct ServerUnscheduledContent: View {
                 if manualDate > range.upperBound { manualDate = range.upperBound }
             }
             .interactiveDismissDisabled(isSubmittingManual)
+            // Build 80 — a stale answer must never ride onto another service:
+            // any change to what is being started clears the choice.
+            .onChange(of: selectedServiceName) { _ in deliveryChoice = nil }
+            .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
+            .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil }
+            .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
             // Build 55: the desktop's two confirm() prompts (untouched 12:00 AM
             // placeholder / end time not yet reached) — a question, not a block.
             .alert("Confirm times", isPresented: $showManualConfirm, presenting: manualConfirmMessage) { _ in
@@ -556,6 +634,33 @@ struct ServerUnscheduledContent: View {
         }
         // Build 75: unlisted-name / individual search / fallback-address fields.
         .keyboardDismissable()
+    }
+
+    /// One selectable row of the delivery-mode question (build 80).
+    private func deliveryChoiceRow(_ choice: DeliveryChoice, title: String, detail: String, icon: String) -> some View {
+        Button(action: {
+            withAnimation { deliveryChoice = choice }
+            manualSubmitError = nil
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundColor(Theme.primary)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundColor(.primary).font(.subheadline.weight(.medium))
+                    Text(detail).font(.caption).foregroundColor(.secondary)
+                }
+                Spacer()
+                if deliveryChoice == choice {
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.success)
+                } else {
+                    Image(systemName: "circle").foregroundColor(.secondary.opacity(0.3))
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .accessibilityIdentifier(choice == .consult ? "deliveryChoiceConsult" : "deliveryChoiceInPerson")
     }
 
     private func toggleIndividual(_ individual: ServerIndividualOption) {
@@ -578,6 +683,8 @@ struct ServerUnscheduledContent: View {
         }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
         guard !selectedIndividuals.isEmpty, !selectedServiceName.isEmpty else { return }
+        // Build 80 — never punch a consult-capable service without an answer.
+        guard !deliveryChoicePending else { return }
 
         // Build Clients from the server individuals; store server ID in address field
         let clients = selectedIndividuals.map { individual in
@@ -591,7 +698,8 @@ struct ServerUnscheduledContent: View {
         // Map selected service description to a ServiceType for backward compat
         let serviceType = mapServiceNameToType(selectedServiceName)
         appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: selectedServiceName,
-                                       manualAddress: trimmedFallbackAddress)
+                                       manualAddress: trimmedFallbackAddress,
+                                       deliveryMode: deliveryModeParam)
         showSuccess = true
     }
 
@@ -680,13 +788,14 @@ struct ServerUnscheduledContent: View {
         let serviceType = mapServiceNameToType(selectedServiceName)
         let serviceName = selectedServiceName
         let start = manualStart, end = manualEnd, date = manualDate
+        let mode = deliveryModeParam
         confirmThenSubmitManual {
             isSubmittingManual = true
             manualSubmitError = nil
             Task { @MainActor in
                 let outcome = await appState.startUnscheduledManualVisit(
                     clients: clients, service: serviceType, serviceName: serviceName,
-                    start: start, end: end, date: date)
+                    start: start, end: end, date: date, deliveryMode: mode)
                 finishManual(outcome)
             }
         }
@@ -702,13 +811,14 @@ struct ServerUnscheduledContent: View {
         let serviceType = mapServiceNameToType(unlistedServiceName)
         let serviceName = unlistedServiceName
         let start = manualStart, end = manualEnd, date = manualDate
+        let mode = deliveryModeParam
         confirmThenSubmitManual {
             isSubmittingManual = true
             manualSubmitError = nil
             Task { @MainActor in
                 let outcome = await appState.startUnscheduledManualVisit(
                     clients: [client], service: serviceType, serviceName: serviceName,
-                    unlistedName: name, start: start, end: end, date: date)
+                    unlistedName: name, start: start, end: end, date: date, deliveryMode: mode)
                 finishManual(outcome)
             }
         }
@@ -723,13 +833,15 @@ struct ServerUnscheduledContent: View {
         }
         let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !unlistedServiceName.isEmpty else { return }
+        guard !deliveryChoicePending else { return }
 
         // Create a dummy Client with empty address (no server ID)
         let client = Client(id: UUID(), name: name, address: "", city: "")
         let serviceType = mapServiceNameToType(unlistedServiceName)
         appState.startUnscheduledVisit(clients: [client], service: serviceType,
                                        serviceName: unlistedServiceName, unlistedName: name,
-                                       manualAddress: trimmedFallbackAddress)
+                                       manualAddress: trimmedFallbackAddress,
+                                       deliveryMode: deliveryModeParam)
         showSuccess = true
     }
 

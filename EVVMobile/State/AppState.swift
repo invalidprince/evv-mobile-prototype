@@ -863,7 +863,7 @@ final class AppState: ObservableObject {
     @MainActor
     func startUnscheduledManualVisit(clients: [Client], service: ServiceType, serviceName: String,
                                      unlistedName: String? = nil, start: Date, end: Date,
-                                     date: Date? = nil) async -> ManualEntryOutcome {
+                                     date: Date? = nil, deliveryMode: String? = nil) async -> ManualEntryOutcome {
         guard mode == .server else {
             return .rejected("Manual time entry is only available when signed in.")
         }
@@ -911,7 +911,8 @@ final class AppState: ObservableObject {
                                  unschedClientName: unlistedName,
                                  localVisitId: localVisitId,
                                  manualStart: startStr, manualEnd: endStr,
-                                 manualDate: dateStr)
+                                 manualDate: dateStr,
+                                 deliveryMode: deliveryMode)
             DiagnosticLogger.shared.logOffline("Unscheduled manual time entry queued (\(why))")
             scheduleAutoSync()
         }
@@ -929,7 +930,11 @@ final class AppState: ObservableObject {
                 unlistedName: unlistedName,
                 startTime: startStr,
                 endTime: endStr,
-                date: dateStr
+                date: dateStr,
+                // Build 80 — an ad-hoc CONSULT is a manual time entry on a
+                // punch service; the server accepts the typed times only
+                // because this says consult (and only if the service opted in).
+                deliveryMode: deliveryMode
             )
             visit.serverVisitId = response.visit.id
             if let allVisits = response.visits, allVisits.count > 1 {
@@ -973,7 +978,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil) {
+    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil, deliveryMode: String? = nil) {
         // Hard guard: never start a second visit, even if a stale UI let the
         // tap through. Surfaces an explanation instead of failing silently.
         guard !hasActiveVisit else {
@@ -1009,7 +1014,8 @@ final class AppState: ObservableObject {
                                      unschedService: apiServiceName,
                                      unschedClientName: unlistedName,
                                      localVisitId: localVisitId,
-                                     punchAddress: manualAddress)
+                                     punchAddress: manualAddress,
+                                     deliveryMode: deliveryMode)
                 DiagnosticLogger.shared.logOffline("Unscheduled visit queued offline")
                 scheduleAutoSync()
                 return
@@ -1036,7 +1042,8 @@ final class AppState: ObservableObject {
                         lng: coords?.lng,
                         accuracy: coords?.accuracy,
                         address: fallbackAddress,
-                        unlistedName: unlistedName
+                        unlistedName: unlistedName,
+                        deliveryMode: deliveryMode
                     )
                     // Update the local visit with server IDs so clock-out works
                     if let i = self.todayVisits.firstIndex(where: { $0.id == localVisitId }) {
@@ -1069,7 +1076,8 @@ final class AppState: ObservableObject {
                                                   unschedService: apiServiceName,
                                                   unschedClientName: unlistedName,
                                                   localVisitId: localVisitId,
-                                                  punchAddress: manualAddress)
+                                                  punchAddress: manualAddress,
+                                                  deliveryMode: deliveryMode)
                         if case .responseUnreadable = error {
                             self.surfaceServerError(error)
                             DiagnosticLogger.shared.logAPI("Unscheduled visit response unreadable — punch retained and queued")
@@ -1098,7 +1106,8 @@ final class AppState: ObservableObject {
                                               unschedService: apiServiceName,
                                               unschedClientName: unlistedName,
                                               localVisitId: localVisitId,
-                                              punchAddress: manualAddress)
+                                              punchAddress: manualAddress,
+                                              deliveryMode: deliveryMode)
                     self.surfaceServerError(APIError.networkError(error))
                     self.scheduleAutoSync()
                 }
@@ -1822,7 +1831,8 @@ final class AppState: ObservableObject {
                                         timeFixReason: String? = nil,
                                         manualStart: String? = nil, manualEnd: String? = nil,
                                         manualDate: String? = nil,
-                                        punchAddress: String? = nil) {
+                                        punchAddress: String? = nil,
+                                        deliveryMode: String? = nil) {
         // DEDUP: clock-out — keep first per server visitId
         if type == .clockOut, let vid = visitId,
            offlineQueue.contains(where: { $0.type == .clockOut && $0.visitId == vid }) {
@@ -1873,7 +1883,8 @@ final class AppState: ObservableObject {
             timeFixReason: timeFixReason,
             manualStart: manualStart,
             manualEnd: manualEnd,
-            manualDate: manualDate
+            manualDate: manualDate,
+            deliveryMode: deliveryMode
         )
         offlineQueue.append(action)
         pendingSyncCount = offlineQueue.count
@@ -2030,7 +2041,9 @@ final class AppState: ObservableObject {
                             startTime: action.manualStart, endTime: action.manualEnd,
                             // Build 62: replay the day the entry was DATED, not
                             // the day the phone happened to reconnect.
-                            date: action.manualDate)
+                            date: action.manualDate,
+                            // Build 80: replay the delivery mode it was queued with.
+                            deliveryMode: action.deliveryMode)
                         // Update local visit with real server IDs
                         if let localId = action.localVisitId {
                             localToServerVisitId[localId] = response.visit.id

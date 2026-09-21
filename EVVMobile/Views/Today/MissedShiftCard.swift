@@ -122,6 +122,9 @@ struct MissedShiftResolveSheet: View {
     @State private var comment: String = ""
     @State private var isSubmitting = false
     @State private var submitError: String?
+    // Build 80 — a refusal is ALSO raised as an alert (see
+    // MissedDailyResolveSheet). Only a 2xx flips `saved`.
+    @State private var showSubmitErrorAlert = false
     @State private var saved = false
 
     // "I worked this shift" chain — the HistoryView handoff pattern: the
@@ -200,6 +203,12 @@ struct MissedShiftResolveSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(saved ? "Done" : "Cancel") { dismiss() }
                 }
+            }
+            .interactiveDismissDisabled(isSubmitting)
+            .alert("Couldn't save", isPresented: $showSubmitErrorAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text((submitError ?? "Could not record the reason.") + "\n\nNothing was saved. You can try again or Cancel.")
             }
         }
         // Build 75: missed-shift reason comment field.
@@ -340,6 +349,8 @@ struct MissedShiftResolveSheet: View {
                     isSubmitting = false
                     let apiErr = error as? APIError ?? .networkError(error)
                     submitError = apiErr.errorDescription ?? "Could not record the reason."
+                    showSubmitErrorAlert = true
+                    DiagnosticLogger.shared.logAPI("Missed-shift resolve FAILED (nothing saved): \(submitError ?? "")")
                     // 409 = the row's state changed under us (a punch synced,
                     // a request is pending, or it was already recorded). The
                     // list is stale — refresh so the card reflects the server.

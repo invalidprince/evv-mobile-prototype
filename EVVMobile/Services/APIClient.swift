@@ -721,6 +721,14 @@ struct ServerIndividualOption: Codable, Identifiable {
     /// Services (descriptions + codes) that do NOT require live EVV punches
     /// — these use manual time entry instead of clock in/out.
     let nonEvvServices: [String]?
+    /// Build 80 (server v0.4.579 `consultServices`) — services on this
+    /// individual's active authorizations that may be delivered EITHER in
+    /// person (clock in/out) OR as a consult (typed times). The server decides
+    /// (per-service "Allow consult delivery" opt-in); the phone only asks the
+    /// question. Deliberately a SEPARATE list from `nonEvvServices`: a consult-
+    /// capable service still punches when delivered in person. Optional so a
+    /// server that predates the key decodes as "no consult anywhere".
+    let consultServices: [String]?
 }
 
 struct IndividualsResponse: Decodable {
@@ -959,6 +967,12 @@ struct UnscheduledVisitRequest: Encodable {
     /// build keeps working unchanged. Live clock-ins never send it (a punch is
     /// always "now"). `resolveManualDate` re-checks the bounds server-side.
     let date: String?
+    /// Build 80 — "in_person" | "consult". Sent ONLY when the service is
+    /// consult-capable and the staff member answered the prompt; absent means
+    /// in person (the server's default, unchanged for every older build). A
+    /// consult on a service that has not opted in is REFUSED server-side
+    /// (400 consult_not_allowed) — the POST is the control, not this field.
+    let deliveryMode: String?
 }
 
 struct UnscheduledVisitCreated: Decodable {
@@ -1380,6 +1394,11 @@ struct QueuedAction: Identifiable, Codable {
     /// phone reconnected, silently moving a visit to the wrong day. Optional so
     /// queues persisted by older builds still decode.
     let manualDate: String?
+    /// Build 80 — the delivery mode chosen when the entry was QUEUED
+    /// ("consult" / "in_person" / nil). A consult recorded offline must replay
+    /// as a consult, or the server would refuse the typed times on a punch
+    /// service. Optional so older persisted queues decode.
+    let deliveryMode: String?
     // Retry tracking
     var retryCount: Int
 
@@ -1408,7 +1427,7 @@ struct QueuedAction: Identifiable, Codable {
         case noteText, nbCategory, nbMinutes, nbNote, nbDate
         case unschedClientIds, unschedService, unschedClientName, localVisitId
         case signature, signatureSkipReason, timeFixNewIn, timeFixNewOut, timeFixReason, retryCount
-        case manualStart, manualEnd, manualDate
+        case manualStart, manualEnd, manualDate, deliveryMode
     }
 
     init(id: UUID, type: ActionType, shiftId: Int?, visitId: String?,
@@ -1421,6 +1440,7 @@ struct QueuedAction: Identifiable, Codable {
          signatureSkipReason: String? = nil,
          timeFixNewIn: String? = nil, timeFixNewOut: String? = nil, timeFixReason: String? = nil,
          manualStart: String? = nil, manualEnd: String? = nil, manualDate: String? = nil,
+         deliveryMode: String? = nil,
          retryCount: Int = 0) {
         self.id = id
         self.type = type
@@ -1448,6 +1468,7 @@ struct QueuedAction: Identifiable, Codable {
         self.manualStart = manualStart
         self.manualEnd = manualEnd
         self.manualDate = manualDate
+        self.deliveryMode = deliveryMode
         self.retryCount = retryCount
     }
 
@@ -1479,6 +1500,7 @@ struct QueuedAction: Identifiable, Codable {
         manualStart = try c.decodeIfPresent(String.self, forKey: .manualStart)
         manualEnd = try c.decodeIfPresent(String.self, forKey: .manualEnd)
         manualDate = try c.decodeIfPresent(String.self, forKey: .manualDate)
+        deliveryMode = try c.decodeIfPresent(String.self, forKey: .deliveryMode)
         retryCount = (try? c.decodeIfPresent(Int.self, forKey: .retryCount)) ?? 0
     }
 }
@@ -2213,14 +2235,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil, date: String? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil, date: String? = nil, deliveryMode: String? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime, date: date)
+            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime, date: date, deliveryMode: deliveryMode)
         )
         request.timeoutInterval = 15
 
