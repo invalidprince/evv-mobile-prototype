@@ -414,20 +414,35 @@ struct MissedDailyResolveSheet: View {
                 .accessibilityIdentifier("missedDailyComment")
         }
 
+        // Bottom actions: one centered full-width primary row over one
+        // centered secondary row, the same shape TimeFixSheet /
+        // RequestShiftSheet use for their Form-sheet actions. Both rows
+        // share the same centre line, and the inset row separator (which
+        // rendered as a stray hairline beside the checkmark) is hidden.
+        // Nick, #evv 2026-09-21: "UI for save reason looks funny (not
+        // aligned with back)."
         Section {
             Button(action: saveReason) {
-                if isSubmitting {
-                    HStack { ProgressView(); Text("Saving…") }.frame(maxWidth: .infinity)
-                } else {
-                    Label("Save reason", systemImage: "checkmark.circle").frame(maxWidth: .infinity)
+                Group {
+                    if isSubmitting {
+                        HStack { ProgressView(); Text("Saving…") }
+                    } else {
+                        Label("Save reason", systemImage: "checkmark.circle")
+                    }
                 }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
             }
             .disabled(!canSaveReason)
-            Button("Back") {
+            .listRowSeparator(.hidden)
+            Button {
                 submitError = nil
                 withAnimation { path = .choose }
+            } label: {
+                Text("Back").frame(maxWidth: .infinity)
             }
             .disabled(isSubmitting)
+            .listRowSeparator(.hidden)
         }
     }
 
@@ -443,20 +458,29 @@ struct MissedDailyResolveSheet: View {
                 .accessibilityIdentifier("missedDailyEnd")
         }
 
+        // Same centered primary-over-secondary action rows as reasonSection.
         Section {
             Button(action: createVisit) {
-                if isSubmitting {
-                    HStack { ProgressView(); Text("Creating…") }.frame(maxWidth: .infinity)
-                } else {
-                    Label("Create visit", systemImage: "plus.circle").frame(maxWidth: .infinity)
+                Group {
+                    if isSubmitting {
+                        HStack { ProgressView(); Text("Creating…") }
+                    } else {
+                        Label("Create visit", systemImage: "plus.circle")
+                    }
                 }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
             }
             .disabled(!canCreate)
-            Button("Back") {
+            .listRowSeparator(.hidden)
+            Button {
                 submitError = nil
                 withAnimation { path = .choose }
+            } label: {
+                Text("Back").frame(maxWidth: .infinity)
             }
             .disabled(isSubmitting)
+            .listRowSeparator(.hidden)
         }
     }
 

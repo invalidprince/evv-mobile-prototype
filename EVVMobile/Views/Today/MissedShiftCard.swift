@@ -277,25 +277,32 @@ struct MissedShiftResolveSheet: View {
                 .accessibilityIdentifier("missedShiftComment")
         }
 
+        // Bottom actions: centered full-width primary row over a centered
+        // secondary row (same fix as MissedDailyRow's sheet — the leading-
+        // aligned "Back" under a centered "Save reason" read as a staggered
+        // layout bug, with the inset separator showing as a stray hairline).
         Section {
             Button(action: save) {
-                if isSubmitting {
-                    HStack {
-                        ProgressView()
-                        Text("Saving…")
+                Group {
+                    if isSubmitting {
+                        HStack { ProgressView(); Text("Saving…") }
+                    } else {
+                        Label("Save reason", systemImage: "checkmark.circle")
                     }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    Label("Save reason", systemImage: "checkmark.circle")
-                        .frame(maxWidth: .infinity)
                 }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
             }
             .disabled(!canSave)
-            Button("Back") {
+            .listRowSeparator(.hidden)
+            Button {
                 submitError = nil
                 withAnimation { path = .choose }
+            } label: {
+                Text("Back").frame(maxWidth: .infinity)
             }
             .disabled(isSubmitting)
+            .listRowSeparator(.hidden)
         }
     }
 
