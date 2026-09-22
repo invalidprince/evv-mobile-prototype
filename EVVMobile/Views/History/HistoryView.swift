@@ -44,14 +44,32 @@ struct HistoryView: View {
         var id: Int { prefill.shiftId }
     }
 
-    /// Build 56 — staff shift requests (server v0.4.393 'Shift request'
-    /// exceptions from GET /me/requests). Shown as their own list so a
-    /// DENIED request — whose visit is soft-deleted and gone from the visit
-    /// rows above — still tells the staff member what happened and why.
-    private var shiftRequests: [ServerException] {
-        appState.serverExceptions
-            .filter { ($0.type ?? "").lowercased() == "shift request" }
-            .sorted { ($0.date ?? "") > ($1.date ?? "") }
+    /// Build 90 (Todoist 6hXrQ7VjHH3C7q8q) — the build-56 "Shift requests"
+    /// block at the top of the tab is GONE. Nick, 2026-09-21: "Shift requests
+    /// shouldnt show like this. It should show in the history and just show
+    /// the shift details and approved/denied. It should only show for 2 weeks
+    /// after the approval/denial. Just like when you request a shift and it
+    /// says pending."
+    ///
+    /// A shift request is now an ordinary row under the day of the SHIFT:
+    ///   • pending  → the real (unapproved) visit is already in the list;
+    ///                ServerHistoryRow shows a yellow PENDING APPROVAL chip.
+    ///   • approved → the visit is a normal visit in the list; a green SHIFT
+    ///                APPROVED chip for 14 days after the decision, then plain.
+    ///   • denied   → the visit is soft-deleted, so a STAND-IN row is built
+    ///                from the request record (server v0.4.625 `shiftRequest`)
+    ///                and disappears 14 days after the denial.
+    /// A stand-in is built ONLY when no matching visit is in the list (an
+    /// approved request would otherwise appear twice), which also covers a
+    /// request decided recently for a shift older than the history window.
+    private var shiftRequestStandIns: [ServerException] {
+        let visitIds = Set(mergedHistoryVisits.compactMap { $0.serverVisitId })
+        return appState.serverExceptions.filter { req in
+            guard (req.type ?? "").lowercased() == "shift request" else { return false }
+            if let vid = req.visitId, visitIds.contains(vid) { return false }
+            if let sr = req.shiftRequest?.visitId, visitIds.contains(sr) { return false }
+            return ShiftRequestHistoryPolicy.isVisible(req)
+        }
     }
 
     // MARK: - Mock mode data
@@ -98,11 +116,15 @@ struct HistoryView: View {
     enum HistoryEntry: Identifiable {
         case visit(Visit)
         case missed(MissedHistoryEntry)
+        /// Build 90 — a shift request with no visit in the list (denied, or
+        /// decided for a shift outside the history window).
+        case request(ServerException)
 
         var id: String {
             switch self {
             case .visit(let v): return "visit-\(v.id.uuidString)"
             case .missed(let m): return m.id
+            case .request(let r): return "request-\(r.id)"
             }
         }
     }
@@ -133,6 +155,15 @@ struct HistoryView: View {
                 f.timeZone = cal.timeZone
                 f.dateFormat = "yyyy-MM-dd h:mm a"
                 if let d = f.date(from: "\(m.date) \(st)") { return d }
+            }
+            return day
+        case .request(let r):
+            if let ymd = ShiftRequestHistoryPolicy.shiftDay(r), let st = r.shiftRequest?.clockIn {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.timeZone = cal.timeZone
+                f.dateFormat = "yyyy-MM-dd h:mm a"
+                if let d = f.date(from: "\(ymd) \(st)") { return d }
             }
             return day
         }
@@ -171,6 +202,13 @@ struct HistoryView: View {
         for m in missedEntries {
             guard let day = Self.localDay(m.date, calendar: cal) else { continue }
             groups[day, default: []].append(.missed(m))
+        }
+        // Build 90 — shift requests whose visit is not in the list, on the
+        // day of the SHIFT (not the day of the decision).
+        for r in shiftRequestStandIns {
+            guard let ymd = ShiftRequestHistoryPolicy.shiftDay(r),
+                  let day = Self.localDay(ymd, calendar: cal) else { continue }
+            groups[day, default: []].append(.request(r))
         }
 
         func label(for day: Date) -> String {
@@ -305,15 +343,10 @@ struct HistoryView: View {
                 // GONE. Missed rows are interleaved under their day headers
                 // in the list below, the way the web's All Visits table does
                 // it (Nick, #evv 2026-09-21: "Same format, just shows missed").
-
-                if !shiftRequests.isEmpty {
-                    Text("Shift requests")
-                        .font(.title3.bold())
-                        .padding(.top, 4)
-                    ForEach(shiftRequests) { req in
-                        ShiftRequestRow(request: req)
-                    }
-                }
+                // Build 90 — the build-56 "Shift requests" block that sat
+                // here is GONE too: a request is a row under its shift's day
+                // (pending / approved chips on the visit row, a stand-in row
+                // for a denied one). See shiftRequestStandIns.
 
                 if appState.isLoadingHistory {
                     HStack(spacing: 10) {
@@ -326,7 +359,7 @@ struct HistoryView: View {
                     .padding(.vertical, 20)
                 }
 
-                if !appState.isLoadingHistory && mergedHistoryVisits.isEmpty && missedEntries.isEmpty {
+                if !appState.isLoadingHistory && mergedHistoryVisits.isEmpty && missedEntries.isEmpty && shiftRequestStandIns.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.largeTitle)
@@ -378,6 +411,8 @@ struct HistoryView: View {
                                     }
                                 }
                             )
+                        case .request(let r):
+                            ShiftRequestHistoryRow(request: r)
                         }
                     }
                 }
@@ -598,6 +633,18 @@ struct ServerHistoryRow: View {
                 } else if isInProgress {
                     StatusBadge(text: "IN PROGRESS", color: Theme.primary)
                 }
+                // Build 90 — a staff shift request reads like the time-fix /
+                // delete chips beside it: yellow while the manager decides,
+                // green for 14 days after approval (Nick: "It should show
+                // yea"), then the row is just a visit. Denied requests never
+                // reach this row — see ShiftRequestHistoryRow.
+                if visit.isPendingApproval {
+                    StatusBadge(text: "⏳ PENDING APPROVAL", color: Theme.warning)
+                        .accessibilityIdentifier("history.shiftRequestPending")
+                } else if visit.showsShiftApprovedChip {
+                    StatusBadge(text: "SHIFT APPROVED", color: Theme.success)
+                        .accessibilityIdentifier("history.shiftRequestApproved")
+                }
                 // Unsynced badge for offline events
                 if visit.syncState == .pending {
                     StatusBadge(text: "⏳ Unsynced", color: Theme.warning)
@@ -761,38 +808,116 @@ struct ServerAddNoteSheet: View {
     }
 }
 
-// MARK: - Shift request row (build 56)
+// MARK: - Shift request in History (build 90, Todoist 6hXrQ7VjHH3C7q8q)
 
-/// One staff shift request (server 'Shift request' exception). Pending →
-/// waiting on the manager; resolved → APPROVED / DENIED with the manager's
-/// reason (the server writes the outcome into `detail`, so a denied request
-/// whose visit has been removed still explains itself here).
-struct ShiftRequestRow: View {
+/// THE rule for how long a decided shift request stays visible in History:
+/// 14 days from the DECISION (approve/deny), not from the shift date. A
+/// pending request never expires. Shared by the visit-row chip
+/// (`Visit.showsShiftApprovedChip`) and the stand-in row, so the two cannot
+/// disagree. Nick, 2026-09-21: "It should only show for 2 weeks after the
+/// approval/denial."
+enum ShiftRequestHistoryPolicy {
+    static let windowDays = 14
+
+    /// Server timestamps are ISO-8601 (`resolutionTimestamp()` /
+    /// `toISOString()`), with or without fractional seconds.
+    static func parseISO(_ s: String?) -> Date? {
+        guard let s = s, !s.isEmpty else { return nil }
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFrac.date(from: s) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: s)
+    }
+
+    static func isWithinWindow(decidedAt: Date, now: Date = Date()) -> Bool {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -windowDays, to: now) ?? now
+        return decidedAt >= cutoff
+    }
+
+    /// "pending" | "approved" | "denied" for a 'Shift request' row. Prefers
+    /// the server's joined visit state; falls back to the exception's own
+    /// status/resolution on an older server.
+    static func outcome(_ r: ServerException) -> String {
+        if let o = r.shiftRequest?.outcome?.lowercased(), !o.isEmpty { return o }
+        if (r.status ?? "").lowercased() != "resolved" { return "pending" }
+        let res = (r.resolution ?? "").lowercased()
+        return res == "approved" ? "approved" : (res == "denied" ? "denied" : "resolved")
+    }
+
+    static func decidedAt(_ r: ServerException) -> Date? {
+        parseISO(r.shiftRequest?.decidedAt) ?? parseISO(r.decidedAt)
+    }
+
+    /// Should this request row be drawn at all (given no visit covers it)?
+    /// Pending → always. Decided → only inside the 14-day window; a decided
+    /// row whose timestamp is unknown (very old server) is hidden rather than
+    /// shown forever.
+    static func isVisible(_ r: ServerException, now: Date = Date()) -> Bool {
+        let o = outcome(r)
+        if o == "pending" { return true }
+        guard let at = decidedAt(r) else { return false }
+        return isWithinWindow(decidedAt: at, now: now)
+    }
+
+    /// The SHIFT's agency day ("yyyy-MM-dd") — the row sorts under that day.
+    static func shiftDay(_ r: ServerException) -> String? {
+        let raw = r.shiftRequest?.date ?? r.date
+        guard let d = raw, d.count >= 10 else { return nil }
+        return String(d.prefix(10))
+    }
+}
+
+/// A shift request with NO visit in the list — a DENIED one (the visit was
+/// soft-deleted), or one decided for a shift older than the history window.
+/// Same layout as a visit row (avatar + name, service, time range) with the
+/// status chip and the manager's reason; NO action buttons — there is no
+/// visit to act on.
+struct ShiftRequestHistoryRow: View {
     let request: ServerException
 
-    private var isResolved: Bool { (request.status ?? "").lowercased() == "resolved" }
-    private var outcome: String { (request.resolution ?? "").lowercased() }
+    private var summary: ShiftRequestSummary? { request.shiftRequest }
+    private var outcome: String { ShiftRequestHistoryPolicy.outcome(request) }
 
     private var badge: (text: String, color: Color) {
-        if !isResolved { return ("⏳ PENDING APPROVAL", Theme.warning) }
-        if outcome == "approved" { return ("APPROVED", Theme.success) }
-        if outcome == "denied" { return ("DENIED", Theme.danger) }
-        return ("RESOLVED", Theme.success)
+        switch outcome {
+        case "pending": return ("⏳ PENDING APPROVAL", Theme.warning)
+        case "approved": return ("SHIFT APPROVED", Theme.success)
+        case "denied": return ("SHIFT DENIED", Theme.danger)
+        default: return ("RESOLVED", Theme.success)
+        }
     }
 
-    private var dateLabel: String {
-        guard let d = request.date, d.count >= 10 else { return request.date ?? "" }
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone(identifier: "America/New_York")
-        guard let day = f.date(from: String(d.prefix(10))) else { return d }
-        let out = DateFormatter()
-        out.dateFormat = "EEE, MMM d"
-        return out.string(from: day)
+    private var name: String {
+        summary?.clientName ?? "Shift request"
     }
 
-    /// The request text, minus the manager-facing approval sentence.
-    private var detailText: String {
+    private var serviceLabel: String {
+        summary?.serviceName ?? summary?.service ?? ""
+    }
+
+    private var timeText: String? {
+        guard let s = summary, let a = s.clockIn, let b = s.clockOut else { return nil }
+        return "\(a) – \(b)"
+    }
+
+    /// Manager's reason (denial) — from the joined visit when the server sends
+    /// it, else the outcome trailer the server writes into `detail`.
+    private var reasonText: String? {
+        if outcome == "denied" {
+            if let r = summary?.denialReason, !r.isEmpty { return "Denied: \(r)" }
+            if let d = request.detail, let range = d.range(of: "DENIED by ") {
+                return String(d[range.lowerBound...]).replacingOccurrences(of: " The visit and its documentation were removed.", with: "")
+            }
+        }
+        return nil
+    }
+
+    /// Older server (no `shiftRequest`): fall back to the request prose so the
+    /// row still says what it was for.
+    private var fallbackDetail: String? {
+        guard summary == nil else { return nil }
         var s = request.detail ?? "Shift request"
         s = s.replacingOccurrences(of: " Approving makes this a normal billable visit; denying removes the visit AND its documentation.", with: "")
         s = s.replacingOccurrences(of: "Staff-requested shift ", with: "")
@@ -800,18 +925,50 @@ struct ShiftRequestRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(dateLabel).font(.headline)
+                HStack(spacing: 12) {
+                    AvatarView(name: name, size: 40)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name).font(.headline)
+                        if !serviceLabel.isEmpty {
+                            Text(serviceLabel)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
                 Spacer()
-                StatusBadge(text: badge.text, color: badge.color)
+                if let t = timeText {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("Requested").font(.headline).foregroundColor(.secondary)
+                        Text(t)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
-            Text(detailText)
-                .font(.subheadline)
-                .foregroundColor(isResolved && outcome == "denied" ? Theme.danger : .secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !isResolved {
-                Text("Your manager decides this in Exceptions. Your documentation is saved with the pending visit above.")
+
+            HStack(spacing: 6) {
+                StatusBadge(text: badge.text, color: badge.color)
+                    .accessibilityIdentifier("history.shiftRequest.\(outcome)")
+                Spacer()
+            }
+
+            if let r = reasonText {
+                Text(r)
+                    .font(.caption)
+                    .foregroundColor(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let d = fallbackDetail {
+                Text(d)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if outcome == "pending" {
+                Text("Your manager decides this in Exceptions.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

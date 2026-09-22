@@ -169,6 +169,22 @@ struct Visit: Identifiable {
     /// is how bad billing happens.
     var isPendingApproval: Bool { approvalStatus == "pending" }
 
+    /// Build 90 (server v0.4.625) — this visit began as a staff shift request.
+    /// Approval clears `approvalStatus`, so this is what keeps an approved
+    /// request recognisable in History for the two-week window.
+    var wasShiftRequest: Bool = false
+    /// Build 90 — when the manager approved (or denied) the request; nil while
+    /// pending or on a normal visit.
+    var approvalDecidedAt: Date?
+
+    /// Build 90 — show the green "SHIFT APPROVED" chip: an approved request
+    /// (Nick 2026-09-22: "It should show yea") for 14 days after the decision,
+    /// then the row is just a visit. Pending rows use `isPendingApproval`.
+    var showsShiftApprovedChip: Bool {
+        guard wasShiftRequest, !isPendingApproval, let at = approvalDecidedAt else { return false }
+        return ShiftRequestHistoryPolicy.isWithinWindow(decidedAt: at)
+    }
+
     /// Build 83 — server v0.4.604 `stillOpen`: the visit is clocked in with
     /// no clock-out, and was returned by History REGARDLESS of the 14-day
     /// window. Derived locally when the server did not send the key.

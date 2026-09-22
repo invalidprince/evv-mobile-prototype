@@ -389,6 +389,13 @@ struct ServerHistoryVisit: Decodable, Identifiable {
     /// v0.4.348 — "pending" on a staff-requested shift awaiting manager
     /// approval; absent/nil on every normal visit.
     let approvalStatus: String?
+    /// Server v0.4.625 (build 90) — the row was born as a staff shift request
+    /// (approval clears `approvalStatus` to nil, so this is the only way to
+    /// keep an APPROVED request recognisable). Older servers omit both keys.
+    let wasShiftRequest: Bool?
+    /// Server v0.4.625 — ISO timestamp of the manager's approve/deny; nil
+    /// while pending. Drives the 14-day "shift approved" chip window.
+    let approvalDecidedAt: String?
     /// Server v0.4.604 — true while the visit is clocked in with no clock-out.
     /// Such rows are returned regardless of the 14-day window (Nick: "even if
     /// over 2 weeks … if you're clocked in still show that visit in history").
@@ -490,6 +497,13 @@ struct ServerException: Decodable, Identifiable {
     let resolution: String?
     let detail: String?
     let date: String?
+    /// Server v0.4.625 (build 90) — ISO of the decision (resolution.at), nil
+    /// while the request is still open. Older servers omit it.
+    let decidedAt: String?
+    /// Server v0.4.625 — the shift a 'Shift request' row was for, joined from
+    /// the visit even after a denial soft-deleted it. nil on other types, on
+    /// older servers, or if the object fails to decode (never fatal).
+    let shiftRequest: ShiftRequestSummary?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -499,6 +513,8 @@ struct ServerException: Decodable, Identifiable {
         status = try? c.decodeIfPresent(String.self, forKey: .status)
         detail = try? c.decodeIfPresent(String.self, forKey: .detail)
         date = try? c.decodeIfPresent(String.self, forKey: .date)
+        decidedAt = (try? c.decodeIfPresent(String.self, forKey: .decidedAt)) ?? nil
+        shiftRequest = (try? c.decodeIfPresent(ShiftRequestSummary.self, forKey: .shiftRequest)) ?? nil
         if let s = try? c.decodeIfPresent(String.self, forKey: .resolution) {
             resolution = s
         } else if let obj = try? c.decodeIfPresent(ResolutionDetail.self, forKey: .resolution) {
@@ -524,7 +540,26 @@ struct ServerException: Decodable, Identifiable {
         let at: String?
         let comment: String?
     }
-    private enum CodingKeys: String, CodingKey { case id, visitId, type, status, resolution, detail, date }
+    private enum CodingKeys: String, CodingKey { case id, visitId, type, status, resolution, detail, date, decidedAt, shiftRequest }
+}
+
+/// Server v0.4.625 — `shiftRequest` on a GET /me/requests row of type
+/// 'Shift request'. Every field optional: the visit row may be gone.
+struct ShiftRequestSummary: Decodable {
+    let visitId: String?
+    let date: String?
+    let clientId: String?
+    let clientName: String?
+    let service: String?
+    let serviceName: String?
+    let clockIn: String?
+    let clockOut: String?
+    /// "pending" | "approved" | "denied"
+    let outcome: String?
+    let requestReason: String?
+    let denialReason: String?
+    let decidedBy: String?
+    let decidedAt: String?
 }
 
 struct RequestsResponse: Decodable {

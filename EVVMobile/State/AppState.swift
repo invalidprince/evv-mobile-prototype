@@ -2644,6 +2644,11 @@ final class AppState: ObservableObject {
         visit.hasNote = sv.hasNote ?? false
         visit.serverDocStatus = sv.docStatus
         visit.approvalStatus = sv.approvalStatus
+        // Build 90 (server v0.4.625) — keep an APPROVED shift request
+        // recognisable: approval clears approvalStatus, so these two carry
+        // the "was a request" fact and the decision time for the 14-day chip.
+        visit.wasShiftRequest = sv.wasShiftRequest ?? false
+        visit.approvalDecidedAt = ShiftRequestHistoryPolicy.parseISO(sv.approvalDecidedAt)
         // Build 83 — server v0.4.604 flags a clocked-in / not-clocked-out row
         // explicitly (and returns it however old). Honour it as in-progress
         // even if the verification text is something the switch above does
