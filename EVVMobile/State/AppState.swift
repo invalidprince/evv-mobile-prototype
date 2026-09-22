@@ -64,6 +64,18 @@ final class AppState: ObservableObject {
     /// moment a visit covers the shift or a reason is recorded, so a cached
     /// copy would nag about rows that no longer exist. Cleared on sign-out.
     @Published var missedShifts: [MissedShiftItem] = []
+
+    // MARK: - 2:1 second-staff verification (server v0.4.615, build 87 — ONLINE-ONLY)
+    /// Requests addressed to ME that are still open: the "verify you're here"
+    /// banner on Today with its countdown + Confirm / Not here. Memory only —
+    /// a 120-second window has no business in a cache. Cleared on sign-out.
+    @Published var twoToOnePending: [ServerTwoToOneRequest] = []
+    /// The latest request on each of MY running visits (waiting / expired /
+    /// declined / confirmed) — what the active-visit card shows.
+    @Published var twoToOneMine: [ServerTwoToOneRequest] = []
+    /// Settings → Punch Alerts → "2:1 verification window" (seconds).
+    @Published var twoToOneWindowSec: Int = 120
+    private var twoToOnePollTask: Task<Void, Never>?
     /// v0.4.569 — missed DAYS (📅) shown in History (Todoist 6hWwwJ8Jr64937GH).
     /// Same online-only, memory-only discipline as `missedShifts`: never
     /// queued, never persisted — both actions need the server's state checks.
@@ -519,7 +531,7 @@ final class AppState: ObservableObject {
     /// flipped to in-progress optimistically (the timer must start at the
     /// tap, not at the response) and REVERTED on a genuine rejection.
     @MainActor
-    func clockIn(visitId: UUID, serverShiftId hintShiftId: Int? = nil, manualLocation: ManualLocation? = nil) async -> PunchOutcome {
+    func clockIn(visitId: UUID, serverShiftId hintShiftId: Int? = nil, manualLocation: ManualLocation? = nil, secondStaffId: String? = nil) async -> PunchOutcome {
         // Hard guard: never start a second visit, even if a stale UI let the
         // tap through.
         guard !hasActiveVisit else {
@@ -573,6 +585,12 @@ final class AppState: ObservableObject {
             }
             enqueueOfflineAction(.clockIn, shiftId: shiftId, visitId: nil, localVisitId: localId, punchAddress: manualAddress)
             DiagnosticLogger.shared.logOffline("Clock-in queued (\(why)) for shift \(shiftId)")
+            // Build 87 — a 2:1 verification request is a 120-second, online-
+            // only thing; it is NOT queued. The staff member re-requests from
+            // the active-visit card once the punch has synced.
+            if secondStaffId != nil {
+                DiagnosticLogger.shared.logOffline("Second-staff request for shift \(shiftId) dropped from the offline queue — request again when online")
+            }
             scheduleAutoSync()
         }
 
@@ -600,13 +618,14 @@ final class AppState: ObservableObject {
                 lat: coords?.lat,
                 lng: coords?.lng,
                 accuracy: coords?.accuracy,
-                address: fallbackAddress
+                address: fallbackAddress,
+                secondStaffId: secondStaffId
             )
             if let i = todayVisits.firstIndex(where: { $0.id == localId }) {
                 todayVisits[i].serverVisitId = visitInfo.id
                 todayVisits[i].syncState = .synced
             }
-            DiagnosticLogger.shared.logAPI("Clock-in confirmed for shift \(shiftId) → visit \(visitInfo.id)")
+            DiagnosticLogger.shared.logAPI("Clock-in confirmed for shift \(shiftId) → visit \(visitInfo.id)\(secondStaffId != nil ? " (2:1 second staff \(secondStaffId!) requested)" : "")")
             Task { await self.refreshServerShifts() }
             // Build 53: in-progress visits show under History → Today.
             refreshHistoryInBackground()
@@ -1058,7 +1077,7 @@ final class AppState: ObservableObject {
     /// "Clocked in". The diagnostic log had the 409; the user had nothing.
     /// Same shape as build 57's scheduled-path fix, on the unscheduled path.
     @MainActor
-    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil, deliveryMode: String? = nil) async -> PunchOutcome {
+    func startUnscheduledVisit(clients: [Client], service: ServiceType, serviceName: String? = nil, unlistedName: String? = nil, noService: Bool = false, manualAddress: String? = nil, deliveryMode: String? = nil, secondStaffId: String? = nil) async -> PunchOutcome {
         // Hard guard: never start a second visit, even if a stale UI let the
         // tap through. Names the visit instead of failing silently.
         guard !hasActiveVisit else {
@@ -1141,7 +1160,8 @@ final class AppState: ObservableObject {
                 accuracy: coords?.accuracy,
                 address: fallbackAddress,
                 unlistedName: unlistedName,
-                deliveryMode: deliveryMode
+                deliveryMode: deliveryMode,
+                secondStaffId: secondStaffId
             )
             // Update the local visit with server IDs so clock-out works
             if let i = todayVisits.firstIndex(where: { $0.id == localVisitId }) {
@@ -1396,6 +1416,9 @@ final class AppState: ObservableObject {
         medCorrectionWindowHours = nil
         medOnBehalfStaff = []
         missedShifts = []        // build 71 — individual names; memory only
+        twoToOnePending = []     // build 87 — individual names; memory only
+        twoToOneMine = []
+        twoToOnePollTask?.cancel(); twoToOnePollTask = nil
         missedDaily = []         // build 76 — same rule (individual names)
         missedShiftsReasoned = [] // build 79 — same rule
         missedDailyReasoned = []
@@ -1626,6 +1649,8 @@ final class AppState: ObservableObject {
             // reminder here; new scheduled shifts gain one.
             PunchReminderCenter.shared.sync(inputs: newToday.map(PunchReminderInput.init(visit:)),
                                             policy: response.punchReminders)
+            // Build 87 — 2:1 verification state rides the same payload.
+            applyTwoToOne(response.twoToOneVerify)
             // Refresh the Today-tab medications card alongside the shifts —
             // fire-and-forget so a slow meds query never delays the punch UI.
             Task { await self.refreshDueMedications() }
@@ -1702,6 +1727,140 @@ final class AppState: ObservableObject {
     /// never queued, never persisted. A 403 means the role cannot resolve
     /// missed shifts at all — the list is emptied so no card renders.
     @MainActor
+    // MARK: - 2:1 second-staff verification actions (build 87, server v0.4.615)
+
+    /// Apply the payload block (from GET /me/shifts or the status poll) and
+    /// keep a 5-second poll alive while anything is pending on either side,
+    /// so the countdown resolves to confirmed / expired without a pull.
+    private func applyTwoToOne(_ p: TwoToOneVerifyPayload?) {
+        twoToOnePending = p?.pending ?? []
+        twoToOneMine = p?.mine ?? []
+        if let w = p?.windowSec, w > 0 { twoToOneWindowSec = w }
+        // Build 87 — a NEW prompt addressed to me is the whole point: make
+        // the phone say so (the app already auto-syncs on foreground and
+        // every ~2 s after an action, so the banner appears on its own).
+        let anyPending = !twoToOnePending.isEmpty || twoToOneMine.contains { $0.isPending }
+        if anyPending {
+            if twoToOnePollTask == nil {
+                twoToOnePollTask = Task { [weak self] in
+                    while let self = self, !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        if Task.isCancelled { break }
+                        guard self.mode == .server, self.effectivelyOnline else { continue }
+                        if let fresh = try? await APIClient.shared.fetchTwoToOneStatus() {
+                            let before = (self.twoToOnePending.map { "\($0.requestId)" } + self.twoToOneMine.map { "\($0.requestId):\($0.status)" }).sorted()
+                            let after = (fresh.pending.map { "\($0.requestId)" } + fresh.mine.map { "\($0.requestId):\($0.status)" }).sorted()
+                            await MainActor.run {
+                                self.twoToOnePending = fresh.pending
+                                self.twoToOneMine = fresh.mine
+                                if let w = fresh.windowSec, w > 0 { self.twoToOneWindowSec = w }
+                            }
+                            if before != after {
+                                // Something resolved (confirmed → partner's visit
+                                // exists; expired/declined → chip persists) —
+                                // pull Today so the cards reflect the server.
+                                await self.refreshServerShifts()
+                                self.refreshHistoryInBackground()
+                            }
+                            let still = !fresh.pending.isEmpty || fresh.mine.contains { $0.isPending }
+                            if !still { break }
+                        }
+                    }
+                    self?.twoToOnePollTask = nil
+                }
+            }
+        } else {
+            twoToOnePollTask?.cancel(); twoToOnePollTask = nil
+        }
+    }
+
+    /// The 2:1 state for one of MY running visits (by server visit id).
+    func twoToOneState(forServerVisitId id: String?) -> ServerTwoToOneRequest? {
+        guard let id = id else { return nil }
+        return twoToOneMine.first { $0.visitId == id }
+    }
+
+    /// The NAMED second staff confirms from THIS phone. Acquires MY GPS (or
+    /// takes the typed address), POSTs, then refreshes Today + History so my
+    /// new visit (clock-in = the requester's) shows up as CLOCKED IN.
+    /// ONLINE-ONLY — never queued: a stale replay would land after the window.
+    @MainActor
+    func confirmTwoToOne(_ req: ServerTwoToOneRequest, manualLocation: ManualLocation? = nil) async -> PunchOutcome {
+        guard mode == .server else { return .rejected("Not available in demo mode.") }
+        guard !hasActiveVisit else {
+            haptic(.error)
+            return .rejected(punchBlockedMessage)
+        }
+        guard effectivelyOnline else {
+            return .rejected("You're offline. A 2:1 verification has to be confirmed while connected — try again when you're back online.")
+        }
+        var coords = LocationManager.shared.currentCoordinates
+        if coords == nil {
+            _ = await LocationManager.shared.acquireLocation()
+            coords = LocationManager.shared.currentCoordinates
+        }
+        let fallbackAddress = coords == nil ? manualLocation?.display : nil
+        do {
+            let r = try await APIClient.shared.confirmTwoToOne(requestId: req.requestId, lat: coords?.lat, lng: coords?.lng, accuracy: coords?.accuracy, address: fallbackAddress)
+            DiagnosticLogger.shared.logAPI("2:1 verification #\(req.requestId) confirmed → visit \(r.visit.id) clock-in \(r.visit.clockIn) (matched to \(r.twoToOne?.fromStaff ?? "partner"))")
+            haptic(.success)
+            twoToOnePending.removeAll { $0.requestId == req.requestId }
+            await refreshServerShifts()
+            refreshHistoryInBackground()
+            return .synced
+        } catch let error as APIError {
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("2:1 verification #\(req.requestId) confirm FAILED: \(error.localizedDescription)")
+            if case .responseUnreadable = error {
+                // 200 reached — the visit exists. Refresh and report success.
+                await refreshServerShifts()
+                return .synced
+            }
+            // Expired / handled / still clocked in → drop the banner and re-read.
+            twoToOnePending.removeAll { $0.requestId == req.requestId }
+            Task { await self.refreshServerShifts() }
+            if case .stillClockedIn(let msg, let blocker) = error { return .stillClockedIn(msg, blocker) }
+            return .rejected(punchRejectionMessage(error))
+        } catch {
+            return .rejected(error.localizedDescription)
+        }
+    }
+
+    /// "I'm not here" — nothing recorded for me; the requester is told.
+    @MainActor
+    func declineTwoToOne(_ req: ServerTwoToOneRequest) async -> String? {
+        do {
+            try await APIClient.shared.declineTwoToOne(requestId: req.requestId)
+            twoToOnePending.removeAll { $0.requestId == req.requestId }
+            DiagnosticLogger.shared.logAPI("2:1 verification #\(req.requestId) declined")
+            return nil
+        } catch {
+            twoToOnePending.removeAll { $0.requestId == req.requestId }
+            Task { await self.refreshServerShifts() }
+            return (error as? APIError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// (Re-)request verification from a partner on MY running visit.
+    @MainActor
+    func requestTwoToOne(serverVisitId: String, secondStaffId: String) async -> String? {
+        guard effectivelyOnline else { return "You're offline. Request the second staff member when you're back online." }
+        do {
+            let r = try await APIClient.shared.requestTwoToOne(visitId: serverVisitId, secondStaffId: secondStaffId)
+            DiagnosticLogger.shared.logAPI("2:1 verification requested from \(r.secondStaff.name) on \(serverVisitId) → #\(r.requestId), \(r.secondsLeft ?? 0)s")
+            twoToOneMine.removeAll { $0.visitId == serverVisitId }
+            twoToOneMine.insert(r, at: 0)
+            applyTwoToOne(TwoToOneVerifyPayload(pending: twoToOnePending, mine: twoToOneMine, windowSec: twoToOneWindowSec))
+            haptic(.success)
+            return nil
+        } catch {
+            haptic(.error)
+            let msg = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            DiagnosticLogger.shared.logAPI("2:1 verification request on \(serverVisitId) FAILED: \(msg)")
+            return msg
+        }
+    }
+
     func refreshMissedShifts() async {
         guard mode == .server, effectivelyOnline else { return }
         do {
@@ -1796,6 +1955,7 @@ final class AppState: ObservableObject {
         visit.serverVisitId = serverVisitId
         visit.ratio = s.ratio
         visit.partners = partners
+        visit.serverIndividualId = s.individual.id
         // build 86 / server v0.4.614 — service-derived staffing state.
         visit.needsSecondStaff = s.needsSecondStaff
         visit.serviceName = s.serviceName ?? s.service

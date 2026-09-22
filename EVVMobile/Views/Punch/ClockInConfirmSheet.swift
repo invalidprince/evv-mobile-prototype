@@ -22,6 +22,9 @@ struct ClockInConfirmSheet: View {
     /// `visit_in_progress`, server v0.4.604 names it). Renders the
     /// "Go to that visit" button under the refusal.
     @State private var blockingVisit: BlockingVisit?
+    /// Build 87 (server v0.4.615) — the 2:1 partner to ask for verification.
+    /// nil = clock in alone (allowed; request later from the visit card).
+    @State private var secondStaffId: String?
 
     // Manual address entry (GPS-unavailable fallback)
     @State private var manualStreet = ""
@@ -108,6 +111,16 @@ struct ClockInConfirmSheet: View {
 
                 if visit.isGroup {
                     groupClientPicker
+                }
+
+                // Build 87 — 2:1 service: who is the second staff member?
+                // The server sends them "verify you're here" the moment this
+                // punch lands (it never clocks THEM in). Scheduled partner is
+                // pre-selected; "Nobody yet" punches alone as before.
+                if appState.mode == .server && visit.ratio == "2:1" {
+                    TwoToOneStaffPicker(clientId: visit.serverIndividualId, shiftId: visit.serverShiftId, selection: $secondStaffId)
+                        .cardStyle()
+                        .padding(.horizontal)
                 }
 
                 VStack(spacing: 12) {
@@ -315,7 +328,8 @@ struct ClockInConfirmSheet: View {
             // regenerates the row UUIDs under this open sheet.
             let outcome = await appState.clockIn(visitId: visit.id,
                                                  serverShiftId: visit.serverShiftId,
-                                                 manualLocation: location)
+                                                 manualLocation: location,
+                                                 secondStaffId: visit.ratio == "2:1" ? secondStaffId : nil)
             isSubmitting = false
             switch outcome {
             case .synced:

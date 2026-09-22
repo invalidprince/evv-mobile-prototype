@@ -1,0 +1,89 @@
+{
+  "shifts": [],
+  "openShifts": [],
+  "twoToOneVerify": {
+    "pending": [
+      {
+        "requestId": 7,
+        "shiftId": 900,
+        "visitId": "V-2079",
+        "requestedBy": {
+          "staffId": "S013",
+          "name": "Nick Mudgett"
+        },
+        "secondStaff": {
+          "staffId": "S203",
+          "name": "Cassey Mudgett"
+        },
+        "individual": {
+          "id": "C673069",
+          "name": "Dustin Sackett"
+        },
+        "service": "W7068",
+        "serviceName": "In-Home & Community Support (2:1)",
+        "clockIn": "2:33 PM",
+        "status": "pending",
+        "requestedAt": "2026-09-22T18:33:10.000Z",
+        "expiresAt": "2026-09-22T18:35:10.000Z",
+        "secondsLeft": 120,
+        "windowSec": 120,
+        "confirmedVisitId": null
+      }
+    ],
+    "mine": [
+      {
+        "requestId": 8,
+        "shiftId": 900,
+        "visitId": "V-2081",
+        "requestedBy": {
+          "staffId": "S013",
+          "name": "Nick Mudgett"
+        },
+        "secondStaff": {
+          "staffId": "S203",
+          "name": "Cassey Mudgett"
+        },
+        "individual": {
+          "id": "C673069",
+          "name": "Dustin Sackett"
+        },
+        "service": "W7068",
+        "serviceName": "In-Home & Community Support (2:1)",
+        "clockIn": "2:33 PM",
+        "status": "expired",
+        "requestedAt": "2026-09-22T18:33:10.000Z",
+        "expiresAt": "2026-09-22T18:35:10.000Z",
+        "secondsLeft": 0,
+        "windowSec": 120,
+        "confirmedVisitId": null
+      },
+      {
+        "requestId": 9,
+        "shiftId": 900,
+        "visitId": "V-2082",
+        "requestedBy": {
+          "staffId": "S013",
+          "name": "Nick Mudgett"
+        },
+        "secondStaff": {
+          "staffId": "S203",
+          "name": "Cassey Mudgett"
+        },
+        "individual": {
+          "id": "C673069",
+          "name": "Dustin Sackett"
+        },
+        "service": "W7068",
+        "serviceName": "In-Home & Community Support (2:1)",
+        "clockIn": "2:33 PM",
+        "status": "confirmed",
+        "requestedAt": "2026-09-22T18:33:10.000Z",
+        "expiresAt": "2026-09-22T18:35:10.000Z",
+        "secondsLeft": 0,
+        "windowSec": 120,
+        "confirmedVisitId": "V-3000"
+      }
+    ],
+    "windowSec": 120
+  }
+}

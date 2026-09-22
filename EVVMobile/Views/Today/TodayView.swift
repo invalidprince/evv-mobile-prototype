@@ -45,6 +45,15 @@ struct TodayView: View {
                         StaleOpenVisitBanner(visit: visit)
                     }
 
+                    // Build 87 — "verify you're here" (server v0.4.615): a
+                    // partner clocked in on a 2:1 and named ME. Above the
+                    // active-visit card: it is a 120-second countdown.
+                    if appState.mode == .server {
+                        ForEach(appState.twoToOnePending) { req in
+                            TwoToOneVerifyBanner(request: req)
+                        }
+                    }
+
                     if appState.activeVisit != nil {
                         ActiveVisitCard()
                     }
@@ -467,5 +476,232 @@ struct StaleOpenVisitBanner: View {
         }) {
             ClockOutFlow(visit: target)
         }
+    }
+}
+
+
+// MARK: - 2:1 second-staff verification (build 87, server v0.4.615)
+
+/// "Nick clocked in with Dustin Sackett at 2:33 PM and named you as the
+/// second staff. Confirm within 1:58." — the prompt Nick asked for (#evv
+/// 2026-09-22: "it will appear on their phone/Today 'Hey you need to verify
+/// you're here'"). Confirming records MY visit on the partner's shift at the
+/// partner's clock-in (the EARLIEST) with MY GPS — that is how the pair stays
+/// matched for Sandata. Counts down locally off `expiresAt`; the AppState
+/// poll (5 s) drops the banner when the server says expired/handled.
+/// Lives in TodayView.swift on purpose — no new file, no hand-edited pbxproj.
+struct TwoToOneVerifyBanner: View {
+    @EnvironmentObject var appState: AppState
+    let request: ServerTwoToOneRequest
+    @State private var isSubmitting = false
+    @State private var error: String?
+    @State private var confirmedMessage: String?
+
+    private func fmt(_ secs: Int) -> String { String(format: "%d:%02d", secs / 60, secs % 60) }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            let left = request.secondsRemaining(at: ctx.date)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.2.wave.2.fill")
+                        .foregroundColor(Theme.warning)
+                    Text("Verify you're here")
+                        .font(.headline)
+                    Spacer()
+                    Text(left > 0 ? fmt(left) : "expired")
+                        .font(.system(.title3, design: .monospaced).weight(.bold))
+                        .foregroundColor(left <= 15 ? Theme.danger : Theme.warning)
+                        .accessibilityIdentifier("twoToOne.countdown")
+                }
+                Text("\(request.requestedBy.name) clocked in with \(request.individual?.name ?? "an individual") at \(request.clockIn ?? "—") on a 2:1 service and named you as the second staff member.")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Confirm and your visit is recorded with the same clock-in time (\(request.clockIn ?? "—")) and your own location — so the pair matches for EVV. Nothing is recorded if the timer runs out.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let e = error {
+                    Label(e, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let m = confirmedMessage {
+                    Label(m, systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.success)
+                } else {
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { @MainActor in
+                                isSubmitting = true
+                                if let e = await appState.declineTwoToOne(request) { error = e }
+                                isSubmitting = false
+                            }
+                        } label: {
+                            Text("Not here")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(isSubmitting)
+                        Button {
+                            Task { @MainActor in
+                                isSubmitting = true
+                                error = nil
+                                let outcome = await appState.confirmTwoToOne(request)
+                                isSubmitting = false
+                                switch outcome {
+                                case .synced, .queued:
+                                    confirmedMessage = "Confirmed — clocked in at \(request.clockIn ?? "the matched time")"
+                                case .rejected(let msg): error = msg
+                                case .stillClockedIn(let msg, _): error = msg
+                                }
+                            }
+                        } label: {
+                            if isSubmitting {
+                                HStack { ProgressView().tint(.white); Text("Confirming…") }
+                            } else {
+                                Label("I'm here — confirm", systemImage: "checkmark.circle.fill")
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: !isSubmitting && left > 0 && !appState.hasActiveVisit))
+                        .disabled(isSubmitting || left <= 0 || appState.hasActiveVisit)
+                        .accessibilityIdentifier("twoToOne.confirm")
+                    }
+                    if appState.hasActiveVisit {
+                        Text("Clock out of your current visit first.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(14)
+            .background(Theme.warning.opacity(0.14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.warning.opacity(0.6), lineWidth: 1))
+            .cornerRadius(14)
+            .accessibilityIdentifier("twoToOne.banner")
+        }
+    }
+}
+
+/// The "who is the second staff member?" picker shared by the scheduled
+/// Clock In sheet, the Unscheduled sheet and the active-visit "Request
+/// again" button. Loads `GET /two-to-one/candidates` (the scheduler's own
+/// eligibility rule); an already-scheduled partner is pre-selected. Selecting
+/// someone never clocks them in — the server sends them the verify prompt.
+struct TwoToOneStaffPicker: View {
+    /// The individual (server id) the partner must be eligible for.
+    let clientId: String?
+    var shiftId: Int? = nil
+    /// Service code or description (needed on the unscheduled path).
+    var service: String? = nil
+    @Binding var selection: String?
+    /// Header copy differs between "pick before you punch" and "request again".
+    var compact: Bool = false
+
+    @State private var candidates: [TwoToOneCandidate] = []
+    @State private var windowSec: Int = 120
+    @State private var loading = true
+    @State private var loadError: String?
+    @State private var loadedKey = ""
+
+    private var key: String { "\(clientId ?? "")|\(shiftId.map(String.init) ?? "")|\(service ?? "")" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !compact {
+                Label("Second staff member (2:1)", systemImage: "person.2.fill")
+                    .font(.subheadline.weight(.semibold))
+            }
+            if loading {
+                HStack(spacing: 8) { ProgressView().scaleEffect(0.8); Text("Loading staff…").font(.caption).foregroundColor(.secondary) }
+            } else if let e = loadError {
+                Label(e, systemImage: "exclamationmark.triangle").font(.caption).foregroundColor(Theme.danger)
+            } else if candidates.isEmpty {
+                Text("No other staff are eligible for this individual.").font(.caption).foregroundColor(.secondary)
+            } else {
+                Picker("Second staff", selection: Binding(get: { selection ?? "" }, set: { selection = $0.isEmpty ? nil : $0 })) {
+                    Text("Nobody yet").tag("")
+                    ForEach(candidates) { c in
+                        Text(c.name + ((c.onShift ?? false) ? " · scheduled" : "")).tag(c.staffId)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("twoToOne.picker")
+            }
+            Text("They get a “verify you're here” prompt on their phone and \(windowSec) seconds to confirm. Their visit is recorded with your clock-in time so the pair matches for EVV. Choosing nobody clocks you in alone; you can request them later from your visit.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task(id: key) { await load() }
+    }
+
+    @MainActor
+    private func load() async {
+        guard loadedKey != key else { return }
+        loadedKey = key
+        loading = true; loadError = nil
+        do {
+            let r = try await APIClient.shared.fetchTwoToOneCandidates(clientId: clientId, shiftId: shiftId, service: service)
+            candidates = r.candidates
+            if let w = r.windowSec, w > 0 { windowSec = w }
+            if selection == nil, let pre = r.candidates.first(where: { $0.onShift ?? false }) { selection = pre.staffId }
+            if let sel = selection, !r.candidates.contains(where: { $0.staffId == sel }) { selection = nil }
+        } catch {
+            loadError = (error as? APIError)?.errorDescription ?? error.localizedDescription
+            candidates = []
+        }
+        loading = false
+    }
+}
+
+/// "Request second staff" / "Request again" from the active-visit card.
+struct TwoToOneRequestSheet: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    let visit: Visit
+    @State private var selection: String?
+    @State private var isSubmitting = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(footer: Text("This is a 2:1 service. The person you pick is asked to verify they're here; if they confirm in time their visit is recorded at your clock-in (\(visit.actualStart.map { Self.timeLabel($0) } ?? "—")). If the timer runs out, nothing is recorded for them and you can request again.")) {
+                    TwoToOneStaffPicker(clientId: visit.serverIndividualId, shiftId: visit.serverShiftId, service: nil, selection: $selection, compact: true)
+                }
+                if let e = error {
+                    Section { Label(e, systemImage: "exclamationmark.triangle.fill").foregroundColor(Theme.danger).font(.subheadline) }
+                }
+                Section {
+                    Button {
+                        guard let sel = selection, let vid = visit.serverVisitId else { return }
+                        Task { @MainActor in
+                            isSubmitting = true; error = nil
+                            if let e = await appState.requestTwoToOne(serverVisitId: vid, secondStaffId: sel) {
+                                error = e
+                            } else {
+                                dismiss()
+                            }
+                            isSubmitting = false
+                        }
+                    } label: {
+                        if isSubmitting { HStack { ProgressView(); Text("Sending…") } }
+                        else { Label("Send verification request", systemImage: "paperplane.fill") }
+                    }
+                    .disabled(selection == nil || isSubmitting || visit.serverVisitId == nil)
+                }
+            }
+            .navigationTitle("Second staff")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+
+    static func timeLabel(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f.string(from: d)
     }
 }

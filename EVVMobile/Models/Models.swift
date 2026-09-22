@@ -119,6 +119,9 @@ struct Visit: Identifiable {
     var serverShiftId: Int?
     /// Server visit ID (used for clock-out API call).
     var serverVisitId: String?
+    /// Build 87 — the server INDIVIDUAL id (e.g. "C673069"), so the 2:1
+    /// second-staff picker can ask the server who is eligible for THIS person.
+    var serverIndividualId: String?
     /// All server visit IDs for this shift (used for 1:2 clock-out — clock out all).
     var serverVisitIds: [String] = []
     /// Ratio string from server, e.g. "2:1".

@@ -119,6 +119,95 @@ struct ShiftsResponse: Decodable {
     /// Settings → Punch Alerts' "Phone reminders" switch + the STAFF-leg
     /// minutes. Older servers omit it → no punch reminders are scheduled.
     let punchReminders: PunchReminderPolicy?
+    /// Build 87 / server v0.4.615 — 2:1 SECOND-STAFF VERIFICATION state:
+    /// `pending` = requests addressed to ME ("verify you're here", countdown +
+    /// Confirm), `mine` = the latest request on each of MY running visits
+    /// (waiting / expired / declined / confirmed). Older servers omit it.
+    let twoToOneVerify: TwoToOneVerifyPayload?
+}
+
+// MARK: - 2:1 second-staff verification (server v0.4.615, build 87)
+
+/// One verification request row as the server describes it. `secondsLeft`
+/// is the server's answer at fetch time; the banner counts down locally off
+/// `expiresAt` (ISO 8601) so it stays honest between refreshes.
+struct ServerTwoToOneRequest: Decodable, Identifiable {
+    struct Person: Decodable { let staffId: String; let name: String }
+    struct Individual: Decodable { let id: String; let name: String }
+    let requestId: Int
+    let shiftId: Int?
+    let visitId: String?
+    let requestedBy: Person
+    let secondStaff: Person
+    let individual: Individual?
+    let service: String?
+    let serviceName: String?
+    /// The clock-in the confirmer's visit will be recorded at (the requester's
+    /// punch — the EARLIEST of the pair).
+    let clockIn: String?
+    /// pending | confirmed | expired | declined | superseded | cancelled
+    let status: String
+    let expiresAt: String?
+    let secondsLeft: Int?
+    let windowSec: Int?
+    let confirmedVisitId: String?
+    var id: Int { requestId }
+
+    var expiresDate: Date? {
+        guard let s = expiresAt else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
+    /// Seconds remaining RIGHT NOW (local clock), floored at 0.
+    func secondsRemaining(at now: Date = Date()) -> Int {
+        guard let exp = expiresDate else { return max(0, secondsLeft ?? 0) }
+        return max(0, Int(ceil(exp.timeIntervalSince(now))))
+    }
+    var isPending: Bool { status == "pending" }
+}
+
+struct TwoToOneVerifyPayload: Decodable {
+    let pending: [ServerTwoToOneRequest]
+    let mine: [ServerTwoToOneRequest]
+    let windowSec: Int?
+}
+
+/// GET /api/two-to-one/candidates — who may be named as the second staff.
+struct TwoToOneCandidate: Decodable, Identifiable, Hashable {
+    let staffId: String
+    let name: String
+    /// Already scheduled on this shift (pre-selected in the picker).
+    let onShift: Bool?
+    var id: String { staffId }
+}
+
+struct TwoToOneCandidatesResponse: Decodable {
+    let candidates: [TwoToOneCandidate]
+    let windowSec: Int?
+    let ratio: String?
+    let service: String?
+}
+
+struct TwoToOneRequestBody: Encodable { let secondStaffId: String }
+
+struct TwoToOneRequestResponse: Decodable { let twoToOne: ServerTwoToOneRequest }
+
+/// Success body of POST /api/two-to-one/:id/confirm — the SAME shape as a
+/// clock-in (visit + visits) plus the match facts.
+struct TwoToOneConfirmResponse: Decodable {
+    struct Match: Decodable {
+        let matched: Bool?
+        let matchedClockIn: String?
+        let requestId: Int?
+        let fromVisitId: String?
+        let fromStaff: String?
+    }
+    let visit: ServerVisitInfo
+    let visits: [UnscheduledVisitCreated]?
+    let twoToOne: Match?
 }
 
 /// An active, unassigned recurring schedule a staff member can permanently
@@ -156,6 +245,10 @@ struct ClockInRequest: Encodable {
     let accuracy: Double?
     /// Manually entered service address (GPS-unavailable fallback punch).
     let address: String?
+    /// Build 87 (server v0.4.615) — the 2:1 partner named at clock-in. Sent
+    /// ONLY for a 2:1 shift when someone was picked; absent = the old payload.
+    /// It never clocks THEM in — it opens a "verify you're here" request.
+    var secondStaffId: String? = nil
 }
 
 struct ClockOutRequest: Encodable {
@@ -805,6 +898,11 @@ struct ServerIndividualOption: Codable, Identifiable {
     /// capable service still punches when delivered in person. Optional so a
     /// server that predates the key decodes as "no consult anywhere".
     let consultServices: [String]?
+    /// Build 87 (server v0.4.615 `twoToOneServices`) — services on this
+    /// individual's active authorizations staffed 2:1. The unscheduled sheet
+    /// shows the "Second staff member" picker ONLY for these; the server
+    /// re-checks the ratio on the POST (400 second_staff_not_allowed).
+    let twoToOneServices: [String]?
 }
 
 struct IndividualsResponse: Decodable {
@@ -1049,6 +1147,10 @@ struct UnscheduledVisitRequest: Encodable {
     /// consult on a service that has not opted in is REFUSED server-side
     /// (400 consult_not_allowed) — the POST is the control, not this field.
     let deliveryMode: String?
+    /// Build 87 (server v0.4.615) — 2:1 partner named at an unscheduled
+    /// clock-in (Nick's Dustin Sackett / W7068 case). Absent for every other
+    /// service; the server refuses it on a 1:1 (400) and on typed times.
+    var secondStaffId: String? = nil
 }
 
 struct UnscheduledVisitCreated: Decodable {
@@ -1782,13 +1884,13 @@ actor APIClient {
 
     // MARK: - Clock In
 
-    func clockIn(shiftId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil) async throws -> ServerVisitInfo {
+    func clockIn(shiftId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, secondStaffId: String? = nil) async throws -> ServerVisitInfo {
         let url = URL(string: "\(baseURL)/shifts/\(shiftId)/clock-in")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(ClockInRequest(lat: lat, lng: lng, accuracy: accuracy, address: address))
+        request.httpBody = try JSONEncoder().encode(ClockInRequest(lat: lat, lng: lng, accuracy: accuracy, address: address, secondStaffId: secondStaffId))
         request.timeoutInterval = 15
 
         let (data, response) = try await performRequest(request)
@@ -2363,14 +2465,14 @@ actor APIClient {
 
     // MARK: - Unscheduled Visit
 
-    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil, date: String? = nil, deliveryMode: String? = nil) async throws -> UnscheduledVisitResponse {
+    func createUnscheduledVisit(clientIds: [String], service: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil, unlistedName: String? = nil, startTime: String? = nil, endTime: String? = nil, date: String? = nil, deliveryMode: String? = nil, secondStaffId: String? = nil) async throws -> UnscheduledVisitResponse {
         let url = URL(string: "\(baseURL)/shifts/unscheduled")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
         request.httpBody = try JSONEncoder().encode(
-            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime, date: date, deliveryMode: deliveryMode)
+            UnscheduledVisitRequest(clientIds: clientIds.isEmpty ? nil : clientIds, service: service, lat: lat, lng: lng, accuracy: accuracy, address: address, unlistedName: unlistedName, startTime: startTime, endTime: endTime, date: date, deliveryMode: deliveryMode, secondStaffId: secondStaffId)
         )
         request.timeoutInterval = 15
 
@@ -2514,6 +2616,120 @@ actor APIClient {
             // 200 reached: the reason is RECORDED server-side.
             throw APIError.responseUnreadable(error)
         }
+    }
+
+    // MARK: - 2:1 second-staff verification (server v0.4.615, build 87)
+
+    /// Who may be named as the second staff for this individual / shift /
+    /// service. An EMPTY list on a 1:1 or 1:2 service is the honest answer —
+    /// the picker hides itself. `service` may be a code or a description.
+    func fetchTwoToOneCandidates(clientId: String?, shiftId: Int? = nil, service: String? = nil) async throws -> TwoToOneCandidatesResponse {
+        var comps = URLComponents(string: "\(baseURL)/two-to-one/candidates")!
+        var items: [URLQueryItem] = []
+        if let c = clientId, !c.isEmpty { items.append(URLQueryItem(name: "clientId", value: c)) }
+        if let s = shiftId { items.append(URLQueryItem(name: "shiftId", value: String(s))) }
+        if let sv = service, !sv.isEmpty { items.append(URLQueryItem(name: "service", value: sv)) }
+        comps.queryItems = items
+        var request = URLRequest(url: comps.url!)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not load staff."
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(TwoToOneCandidatesResponse.self, from: data) }
+        catch { throw APIError.decodingError(error) }
+    }
+
+    /// (Re-)request verification from a partner on MY running visit.
+    /// ONLINE-ONLY: a 120-second window makes no sense replayed from a queue.
+    func requestTwoToOne(visitId: String, secondStaffId: String) async throws -> ServerTwoToOneRequest {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/two-to-one/request")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(TwoToOneRequestBody(secondStaffId: secondStaffId))
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 {
+            throw APIError.forbidden((try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not allowed.")
+        }
+        if statusCode == 409 {
+            throw APIError.conflict((try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "That request cannot be sent right now.")
+        }
+        guard statusCode == 201 || statusCode == 200 else {
+            throw APIError.serverError(statusCode, (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not send the request.")
+        }
+        do { return try JSONDecoder().decode(TwoToOneRequestResponse.self, from: data).twoToOne }
+        catch { throw APIError.responseUnreadable(error) }
+    }
+
+    /// The NAMED second staff confirms from THIS phone. The server records
+    /// my visit at the requester's clock-in with MY location. ONLINE-ONLY.
+    /// 409 = expired / already handled / I'm still clocked in elsewhere.
+    func confirmTwoToOne(requestId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil, address: String? = nil) async throws -> TwoToOneConfirmResponse {
+        let url = URL(string: "\(baseURL)/two-to-one/\(requestId)/confirm")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(ClockInRequest(lat: lat, lng: lng, accuracy: accuracy, address: address))
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 {
+            throw APIError.clockInConflict(data, fallback: "This verification can no longer be confirmed.")
+        }
+        if statusCode == 403 {
+            throw APIError.forbidden((try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "This verification was not addressed to you.")
+        }
+        guard statusCode == 200 else {
+            throw APIError.serverError(statusCode, (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not confirm.")
+        }
+        do { return try JSONDecoder().decode(TwoToOneConfirmResponse.self, from: data) }
+        catch { throw APIError.responseUnreadable(error) }   // 200 reached: the visit EXISTS
+    }
+
+    /// "I'm not here" — nothing is recorded for me; the requester is told.
+    func declineTwoToOne(requestId: Int) async throws {
+        let url = URL(string: "\(baseURL)/two-to-one/\(requestId)/decline")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = "{}".data(using: .utf8)
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            throw APIError.serverError(statusCode, (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not decline.")
+        }
+    }
+
+    /// Cheap poll for the countdown surfaces — the same block GET /me/shifts carries.
+    func fetchTwoToOneStatus() async throws -> TwoToOneVerifyPayload {
+        let url = URL(string: "\(baseURL)/two-to-one/status")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 10
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            throw APIError.serverError(statusCode, "Could not read verification status")
+        }
+        do { return try JSONDecoder().decode(TwoToOneVerifyPayload.self, from: data) }
+        catch { throw APIError.decodingError(error) }
     }
 
     // MARK: - Missed DAYS (📅) (server v0.4.569, Todoist 6hWwwJ8Jr64937GH)

@@ -5,6 +5,8 @@ struct ActiveVisitCard: View {
     @State private var showClockOut = false
     @State private var showDocumentation = false
     @State private var clockOutAndNext = false
+    /// Build 87 — "Request second staff" / "Request again" (server v0.4.615).
+    @State private var showTwoToOneRequest = false
     private var nextVisit: Visit? {
         appState.todayVisits
             .filter { $0.status == .scheduled }
@@ -53,6 +55,12 @@ struct ActiveVisitCard: View {
                         .padding(.vertical, 4)
                         .background(Theme.primary.opacity(0.1))
                         .cornerRadius(8)
+                }
+
+                // Build 87 — 2:1 partner verification state (server v0.4.615):
+                // waiting (countdown) / verified / not verified + request again.
+                if appState.mode == .server, visit.ratio == "2:1", visit.serverVisitId != nil {
+                    twoToOneRow(for: visit)
                 }
 
                 if visit.manualLocationFlagged {
@@ -131,7 +139,66 @@ struct ActiveVisitCard: View {
                     DocumentationView(visit: visit)
                 }
             }
+            .sheet(isPresented: $showTwoToOneRequest) {
+                TwoToOneRequestSheet(visit: visit)
+            }
         }
+    }
+
+    /// Build 87 — the requester's view of the 2:1 verification: the latest
+    /// request on THIS visit (appState.twoToOneMine, by server visit id).
+    @ViewBuilder
+    private func twoToOneRow(for visit: Visit) -> some View {
+        let state = appState.twoToOneState(forServerVisitId: visit.serverVisitId)
+        VStack(alignment: .leading, spacing: 6) {
+            if let st = state, st.isPending {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let left = st.secondsRemaining(at: ctx.date)
+                    HStack(spacing: 6) {
+                        Image(systemName: "hourglass").foregroundColor(Theme.warning)
+                        Text("Waiting for \(st.secondStaff.name) to verify they're here")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text(String(format: "%d:%02d", left / 60, left % 60))
+                            .font(.system(.caption, design: .monospaced).weight(.bold))
+                            .foregroundColor(left <= 15 ? Theme.danger : Theme.warning)
+                    }
+                }
+                .accessibilityIdentifier("twoToOne.waiting")
+            } else if let st = state, st.status == "confirmed" {
+                Label("\(st.secondStaff.name) verified — clock-in times matched at \(st.clockIn ?? "")", systemImage: "checkmark.seal.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Theme.success)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    if let st = state {
+                        Label("\(st.secondStaff.name) \(st.status == "declined" ? "said they are not here" : "did not verify in time") — not clocked in", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(Theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if visit.showsSecondStaffRequired {
+                        Label("Second staff member has not verified", systemImage: "person.2.slash")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(Theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 4)
+                    if state != nil || visit.showsSecondStaffRequired {
+                        Button(state == nil ? "Request second staff" : "Request again") { showTwoToOneRequest = true }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .disabled(!appState.effectivelyOnline)
+                            .accessibilityIdentifier("twoToOne.requestAgain")
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.warning.opacity(0.10))
+        .cornerRadius(8)
     }
 
     /// "Wed, Sep 3 at 10:46 AM" for a prior-day clock-in.

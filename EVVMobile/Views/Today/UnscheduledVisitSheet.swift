@@ -113,6 +113,13 @@ struct ServerUnscheduledContent: View {
     //    onto a different service.
     enum DeliveryChoice: String { case inPerson = "in_person", consult = "consult" }
     @State private var deliveryChoice: DeliveryChoice?
+    // Build 87 (server v0.4.615) — the 2:1 partner named at this clock-in
+    // (Nick's Dustin Sackett / W7068 case: "it did not allow selecting
+    // another staff on the 2:1"). Shown ONLY when the selected service is
+    // in the individual's `twoToOneServices`; nil = clock in alone. Reset
+    // whenever the service or individual changes so a stale pick can never
+    // ride onto another service. The server re-checks the ratio (400).
+    @State private var twoToOneSecondStaffId: String?
     // Location state (GPS-unavailable address fallback)
     @ObservedObject private var locationManager = LocationManager.shared
     @State private var fallbackAddress = ""
@@ -193,6 +200,20 @@ struct ServerUnscheduledContent: View {
     private var consultPromptActive: Bool {
         isUnlisted ? unlistedServiceIsConsultCapable : selectedServiceIsConsultCapable
     }
+
+    /// Build 87 — the selected service is staffed 2:1 for the selected
+    /// individual (server `twoToOneServices` off staffing-ratio.serviceRatio).
+    /// Exactly ONE listed individual: a 2:1 covers one person by definition.
+    private var selectedServiceIsTwoToOne: Bool {
+        guard !isUnlisted, !selectedServiceName.isEmpty, selectedIndividualIds.count == 1 else { return false }
+        return appState.serverIndividuals
+            .filter { selectedIndividualIds.contains($0.id) }
+            .contains { ($0.twoToOneServices ?? []).contains(selectedServiceName) }
+    }
+    /// The second-staff picker is on screen: a 2:1 service on a LIVE punch.
+    private var twoToOnePickerActive: Bool { selectedServiceIsTwoToOne && !manualEntryActive }
+    /// What the POST carries — only when the picker was showing.
+    private var twoToOneParam: String? { twoToOnePickerActive ? twoToOneSecondStaffId : nil }
 
     /// The question is showing and nothing has been chosen yet — every
     /// start button is disabled while this is true.
@@ -504,6 +525,18 @@ struct ServerUnscheduledContent: View {
                     }
                 }
 
+                // Build 87 — 2:1 service: name the second staff member. They
+                // get "verify you're here" on their phone the moment this
+                // punch lands; confirming records THEIR visit at YOUR clock-in.
+                if twoToOnePickerActive {
+                    Section(header: Text("Second staff member (2:1)")) {
+                        TwoToOneStaffPicker(clientId: selectedIndividualIds.first,
+                                            service: selectedServiceName,
+                                            selection: $twoToOneSecondStaffId,
+                                            compact: true)
+                    }
+                }
+
                 if manualEntryActive {
                     Section(header: Text("Visit Times"), footer: Text(manualTimesFooter)) {
                         // Build 62 — the DATE, the desktop's `<input type="date"
@@ -670,9 +703,9 @@ struct ServerUnscheduledContent: View {
             .interactiveDismissDisabled(isSubmittingManual || isSubmittingLive)
             // Build 80 — a stale answer must never ride onto another service:
             // any change to what is being started clears the choice.
-            .onChange(of: selectedServiceName) { _ in deliveryChoice = nil }
+            .onChange(of: selectedServiceName) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
-            .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil }
+            .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
             // A refusal is about what was just tried; changing the attempt
             // clears it.
@@ -803,12 +836,14 @@ struct ServerUnscheduledContent: View {
         let serviceName = selectedServiceName
         let address = trimmedFallbackAddress
         let mode = deliveryModeParam
+        let secondStaff = twoToOneParam
         isSubmittingLive = true
         liveSubmitError = nil
         liveBlockingVisit = nil
         Task { @MainActor in
             let outcome = await appState.startUnscheduledVisit(clients: clients, service: serviceType, serviceName: serviceName,
-                                                               manualAddress: address, deliveryMode: mode)
+                                                               manualAddress: address, deliveryMode: mode,
+                                                               secondStaffId: secondStaff)
             finishLive(outcome)
         }
     }
