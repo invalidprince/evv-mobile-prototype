@@ -209,6 +209,20 @@ struct MedicationsDueCard: View {
                             .foregroundColor(.secondary)
                     }
                     statusChip(med)
+                    // build 84 / server v0.4.612 — the ADMINISTERED time, when it
+                    // differs from the slot. Without this a correction "given
+                    // 10:30" on a 10:35 dose looked like it never took (Nick
+                    // 2026-09-22). Server-rendered agency-clock label, shown as-is.
+                    if let chip = med.administeredChip {
+                        Text(chip)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Theme.success.opacity(0.15))
+                            .foregroundColor(Theme.success)
+                            .cornerRadius(5)
+                            .accessibilityLabel("administered at \(med.givenAtLabel ?? "")")
+                    }
                     // build 72 — a correction MARKER only. The reason is not in
                     // the payload and must never be shown on a MAR surface.
                     if med.isCorrection == true {
@@ -398,6 +412,14 @@ struct RecordAdministrationSheet: View {
                     .foregroundColor(.secondary)
                 if let label = med.dueTimeLabel {
                     Label("Due \(label)", systemImage: "clock")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                // build 84 — the time the CURRENT record says it was given
+                // (a correction's typed time), so the sheet header agrees with
+                // the row and with the web.
+                if med.status == "given", let g = med.givenAtLabel, !g.isEmpty {
+                    Label("Given \(g)", systemImage: "checkmark.circle")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

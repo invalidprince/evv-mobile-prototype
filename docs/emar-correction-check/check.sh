@@ -42,6 +42,10 @@ echo "[3b] build 74 — on behalf of another staff member (server v0.4.552)"
 ok "body carries on_behalf_staff_id (nil = myself)" 'grep -q "let on_behalf_staff_id: String?" $API && awk "/func correctMedAdministration/,/^    }/" $API | grep -q "on_behalf_staff_id: (behalf?.isEmpty == false) ? behalf : nil"'
 ok "AppState keeps the picker choices only when canRecordForOthers; cleared on sign-out" 'grep -q "medOnBehalfStaff = (response.canRecordForOthers == true) ? (response.onBehalfStaff ?? \[\]) : \[\]" $AS && awk "/func signOut/,/LocalCache.shared.clearAll/" $AS | grep -q "medOnBehalfStaff = \[\]"'
 ok "sheet: picker renders only when the server sent choices; defaults to Myself; sent with the POST" 'grep -q "if !appState.medOnBehalfStaff.isEmpty { onBehalfSection }" $CS && grep -q "Text(\"Myself\").tag(\"\")" $CS && grep -q "onBehalfStaffId: onBehalfStaffId.isEmpty ? nil : onBehalfStaffId" $CS'
+echo "[3c] build 84 — the ADMINISTERED time is displayed (server v0.4.612)"
+ok "DueMedication decodes givenAt + givenAtLabel (optional)" 'grep -q "let givenAt: String?" $API && grep -q "let givenAtLabel: String?" $API'
+ok "row shows the administered chip from the SERVER label (never a device-tz conversion)" 'grep -q "if let chip = med.administeredChip {" $MC && ! awk "/var administeredChip/,/^    }/" $API | grep -q "DateFormatter"'
+ok "sheet header shows the current administered time; picker defaults to it" 'grep -q "if med.status == \"given\", let g = med.givenAtLabel" $CS && grep -q "if let cur = med.givenAtInstant, cur <= Date()" $CS'
 echo "[4] build number"
 # Build 75 (keyboard dismissal) changed this from an equality pin to a floor.
 # An exact-equality build pin fires on EVERY later card, which makes it noise

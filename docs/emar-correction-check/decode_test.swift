@@ -5,7 +5,7 @@ let data = try! Data(contentsOf: URL(fileURLWithPath: path))
 let r = try! JSONDecoder().decode(MedicationsResponse.self, from: data)
 var n = 0
 func ok(_ c: Bool, _ l: String) { if c { n += 1 } else { print("FAIL", l); exit(1) } }
-ok(r.due.count == 2, "two due rows")
+ok(r.due.count == 3, "three due rows")
 ok(r.correctable?.count == 1, "one earlier dose")
 ok(r.correctionWindowHours == 48, "48h window")
 ok(r.canCorrectAny == true, "canCorrectAny")
@@ -32,4 +32,17 @@ ok(r.canRecordForOthers == true && r.onBehalfStaff?.count == 2 && r.onBehalfStaf
 ok(o.canRecordForOthers == nil && o.onBehalfStaff == nil, "old server: no picker keys, no crash")
 let body2 = try! JSONEncoder().encode(CorrectAdministrationBody(action: "given", notes: "x", given_at: "2026-09-15T20:00:00-04:00", on_behalf_staff_id: "S102"))
 ok(String(data: body2, encoding: .utf8)!.contains("\"on_behalf_staff_id\":\"S102\""), "on-behalf body carries the staff id")
+// build 84 / server v0.4.612 — the ADMINISTERED time is displayed (Nick 2026-09-22: corrected
+// a 10:35 dose to "given 10:30", row kept reading 10:35 because the payload never carried it)
+let corrected = r.due[2]
+ok(corrected.givenAtLabel == "10:30 AM" && corrected.givenAt == "2026-09-16T14:30:00.000Z", "given row decodes givenAt + givenAtLabel")
+ok(corrected.administeredChip == "given 10:30 AM", "row chip = 'given 10:30 AM' (differs from the 10:35 slot)")
+ok(corrected.givenAtInstant != nil && iso.string(from: corrected.givenAtInstant!) == "2026-09-16T10:30:00-04:00", "givenAtInstant parses the fractional-seconds ISO into 10:30 ET (picker default)")
+ok(r.due[1].administeredChip == nil && r.due[1].givenAtInstant == nil, "missed row: no administered chip, no instant")
+ok(e.administeredChip == "given Sep 15, 8:05 PM", "earlier given row carries the server label verbatim (next-day label incl. date)")
+ok(o.due[0].givenAt == nil && o.due[0].givenAtLabel == nil && o.due[0].administeredChip == nil, "old server: no givenAt keys, no chip, no crash")
+let sameSlot = try! JSONDecoder().decode(DueMedication.self, from: """
+{"id":5,"clientId":"C1","clientName":"A","medName":"M","status":"given","late":false,"recordable":false,"dueTimeLabel":"8:00 AM","givenAtLabel":"8:00 AM"}
+""".data(using: .utf8)!)
+ok(sameSlot.administeredChip == nil, "given exactly on the slot → no redundant second clock")
 print("\(n) decode checks passed")

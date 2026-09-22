@@ -1244,6 +1244,17 @@ struct DueMedication: Decodable, Identifiable {
     let isCorrection: Bool?
     let date: String?
     let dateLabel: String?
+    /// build 84 / server v0.4.612 — the ADMINISTERED time of a given row.
+    /// Nick (2026-09-22) corrected a 10:35 dose to "administered 10:30", got
+    /// the success alert, and the row kept reading 10:35: the server had
+    /// stored 10:30 all along but this payload only ever carried the
+    /// scheduled slot, so the app had nothing to show. `givenAtLabel` is a
+    /// server-rendered wall-clock label in the AGENCY clock (same rule as
+    /// `dueTimeLabel` — display as given, never convert on the device);
+    /// `givenAt` is the ISO instant. Both nil unless status is given, and
+    /// both optional so an older server / MockData still decodes.
+    let givenAt: String?
+    let givenAtLabel: String?
 
     /// Missing field (old server / mock data) ⇒ fall back to `recordable`, the
     /// pre-v0.4.295 behaviour. Never default to `false`: that would hide Given
@@ -1253,6 +1264,28 @@ struct DueMedication: Decodable, Identifiable {
     /// The Correct button: server-decided, and only on a row that is NOT
     /// first-recordable (recorded, or auto-missed). Never inferred client-side.
     var offersCorrection: Bool { (canCorrect ?? false) && !recordable }
+
+    /// The administered-time chip text for a GIVEN row: the server's label
+    /// when it differs from the scheduled slot ("given 10:30 AM" on a 10:35
+    /// dose), nil otherwise — a dose given exactly on its slot needs no second
+    /// clock. A row that is not `given`, or an old server, shows nothing.
+    var administeredChip: String? {
+        guard status == "given", let g = givenAtLabel, !g.isEmpty else { return nil }
+        if let d = dueTimeLabel, d == g { return nil }
+        return "given \(g)"
+    }
+
+    /// The current record's administered instant (server ISO-8601, offset or
+    /// Z, with or without fractional seconds), for the correction sheet's
+    /// picker default. nil when the row is not given / old server.
+    var givenAtInstant: Date? {
+        guard status == "given", let s = givenAt, !s.isEmpty else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
 
     /// Default for the correction sheet's "time administered" picker: the
     /// dose's scheduled time on its date, in the AGENCY timezone. Falls back to
