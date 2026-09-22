@@ -98,6 +98,13 @@ struct ServerShift: Decodable {
     /// servers omit both; the badge then falls back to ratio + empty partners.
     let needsSecondStaff: Bool?
     let requiredStaff: Int?
+    /// build 89 / server v0.4.621 — open-shift pickups need a MANAGER'S
+    /// approval. `claimRequested` is true on an open shift THIS staff member
+    /// has already requested (render "Requested" instead of Pick Up);
+    /// `requestedWeekdays` lists the weekdays of the shift's recurring rule
+    /// they have a pending permanent request on. Older servers omit both.
+    let claimRequested: Bool?
+    let requestedWeekdays: [Int]?
 }
 
 struct ShiftsResponse: Decodable {
@@ -225,11 +232,19 @@ struct ServerOpenRule: Decodable, Identifiable {
     let intervalWeeks: Int?
     let individual: ServerIndividual
     let individual2: ServerIndividual?
+    /// build 89 / server v0.4.621 — weekdays this staff member already has a
+    /// PENDING permanent pickup request on (manager approval outstanding).
+    let requestedWeekdays: [Int]?
 }
 
 /// Success payload of POST /api/recurring/:id/claim-weekday.
 struct ClaimRuleResponse: Decodable {
     let ok: Bool?
+    /// build 89 / server v0.4.621 — true when the pickup was recorded as a
+    /// REQUEST awaiting manager approval (nothing assigned yet). `message` is
+    /// the server's human line for the confirmation alert.
+    let pending: Bool?
+    let message: String?
     let ruleId: Int?
     let weekday: Int?
     let weekdayLabel: String?
@@ -1988,7 +2003,16 @@ actor APIClient {
 
     // MARK: - Claim Shift
 
-    func claimShift(shiftId: Int) async throws -> ServerShift {
+    /// Result of POST /api/shifts/:id/claim. Server v0.4.621 records a
+    /// REQUEST (`pending: true`) that a manager approves; older servers assign
+    /// on the spot and return only `shift`.
+    struct ClaimShiftResult {
+        let shift: ServerShift
+        let pending: Bool
+        let message: String?
+    }
+
+    func claimShift(shiftId: Int) async throws -> ClaimShiftResult {
         let url = URL(string: "\(baseURL)/shifts/\(shiftId)/claim")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -2012,12 +2036,14 @@ actor APIClient {
         // Decode defensively: try {"shift": ...} wrapper first, then bare shift
         struct WrappedClaimResponse: Decodable {
             let shift: ServerShift
+            let pending: Bool?
+            let message: String?
         }
         if let wrapped = try? JSONDecoder().decode(WrappedClaimResponse.self, from: data) {
-            return wrapped.shift
+            return ClaimShiftResult(shift: wrapped.shift, pending: wrapped.pending ?? false, message: wrapped.message)
         }
         do {
-            return try JSONDecoder().decode(ServerShift.self, from: data)
+            return ClaimShiftResult(shift: try JSONDecoder().decode(ServerShift.self, from: data), pending: false, message: nil)
         } catch {
             throw APIError.decodingError(error)
         }

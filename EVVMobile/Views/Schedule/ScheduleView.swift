@@ -221,19 +221,34 @@ struct ServerOpenRulesSection: View {
 
                     ForEach(rule.weekdays, id: \.self) { wd in
                         let key = "\(rule.id)-\(wd)"
-                        Button(action: { pending = PendingPickup(rule: rule, weekday: wd) }) {
-                            if appState.claimingRuleKey == key {
-                                HStack(spacing: 8) {
-                                    ProgressView().tint(.white)
-                                    Text("Picking up…")
-                                }
-                            } else {
-                                Label("Pick up \(Self.weekdayPlurals[wd])", systemImage: "repeat")
+                        if (rule.requestedWeekdays ?? []).contains(wd) {
+                            // build 89 / server v0.4.621 — pending permanent request.
+                            HStack(spacing: 8) {
+                                Image(systemName: "hourglass")
+                                Text("\(Self.weekdayPlurals[wd]) requested — awaiting approval")
+                                    .font(.subheadline.weight(.semibold))
                             }
+                            .foregroundColor(Theme.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.primary.opacity(0.10))
+                            .cornerRadius(10)
+                            .accessibilityIdentifier("openRuleRequested-\(key)")
+                        } else {
+                            Button(action: { pending = PendingPickup(rule: rule, weekday: wd) }) {
+                                if appState.claimingRuleKey == key {
+                                    HStack(spacing: 8) {
+                                        ProgressView().tint(.white)
+                                        Text("Requesting…")
+                                    }
+                                } else {
+                                    Label("Request \(Self.weekdayPlurals[wd])", systemImage: "repeat")
+                                }
+                            }
+                            .buttonStyle(PrimaryButtonStyle(color: Theme.success,
+                                                            enabled: appState.claimingRuleKey == nil && appState.effectivelyOnline))
+                            .disabled(appState.claimingRuleKey != nil || !appState.effectivelyOnline)
                         }
-                        .buttonStyle(PrimaryButtonStyle(color: Theme.success,
-                                                        enabled: appState.claimingRuleKey == nil && appState.effectivelyOnline))
-                        .disabled(appState.claimingRuleKey != nil || !appState.effectivelyOnline)
                     }
 
                     if !appState.effectivelyOnline {
@@ -248,9 +263,9 @@ struct ServerOpenRulesSection: View {
         .alert(item: $pending) { p in
             let day = Self.weekdayPlurals[p.weekday]
             return Alert(
-                title: Text("Pick up \(day) permanently?"),
-                message: Text("You'll be scheduled every \(String(day.dropLast())) \(p.rule.start) – \(p.rule.end) with \(p.rule.individual.name) from now on, until a manager reassigns it. This covers ALL future \(day), not just one date."),
-                primaryButton: .default(Text("Pick up \(day)")) {
+                title: Text("Request \(day) permanently?"),
+                message: Text("Once a manager approves, you'll be scheduled every \(String(day.dropLast())) \(p.rule.start) – \(p.rule.end) with \(p.rule.individual.name) from then on, until a manager reassigns it. This covers ALL future \(day), not just one date."),
+                primaryButton: .default(Text("Request \(day)")) {
                     Task { await appState.claimRuleWeekday(ruleId: p.rule.id, weekday: p.weekday) }
                 },
                 secondaryButton: .cancel()
@@ -328,23 +343,42 @@ struct ServerOpenShiftsSection: View {
                         StatusBadge(text: "2:1", color: Theme.primary)
                     }
 
-                    Button(action: {
-                        Task {
-                            await appState.claimOpenShift(shiftId: shift.id)
+                    if shift.claimRequested == true {
+                        // build 89 / server v0.4.621 — already requested; a
+                        // manager must approve before it joins the schedule.
+                        HStack(spacing: 8) {
+                            Image(systemName: "hourglass")
+                            Text("Requested — awaiting manager approval")
+                                .font(.subheadline.weight(.semibold))
                         }
-                    }) {
-                        if appState.claimingShiftId == shift.id {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .tint(.white)
-                                Text("Picking up…")
+                        .foregroundColor(Theme.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Theme.primary.opacity(0.10))
+                        .cornerRadius(10)
+                        .accessibilityIdentifier("openShiftRequested-\(shift.id)")
+                    } else {
+                        Button(action: {
+                            Task {
+                                await appState.claimOpenShift(shiftId: shift.id)
                             }
-                        } else {
-                            Label("Pick Up Shift", systemImage: "hand.raised.fill")
+                        }) {
+                            if appState.claimingShiftId == shift.id {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .tint(.white)
+                                    Text("Requesting…")
+                                }
+                            } else {
+                                Label("Request Shift", systemImage: "hand.raised.fill")
+                            }
                         }
+                        .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: appState.claimingShiftId == nil))
+                        .disabled(appState.claimingShiftId != nil)
+                        Text("A manager approves each pickup — you'll be notified.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    .buttonStyle(PrimaryButtonStyle(color: Theme.success, enabled: appState.claimingShiftId == nil))
-                    .disabled(appState.claimingShiftId != nil)
                 }
                 .cardStyle()
             }

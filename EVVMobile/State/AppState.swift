@@ -2037,9 +2037,15 @@ final class AppState: ObservableObject {
         do {
             let resp = try await APIClient.shared.claimRuleWeekday(ruleId: ruleId, weekday: weekday)
             let label = resp.weekdayLabel ?? "That weekday"
-            var msg = "\(label) are yours — every future one on this schedule is assigned to you until a manager changes it."
-            if let assigned = resp.assigned, assigned > 0 {
-                msg += " \(assigned) upcoming shift\(assigned == 1 ? "" : "s") added to your schedule."
+            var msg: String
+            if resp.pending == true {
+                // build 89 / server v0.4.621 — a pickup is a REQUEST a manager approves.
+                msg = resp.message ?? "Request sent — a manager must approve your pickup of \(label). You'll be notified when it's decided."
+            } else {
+                msg = "\(label) are yours — every future one on this schedule is assigned to you until a manager changes it."
+                if let assigned = resp.assigned, assigned > 0 {
+                    msg += " \(assigned) upcoming shift\(assigned == 1 ? "" : "s") added to your schedule."
+                }
             }
             ruleClaimMessage = msg
             await refreshServerShifts()
@@ -2057,11 +2063,18 @@ final class AppState: ObservableObject {
         defer { claimingShiftId = nil }
 
         do {
-            _ = try await APIClient.shared.claimShift(shiftId: shiftId)
+            let result = try await APIClient.shared.claimShift(shiftId: shiftId)
+            if result.pending {
+                // build 89 / server v0.4.621 — a pickup is a REQUEST a manager
+                // approves. Reuses the rule-claim alert so both pickups confirm
+                // the same way; the shift shows "Requested" after refresh.
+                ruleClaimMessage = result.message ?? "Request sent — a manager must approve this pickup. You'll be notified when it's decided."
+            }
             await refreshServerShifts()
         } catch let error as APIError {
-            if case .conflict = error {
-                serverError = "Shift no longer available"
+            if case .conflict(let text) = error {
+                // v0.4.621: 409 `already_requested` carries a human message.
+                serverError = text.isEmpty ? "Shift no longer available" : text
                 showServerError = true
             } else {
                 surfaceServerError(error)
