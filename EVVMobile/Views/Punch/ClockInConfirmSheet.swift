@@ -45,13 +45,31 @@ struct ClockInConfirmSheet: View {
         !manualZip.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// Build 84 — THIS sheet's punch has been accepted (server-confirmed or
+    /// durably queued). From here on the running visit is OURS, so the
+    /// "still clocked in" guard below must never fire for it, and the
+    /// button stays dead for the frames between the success cover going
+    /// away and this sheet dismissing.
+    @State private var didPunch = false
+
     /// One active visit at a time — no new clock-in while a visit is running.
-    private var punchBlocked: Bool { appState.hasActiveVisit }
+    ///
+    /// 🚨 Build 84 (Nick #evv 2026-09-22, Erik Hoover clock-in on build 83):
+    /// `appState.clockIn` flips the Today row to in-progress OPTIMISTICALLY
+    /// before the request leaves, so `hasActiveVisit` turns true while the
+    /// punch is still in flight — and this sheet, still on screen under the
+    /// spinner, rendered "You're still clocked in on Erik Hoover… Clock out
+    /// of that visit first." for ~1 s until the green cover replaced it.
+    /// ECS shows exactly one POST, status 200: the banner was about the very
+    /// visit being created. The guard is only meaningful BEFORE this sheet
+    /// has punched; while submitting or after success the running visit is
+    /// ours by definition.
+    private var punchBlocked: Bool { appState.hasActiveVisit && !isSubmitting && !didPunch }
 
     // Block confirm while a GPS fix is still being acquired so the punch
     // carries real coordinates (acquisition is bounded by a 10s timeout),
     // and always block while another visit is running.
-    private var canConfirm: Bool { !punchBlocked && !isAcquiringLocation && !isSubmitting && (!gpsUnavailable || manualAddressValid) }
+    private var canConfirm: Bool { !punchBlocked && !isAcquiringLocation && !isSubmitting && !didPunch && (!gpsUnavailable || manualAddressValid) }
 
     init(visit: Visit) {
         self.visit = visit
@@ -270,7 +288,7 @@ struct ClockInConfirmSheet: View {
     }
 
     private func confirm() {
-        guard !isSubmitting else { return }
+        guard !isSubmitting, !didPunch else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
             // Build 83 — INLINE, named. The root alert cannot present behind
@@ -301,9 +319,11 @@ struct ClockInConfirmSheet: View {
             isSubmitting = false
             switch outcome {
             case .synced:
+                didPunch = true
                 successMessage = nil          // "Clocked in h:mm a"
                 showSuccess = true
             case .queued:
+                didPunch = true
                 successMessage = "Clock-in saved — will sync when online"
                 showSuccess = true
             case .rejected(let message):

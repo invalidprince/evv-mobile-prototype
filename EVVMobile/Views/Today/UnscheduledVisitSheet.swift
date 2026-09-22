@@ -119,8 +119,21 @@ struct ServerUnscheduledContent: View {
 
     private let maxIndividuals = 2  // 1:2 group visits are the max
 
+    /// Build 84 — THIS sheet's punch has been accepted (the success cover
+    /// went up). Set from `showSuccess` so every accept path is covered.
+    @State private var didPunch = false
+
     /// One active visit at a time — no new clock-in while a visit is running.
-    private var punchBlocked: Bool { appState.hasActiveVisit }
+    ///
+    /// Build 84 (same defect as ClockInConfirmSheet, Nick #evv 2026-09-22):
+    /// the AppState punch flips the local row to in-progress optimistically,
+    /// so `hasActiveVisit` is true WHILE this sheet's own request is in
+    /// flight and again for the frames between the success cover closing
+    /// and the sheet dismissing. Neither is "another visit is running" —
+    /// it is ours — so the guard only applies before this sheet has punched.
+    private var punchBlocked: Bool {
+        appState.hasActiveVisit && !isSubmittingLive && !isSubmittingManual && !didPunch
+    }
 
     /// GPS could not be obtained (denied, restricted, or timed out) and no
     /// usable coordinates are available for the punch.
@@ -144,7 +157,7 @@ struct ServerUnscheduledContent: View {
 
     /// Combined enable check for the live clock-in buttons.
     private var clockInAllowed: Bool {
-        !punchBlocked && !locationManager.isAcquiring && locationRequirementMet && !isSubmittingLive
+        !punchBlocked && !locationManager.isAcquiring && locationRequirementMet && !isSubmittingLive && !didPunch
     }
 
     /// True when the currently selected service does not require live EVV
@@ -641,6 +654,10 @@ struct ServerUnscheduledContent: View {
             .fullScreenCover(isPresented: $showSuccess, onDismiss: { onDismiss() }) {
                 ClockInSuccessView(message: successMessage ?? (manualEntryActive ? "Time recorded" : nil))
             }
+            // Build 84 — once the success cover has shown, the running visit
+            // is this sheet's own; never render the "still clocked in" guard
+            // over it while the sheet is on its way out.
+            .onChange(of: showSuccess) { if $0 { didPunch = true } }
             // A picker bounded to today…today-N can still hold a stale value if
             // the window SHRINKS after the sheet opened (the policy arrives on
             // a later refresh). Clamp rather than submit a date the server will
@@ -760,7 +777,7 @@ struct ServerUnscheduledContent: View {
     }
 
     private func startVisit() {
-        guard !isSubmittingLive else { return }
+        guard !isSubmittingLive, !didPunch else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
             appState.haptic(.error)
@@ -797,7 +814,7 @@ struct ServerUnscheduledContent: View {
     }
 
     private func startVisitWithoutService() {
-        guard !isSubmittingLive else { return }
+        guard !isSubmittingLive, !didPunch else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
             appState.haptic(.error)
@@ -874,7 +891,7 @@ struct ServerUnscheduledContent: View {
 
     // Manual time entry for a non-EVV service (listed individuals)
     private func startManualVisit() {
-        guard !isSubmittingManual else { return }
+        guard !isSubmittingManual, !didPunch else { return }
         let selectedIndividuals = appState.serverIndividuals.filter { selectedIndividualIds.contains($0.id) }
         guard !selectedIndividuals.isEmpty, !selectedServiceName.isEmpty, manualTimesValid else { return }
 
@@ -904,7 +921,7 @@ struct ServerUnscheduledContent: View {
 
     // Manual time entry for a non-EVV service (unlisted individual)
     private func startUnlistedManualVisit() {
-        guard !isSubmittingManual else { return }
+        guard !isSubmittingManual, !didPunch else { return }
         let name = unlistedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !unlistedServiceName.isEmpty, manualTimesValid else { return }
 
@@ -927,7 +944,7 @@ struct ServerUnscheduledContent: View {
 
     // F2: Start visit for unlisted individual
     private func startUnlistedVisit() {
-        guard !isSubmittingLive else { return }
+        guard !isSubmittingLive, !didPunch else { return }
         // Guard against stale UI: never start while another visit is running.
         guard !appState.hasActiveVisit else {
             appState.haptic(.error)
