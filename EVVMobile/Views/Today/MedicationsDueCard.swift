@@ -209,7 +209,7 @@ struct MedicationsDueCard: View {
                             .foregroundColor(.secondary)
                     }
                     statusChip(med)
-                    // build 84 / server v0.4.612 — the ADMINISTERED time, when it
+                    // build 85 / server v0.4.613 — the ADMINISTERED time, when it
                     // differs from the slot. Without this a correction "given
                     // 10:30" on a 10:35 dose looked like it never took (Nick
                     // 2026-09-22). Server-rendered agency-clock label, shown as-is.
@@ -415,7 +415,7 @@ struct RecordAdministrationSheet: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                // build 84 — the time the CURRENT record says it was given
+                // build 85 — the time the CURRENT record says it was given
                 // (a correction's typed time), so the sheet header agrees with
                 // the row and with the web.
                 if med.status == "given", let g = med.givenAtLabel, !g.isEmpty {

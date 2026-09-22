@@ -99,7 +99,7 @@ struct CorrectAdministrationSheet: View {
             }
             .onAppear {
                 // Default the administered time to what the CURRENT record says
-                // (build 84: a given row's own administered time — a
+                // (build 85: a given row's own administered time — a
                 // re-correction starts from the truth, not from the slot), else
                 // the dose's SCHEDULED time on its date (agency clock); either
                 // way capped at now.
@@ -141,7 +141,7 @@ struct CorrectAdministrationSheet: View {
                     Text("currently \(med.status)")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
-                    // build 84 — what the CURRENT record says the administered
+                    // build 85 — what the CURRENT record says the administered
                     // time is, so a re-correction starts from the truth.
                     if med.status == "given", let g = med.givenAtLabel, !g.isEmpty {
                         Text("at \(g)")

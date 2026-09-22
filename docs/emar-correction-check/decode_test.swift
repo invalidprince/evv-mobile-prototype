@@ -32,7 +32,7 @@ ok(r.canRecordForOthers == true && r.onBehalfStaff?.count == 2 && r.onBehalfStaf
 ok(o.canRecordForOthers == nil && o.onBehalfStaff == nil, "old server: no picker keys, no crash")
 let body2 = try! JSONEncoder().encode(CorrectAdministrationBody(action: "given", notes: "x", given_at: "2026-09-15T20:00:00-04:00", on_behalf_staff_id: "S102"))
 ok(String(data: body2, encoding: .utf8)!.contains("\"on_behalf_staff_id\":\"S102\""), "on-behalf body carries the staff id")
-// build 84 / server v0.4.612 — the ADMINISTERED time is displayed (Nick 2026-09-22: corrected
+// build 85 / server v0.4.613 — the ADMINISTERED time is displayed (Nick 2026-09-22: corrected
 // a 10:35 dose to "given 10:30", row kept reading 10:35 because the payload never carried it)
 let corrected = r.due[2]
 ok(corrected.givenAtLabel == "10:30 AM" && corrected.givenAt == "2026-09-16T14:30:00.000Z", "given row decodes givenAt + givenAtLabel")

@@ -1244,7 +1244,7 @@ struct DueMedication: Decodable, Identifiable {
     let isCorrection: Bool?
     let date: String?
     let dateLabel: String?
-    /// build 84 / server v0.4.612 — the ADMINISTERED time of a given row.
+    /// build 85 / server v0.4.613 — the ADMINISTERED time of a given row.
     /// Nick (2026-09-22) corrected a 10:35 dose to "administered 10:30", got
     /// the success alert, and the row kept reading 10:35: the server had
     /// stored 10:30 all along but this payload only ever carried the
