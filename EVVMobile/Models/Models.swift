@@ -133,6 +133,11 @@ struct Visit: Identifiable {
     /// dashboard shows the same "needs 2nd staff" chip off the same rule.
     /// Older servers omit the key → nil → fallback below.
     var needsSecondStaff: Bool?
+    /// Build 90 (Todoist 6hXqxmCPjjhjCGHH) — unsigned MANDATORY documents
+    /// for this shift's individual that the signed-in staff member still
+    /// owes (server per-shift `pending_acknowledgements`). Shown as a prompt
+    /// on the clock-in sheet; never a gate. Empty in mock mode / older servers.
+    var pendingAcknowledgements: [ServerPendingAcknowledgement] = []
     /// THE one rule for the badge: the server's answer when present, else
     /// (older server) a 2:1 shift whose partner list is empty.
     var showsSecondStaffRequired: Bool {

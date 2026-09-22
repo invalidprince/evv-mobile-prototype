@@ -85,6 +85,18 @@ struct ClockInConfirmSheet: View {
         return f.string(from: Date())
     }
 
+    /// Build 90 — `visit` is a value copy taken when the sheet opened; after
+    /// a sign + refresh, read the SAME shift's list off the refreshed Today
+    /// set so the card disappears while the sheet stays open. Falls back to
+    /// the copy when the shift is not on Today (unscheduled / carry-over).
+    private var livePendingAcknowledgements: [ServerPendingAcknowledgement] {
+        if let sid = visit.serverShiftId,
+           let fresh = appState.todayVisits.first(where: { $0.serverShiftId == sid }) {
+            return fresh.pendingAcknowledgements
+        }
+        return visit.pendingAcknowledgements
+    }
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -111,6 +123,20 @@ struct ClockInConfirmSheet: View {
 
                 if visit.isGroup {
                     groupClientPicker
+                }
+
+                // Build 90 — unsigned mandatory documents for this individual
+                // (server per-shift pending_acknowledgements). A prompt above
+                // the punch, never a gate: Confirm Clock In is unchanged.
+                // Dismissing the sign sheet refreshes shifts so a signed doc
+                // drops off without a manual reload.
+                if appState.mode == .server && !livePendingAcknowledgements.isEmpty {
+                    PendingAcknowledgementsCard(
+                        items: livePendingAcknowledgements,
+                        online: appState.effectivelyOnline,
+                        onDismissSign: { Task { await appState.refreshServerShifts() } }
+                    )
+                    .padding(.horizontal)
                 }
 
                 // Build 87 — 2:1 service: who is the second staff member?
@@ -348,4 +374,111 @@ struct ClockInConfirmSheet: View {
             }
         }
     }
+}
+
+// MARK: - Mandatory sign-off prompt (build 90, Todoist 6hXqxmCPjjhjCGHH)
+//
+// Nick: "If there is a mandatory file that there is no updated signature, it
+// will appear in the visit (when you clock in and in documentation) on iOS
+// and dashboard. It should bring them to sign it with a link similar to the
+// todo."
+//
+// ONE card, two hosts: the clock-in sheet (fed by the shift's server
+// `pending_acknowledgements`) and DocumentationView (fed by the documentation
+// template's `pendingAcknowledgements`). A PROMPT, never a gate — the host's
+// primary action is untouched. Renders NOTHING when the list is empty.
+//
+// Tapping a row opens the SAME web sign-off page the Work tab's ack rows open
+// (`/my-day/acknowledgements`, in-app Safari against the portal host) — "a link
+// similar to the todo". Signing is ONLINE-ONLY, like every Work-tab action:
+// offline, the rows are inert and say so. `onDismissSign` lets the host
+// refresh its payload so a just-signed document drops off without a reload.
+struct PendingAcknowledgementsCard: View {
+    let items: [ServerPendingAcknowledgement]
+    let online: Bool
+    /// Group rows by individual when more than one is present (2:1 / 1:2).
+    var showIndividual: Bool = false
+    var onDismissSign: (() -> Void)? = nil
+
+    @State private var safariItem: AckSafariItem?
+
+    var body: some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "signature")
+                        .foregroundColor(Theme.warning)
+                    Text(items.count == 1
+                         ? "Sign-off required — 1 mandatory document"
+                         : "Sign-off required — \(items.count) mandatory documents")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
+                }
+                ForEach(items) { item in
+                    Button {
+                        guard online else { return }
+                        openSign(item)
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.docName)
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let sub = subtitle(item) {
+                                    Text(sub)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: online ? "chevron.right" : "wifi.slash")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!online)
+                    .accessibilityIdentifier("pendingAckRow-\(item.docId)")
+                }
+                Text(online
+                     ? "You can still continue. Tap a document to read and sign it."
+                     : "Signing needs an internet connection. You can still continue.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.warning.opacity(0.12))
+            .cornerRadius(10)
+            .accessibilityIdentifier("pendingAcknowledgementsCard")
+            .sheet(item: $safariItem, onDismiss: { onDismissSign?() }) { item in
+                SafariView(url: item.url)
+            }
+        }
+    }
+
+    private func subtitle(_ item: ServerPendingAcknowledgement) -> String? {
+        var parts: [String] = []
+        if showIndividual, let name = item.individualName, !name.isEmpty { parts.append(name) }
+        if let t = item.docType, !t.isEmpty { parts.append(t) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func openSign(_ item: ServerPendingAcknowledgement) {
+        // The web portal shares the API host; strip the /api suffix (same as
+        // WorkView.openWeb).
+        let base = APIClient.shared.baseURL.hasSuffix("/api")
+            ? String(APIClient.shared.baseURL.dropLast(4))
+            : APIClient.shared.baseURL
+        guard let url = URL(string: base + item.resolvedSignPath) else { return }
+        safariItem = AckSafariItem(url: url)
+    }
+}
+
+struct AckSafariItem: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
 }

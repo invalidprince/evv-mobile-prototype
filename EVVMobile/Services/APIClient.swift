@@ -42,6 +42,25 @@ struct ServerPartner: Decodable {
     let name: String
 }
 
+/// An unsigned MANDATORY document the signed-in staff member still owes for
+/// an individual (server per-shift `pending_acknowledgements`, and — build 90 /
+/// server v0.4.623 — the documentation template's `pendingAcknowledgements`).
+/// The shape is identical on both surfaces; `individualName`/`signPath` are
+/// only on the documentation payload.
+struct ServerPendingAcknowledgement: Decodable, Hashable, Identifiable {
+    let docId: Int
+    let docName: String
+    let docType: String?
+    let individualId: String?
+    let individualName: String?
+    /// Web sign-off page, relative to the portal host. Defaults to the same
+    /// page the Work tab's ack rows open.
+    let signPath: String?
+    var id: Int { docId }
+
+    var resolvedSignPath: String { signPath ?? "/my-day/acknowledgements" }
+}
+
 struct ServerVisitInfo: Decodable {
     let id: String
     let clockIn: String
@@ -105,6 +124,48 @@ struct ServerShift: Decodable {
     /// they have a pending permanent request on. Older servers omit both.
     let claimRequested: Bool?
     let requestedWeekdays: [Int]?
+    /// Build 90 (Todoist 6hXqxmCPjjhjCGHH) — the server has carried this per
+    /// shift since v0.4.196; nothing read it until now. Unsigned mandatory
+    /// documents for THIS shift's individual that the signed-in staff member
+    /// owes. Drives the sign-off prompt on the clock-in sheet. Lenient:
+    /// a malformed entry is dropped, never fails the whole shifts sync.
+    let pendingAcknowledgements: [ServerPendingAcknowledgement]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, date, start, end, service, serviceName, ratio, individual, location, partners, myVisit, myVisits
+        case evvRequired, requiresClockIn, gpsRequired, openVisitCarryover, needsSecondStaff, requiredStaff
+        case claimRequested, requestedWeekdays
+        case pendingAcknowledgements = "pending_acknowledgements"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        date = try c.decode(String.self, forKey: .date)
+        start = try c.decode(String.self, forKey: .start)
+        end = try c.decode(String.self, forKey: .end)
+        service = try c.decodeIfPresent(String.self, forKey: .service)
+        serviceName = try c.decodeIfPresent(String.self, forKey: .serviceName)
+        ratio = try c.decodeIfPresent(String.self, forKey: .ratio)
+        individual = try c.decode(ServerIndividual.self, forKey: .individual)
+        location = try c.decodeIfPresent(String.self, forKey: .location)
+        partners = try c.decodeIfPresent([ServerPartner].self, forKey: .partners)
+        myVisit = try c.decodeIfPresent(ServerVisitInfo.self, forKey: .myVisit)
+        myVisits = try c.decodeIfPresent([ServerShiftVisitInfo].self, forKey: .myVisits)
+        evvRequired = try c.decodeIfPresent(Bool.self, forKey: .evvRequired)
+        requiresClockIn = try c.decodeIfPresent(Bool.self, forKey: .requiresClockIn)
+        gpsRequired = try c.decodeIfPresent(Bool.self, forKey: .gpsRequired)
+        openVisitCarryover = try c.decodeIfPresent(Bool.self, forKey: .openVisitCarryover)
+        needsSecondStaff = try c.decodeIfPresent(Bool.self, forKey: .needsSecondStaff)
+        requiredStaff = try c.decodeIfPresent(Int.self, forKey: .requiredStaff)
+        claimRequested = try c.decodeIfPresent(Bool.self, forKey: .claimRequested)
+        requestedWeekdays = try c.decodeIfPresent([Int].self, forKey: .requestedWeekdays)
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerPendingAcknowledgement>].self, forKey: .pendingAcknowledgements) {
+            pendingAcknowledgements = raw.compactMap { $0.value }
+        } else {
+            pendingAcknowledgements = nil
+        }
+    }
 }
 
 struct ShiftsResponse: Decodable {
@@ -804,11 +865,16 @@ struct DocumentationTemplateResponse: Decodable {
     let staffAttestationSignerName: String?
     /// Any EXISTING signature already on this visit (edit case).
     let staffAttestation: ServerStaffAttestation?
+    /// Build 90 / server v0.4.623 — unsigned mandatory documents the OWNER
+    /// still owes for this visit's individual. A prompt above the form, never
+    /// a gate. nil on older servers → nothing renders.
+    let pendingAcknowledgements: [ServerPendingAcknowledgement]?
 
     enum CodingKeys: String, CodingKey {
         case visitId, outcomes, healthInfo, existingNote, aiAssistEnabled, noteRewriteEnabled, signatureCaptured, questions, serviceLocation
         case staffAttestationRequired, staffAttestationText, staffAttestationTextVersion
         case staffAttestationCredential, staffAttestationSignerName, staffAttestation
+        case pendingAcknowledgements
     }
 
     init(from decoder: Decoder) throws {
@@ -846,6 +912,13 @@ struct DocumentationTemplateResponse: Decodable {
         staffAttestationCredential = (try? c.decodeIfPresent(String.self, forKey: .staffAttestationCredential)) ?? nil
         staffAttestationSignerName = (try? c.decodeIfPresent(String.self, forKey: .staffAttestationSignerName)) ?? nil
         staffAttestation = (try? c.decodeIfPresent(ServerStaffAttestation.self, forKey: .staffAttestation)) ?? nil
+        // Best-effort, per-element lenient: one malformed row is dropped and
+        // the form still loads (a prompt must never block documentation).
+        if let raw = try? c.decodeIfPresent([FailableDecodable<ServerPendingAcknowledgement>].self, forKey: .pendingAcknowledgements) {
+            pendingAcknowledgements = raw.compactMap { $0.value }
+        } else {
+            pendingAcknowledgements = nil
+        }
     }
 }
 

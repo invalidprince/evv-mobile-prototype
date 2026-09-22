@@ -17,6 +17,9 @@ struct DocumentationView: View {
     // Service Location (CMS Place of Service) — build 28 / server v0.4.241+
     @State private var serviceLocation: ServerServiceLocation?
     @State private var selectedServiceLocation: String?
+    /// Build 90 / server v0.4.623 — unsigned mandatory documents the owner
+    /// still owes for this visit's individual. Prompt only; Submit unchanged.
+    @State private var pendingAcknowledgements: [ServerPendingAcknowledgement] = []
     @State private var isLoadingTemplate = false
     @State private var loadError: String?
     @State private var isSubmitting = false
@@ -171,6 +174,18 @@ struct DocumentationView: View {
         ScrollView {
             VStack(spacing: 12) {
                 header
+
+                // Build 90 — sign-off prompt at the top of the form. Same card
+                // as the clock-in sheet; tapping opens the web sign-off page
+                // in-app, and dismissing it reloads the template so a signed
+                // document drops off without leaving the form.
+                if appState.mode == .server && !pendingAcknowledgements.isEmpty {
+                    PendingAcknowledgementsCard(
+                        items: pendingAcknowledgements,
+                        online: appState.effectivelyOnline,
+                        onDismissSign: { Task { await reloadPendingAcknowledgements() } }
+                    )
+                }
 
                 // Offline banner
                 if isOfflineBlocked {
@@ -505,6 +520,17 @@ struct DocumentationView: View {
 
     // MARK: - Server template loading
 
+    /// Build 90 — after the sign sheet closes, re-read ONLY the sign-off list.
+    /// Deliberately does not re-run loadServerTemplate: that would re-map
+    /// outcomes/questions and could disturb what the staff member has typed.
+    private func reloadPendingAcknowledgements() async {
+        guard appState.mode == .server, let svid = visit.serverVisitId else { return }
+        guard let template = try? await APIClient.shared.fetchDocumentation(visitId: svid) else { return }
+        await MainActor.run {
+            pendingAcknowledgements = template.pendingAcknowledgements ?? []
+        }
+    }
+
     private func loadServerTemplate() async {
         guard let svid = visit.serverVisitId else {
             loadError = "No server visit ID available"
@@ -568,6 +594,7 @@ struct DocumentationView: View {
                     selectedServiceLocation = template.serviceLocation?.selected
                         ?? template.serviceLocation?.autoApplied
                 }
+                pendingAcknowledgements = template.pendingAcknowledgements ?? []
 
                 // Load existing structured note if present and draft is empty
                 if let existing = template.existingNote, note.additionalComments.isEmpty && note.outcomeEntries.isEmpty {
