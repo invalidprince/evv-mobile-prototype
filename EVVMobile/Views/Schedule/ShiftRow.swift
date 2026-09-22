@@ -25,7 +25,11 @@ struct ShiftRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(Theme.primary)
                 Spacer()
-                if visit.ratio == "2:1" {
+                // build 86 — a 2:1 shift still missing its partner says so
+                // (server v0.4.614 `needsSecondStaff`); a full 2:1 keeps the badge.
+                if visit.showsSecondStaffRequired {
+                    StatusBadge(text: "2:1 — SECOND STAFF REQUIRED", color: Theme.warning)
+                } else if visit.ratio == "2:1" {
                     StatusBadge(text: "2:1", color: Theme.primary)
                 }
                 if visit.isGroup {

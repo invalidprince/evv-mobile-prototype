@@ -125,6 +125,17 @@ struct Visit: Identifiable {
     var ratio: String?
     /// Partner info for 2:1 shifts from server.
     var partners: [PartnerInfo] = []
+    /// build 86 / server v0.4.614 — the SERVICE is staffed 2:1 but only ONE
+    /// staff member (you) is on the shift so far. Server-derived; the
+    /// dashboard shows the same "needs 2nd staff" chip off the same rule.
+    /// Older servers omit the key → nil → fallback below.
+    var needsSecondStaff: Bool?
+    /// THE one rule for the badge: the server's answer when present, else
+    /// (older server) a 2:1 shift whose partner list is empty.
+    var showsSecondStaffRequired: Bool {
+        if let n = needsSecondStaff { return n }
+        return ratio == "2:1" && partners.isEmpty && teamStaff == nil
+    }
     /// Location string from server.
     var serverLocation: String?
     /// Set when documentation was (or is) late — i.e. the note was still

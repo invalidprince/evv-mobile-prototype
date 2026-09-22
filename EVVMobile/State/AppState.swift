@@ -1796,6 +1796,8 @@ final class AppState: ObservableObject {
         visit.serverVisitId = serverVisitId
         visit.ratio = s.ratio
         visit.partners = partners
+        // build 86 / server v0.4.614 — service-derived staffing state.
+        visit.needsSecondStaff = s.needsSecondStaff
         visit.serviceName = s.serviceName ?? s.service
         visit.serverLocation = s.location
         visit.evvRequired = s.evvRequired ?? true

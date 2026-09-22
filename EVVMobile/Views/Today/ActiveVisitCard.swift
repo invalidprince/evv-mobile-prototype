@@ -21,7 +21,10 @@ struct ActiveVisitCard: View {
                     StatusBadge(text: visit.isStaleOpen ? "STILL CLOCKED IN" : "CLOCKED IN",
                                 color: visit.isStaleOpen ? Theme.danger : Theme.success)
                     Spacer()
-                    if visit.ratio == "2:1" {
+                    // build 86 — clocked in alone on a 2:1 service: still flagged.
+                    if visit.showsSecondStaffRequired {
+                        StatusBadge(text: "2:1 — SECOND STAFF REQUIRED", color: Theme.warning)
+                    } else if visit.ratio == "2:1" {
                         StatusBadge(text: "2:1", color: Theme.primary)
                     }
                     if visit.isGroup {

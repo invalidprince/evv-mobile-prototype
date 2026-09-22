@@ -74,7 +74,9 @@ struct ShiftDetailView: View {
                             HStack(spacing: 8) {
                                 Text(visit.clients.map { $0.name }.joined(separator: " & "))
                                     .font(.title3.bold())
-                                if visit.ratio == "2:1" {
+                                if visit.showsSecondStaffRequired {
+                                    StatusBadge(text: "2:1", color: Theme.warning)
+                                } else if visit.ratio == "2:1" {
                                     StatusBadge(text: "2:1", color: Theme.primary)
                                 }
                             }
@@ -98,6 +100,13 @@ struct ShiftDetailView: View {
                     } else if let partner = visit.teamStaff {
                         Label("Team visit with \(partner.name)", systemImage: "person.2.fill")
                             .font(.subheadline)
+                    } else if visit.showsSecondStaffRequired {
+                        // build 86 / server v0.4.614 — the service is staffed 2:1 and
+                        // nobody else is on the shift yet. The server still admits the
+                        // partner's clock-in once a manager adds them (shift_staff).
+                        Label("2:1 service — a second staff member is required and has not been assigned yet. Ask your manager to add the partner.", systemImage: "person.2.fill")
+                            .font(.subheadline)
+                            .foregroundColor(Theme.warning)
                     }
                 }
                 .cardStyle()

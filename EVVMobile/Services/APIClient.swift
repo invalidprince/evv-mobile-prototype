@@ -90,6 +90,14 @@ struct ServerShift: Decodable {
     /// because the staff member is still clocked in on it (Today needs a
     /// Clock Out surface for a punch from another day). Older servers omit it.
     let openVisitCarryover: Bool?
+    /// build 86 / server v0.4.614 — STAFFING derived from the SERVICE's ratio
+    /// (staffing-ratio.js, the same helper the dashboard chips read). A 2:1
+    /// service with only ONE staff assigned yet sends `needsSecondStaff: true`
+    /// so the card can say "2:1 — second staff required" instead of a bare
+    /// 2:1 badge. `requiredStaff` is 2 for a 2:1 service, else 1. Older
+    /// servers omit both; the badge then falls back to ratio + empty partners.
+    let needsSecondStaff: Bool?
+    let requiredStaff: Int?
 }
 
 struct ShiftsResponse: Decodable {
