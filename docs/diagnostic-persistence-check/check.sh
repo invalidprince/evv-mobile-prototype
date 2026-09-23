@@ -89,7 +89,7 @@ else
 fi
 
 echo "[6] build number"
-ok "Info.plist CFBundleVersion is 92" "grep -A1 CFBundleVersion EVVMobile/Info.plist | grep -q '<string>92</string>'"
+ok "Info.plist CFBundleVersion is 93 (TestFlight build 92 was already taken by Xcode Cloud run 92)" "grep -A1 CFBundleVersion EVVMobile/Info.plist | grep -q '<string>93</string>'"
 
 if [ "${1:-}" != "--no-build" ]; then
   echo "[7] compile (xcodebuild, simulator, no signing) — takes a few minutes"
