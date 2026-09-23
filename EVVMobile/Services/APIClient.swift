@@ -1897,7 +1897,7 @@ actor APIClient {
     /// wait for it instead of stampeding the refresh endpoint.
     private var refreshingAfter401 = false
 
-    init(baseURL: String = "https://d2hmfpgqkgeyu.cloudfront.net/api") {
+    init(baseURL: String = ProcessInfo.processInfo.environment["EVV_BASE_URL"] ?? "https://d2hmfpgqkgeyu.cloudfront.net/api") {
         self.baseURL = baseURL
     }
 

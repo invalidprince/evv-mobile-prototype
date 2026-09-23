@@ -1731,16 +1731,12 @@ final class AppState: ObservableObject {
         missedShiftsReasoned.append(updated)
     }
 
-    /// Missed shifts that owe a reason, for the Today card and the Work tab's
-    /// `native == "missedshift"` rows (server v0.4.505, build 71). ONLINE-ONLY:
-    /// never queued, never persisted. A 403 means the role cannot resolve
-    /// missed shifts at all — the list is emptied so no card renders.
-    @MainActor
     // MARK: - 2:1 second-staff verification actions (build 87, server v0.4.615)
 
     /// Apply the payload block (from GET /me/shifts or the status poll) and
     /// keep a 5-second poll alive while anything is pending on either side,
     /// so the countdown resolves to confirmed / expired without a pull.
+    @MainActor
     private func applyTwoToOne(_ p: TwoToOneVerifyPayload?) {
         twoToOnePending = p?.pending ?? []
         twoToOneMine = p?.mine ?? []
@@ -1870,6 +1866,27 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Missed shifts that owe a reason, for the Today card and the Work tab's
+    /// `native == "missedshift"` rows (server v0.4.505, build 71). ONLINE-ONLY:
+    /// never queued, never persisted. A 403 means the role cannot resolve
+    /// missed shifts at all — the list is emptied so no card renders.
+    ///
+    /// 🚨 Build 94: @MainActor RESTORED — AND IT MUST STAY DIRECTLY ON THE
+    /// FUNC. Build 71 shipped this annotated; build 87 inserted the 2:1
+    /// section between the annotation and the func, so from build 87 to 93
+    /// this ran on the global executor and published FIVE @Published arrays
+    /// off the main actor. Every `refreshServerShifts()` fires this as a
+    /// fire-and-forget Task alongside the @MainActor `refreshDueMedications`,
+    /// and when both hit `objectWillChange` at once the app DEADLOCKED:
+    /// sampled main thread parked in `dueMedications.setter` →
+    /// `ObservableObjectPublisher.Inner.send()` → `_os_unfair_lock_lock_slow`
+    /// while this function's background thread held the same lock in
+    /// `missedShifts.setter`. Frozen UI → iOS watchdog kill — Nick's
+    /// open-shift-pickup "tap OK and it crashes" on builds 88-93 (the claim
+    /// alert's OK lands exactly when the post-claim refresh spawns the two
+    /// tasks). docs/main-actor-check pins this invariant for every async
+    /// func in this file that writes a @Published property.
+    @MainActor
     func refreshMissedShifts() async {
         guard mode == .server, effectivelyOnline else { return }
         do {
@@ -2069,6 +2086,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Build 94: @MainActor — publishes claimingShiftId / ruleClaimMessage /
+    /// serverError; claimRuleWeekday above was already isolated. See
+    /// refreshMissedShifts for the deadlock this class of off-main publish causes.
+    @MainActor
     func claimOpenShift(shiftId: Int) async {
         claimingShiftId = shiftId
         defer { claimingShiftId = nil }
@@ -2732,6 +2753,7 @@ final class AppState: ObservableObject {
 
     // MARK: - Server Note Submission
 
+    @MainActor  // Build 94 — publishes todayVisits/historyVisits; see refreshMissedShifts
     func submitServerNote(visitId: UUID, serverVisitId: String, text: String) async {
         if !effectivelyOnline {
             // Queue for offline replay
@@ -2793,6 +2815,7 @@ final class AppState: ObservableObject {
 
     // MARK: - Server Non-Billable
 
+    @MainActor  // Build 94 — publishes pendingSyncCount/offlineQueue; see refreshMissedShifts
     func submitServerNonBillable(category: String, minutes: Int, note: String, date: String?) async -> Bool {
         if !effectivelyOnline {
             enqueueOfflineAction(.nonBillable, shiftId: nil, visitId: nil,
@@ -2829,6 +2852,7 @@ final class AppState: ObservableObject {
     // MARK: - Server Time Fix
 
     /// Returns nil on success (or queued offline), or an error message on failure.
+    @MainActor  // Build 94 — publishes historyVisits; see refreshMissedShifts
     func submitServerTimeFix(visitId: UUID, serverVisitId: String?, newIn: String?, newOut: String?, reason: String) async -> String? {
         // Offline: queue for later replay
         if !effectivelyOnline {
@@ -2869,6 +2893,7 @@ final class AppState: ObservableObject {
     // MARK: - Server Delete Request
 
     /// Returns nil on success, or an error message on failure.
+    @MainActor  // Build 94 — publishes historyVisits; see refreshMissedShifts
     func submitServerDeleteRequest(visitId: UUID, serverVisitId: String, reason: String) async -> String? {
         do {
             _ = try await APIClient.shared.requestDelete(visitId: serverVisitId, reason: reason)
