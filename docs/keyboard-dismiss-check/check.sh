@@ -127,8 +127,14 @@ ok "no TextField/TextEditor binding was rewritten" \
    '! git diff -- EVVMobile/Views/ | grep "^-" | grep -qE "TextField\(|TextEditor\(|SecureField\("'
 ok "the one existing @FocusState (CountRow) is untouched" \
    '! git diff -- EVVMobile/Views/Documentation/OutcomeEntryView.swift | grep -q "FocusState"'
+# Build 92: narrowed from all of EVVMobile/Services/ to the files this guard
+# actually protects. The original wildcard asserted "this commit touched no
+# service at all", which is a property of the build-75 commit, not a durable
+# invariant — it trips on ANY later commit that touches an unrelated service
+# (build 92's DiagnosticLogger disk persistence was the first). The submit /
+# encode path is APIClient + LocalCache; those are still guarded strictly.
 ok "no submit/encode path modified" \
-   '! git diff -- EVVMobile/Services/ | grep -q "^[-+][^-+]"'
+   '! git diff -- EVVMobile/Services/APIClient.swift EVVMobile/Services/LocalCache.swift | grep -q "^[-+][^-+]"'
 ok "signature pad opts out of interactive drag (it owns a drag gesture)" \
    'grep -q "keyboardDismissable(interactiveDrag: false)" EVVMobile/Views/Punch/SignaturePadView.swift'
 

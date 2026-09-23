@@ -103,6 +103,10 @@ final class AppState: ObservableObject {
     /// Build 53: the in-flight history fetch. Deliberately an UNSTRUCTURED
     /// task — see refreshHistory() for why.
     @MainActor private var historyRefreshTask: Task<Void, Never>?
+    /// True only while `historyRefreshTask`'s body is executing. Read by
+    /// `refreshHistory()` to tell a re-entrant caller (one running inside the
+    /// refresh) from an independent concurrent caller — see build 92 there.
+    @MainActor private var isRefreshingHistory = false
 
     // MARK: - Visits
     @Published var todayVisits: [Visit] = MockData.todaysVisits()
@@ -345,6 +349,11 @@ final class AppState: ObservableObject {
     // END incomplete-notes-source (build 70)
 
     init() {
+        // Build 92: relaunch boundary. DiagnosticLogger now reloads the
+        // previous run's entries from disk, so mark where this process
+        // starts — everything above the marker in a submitted log is
+        // pre-crash evidence.
+        DiagnosticLogger.shared.markLaunch()
         startTimerIfNeeded()
         refreshLateDocumentationFlags()
         // Notifications: ask permission at app start and make sure every
@@ -2487,16 +2496,38 @@ final class AppState: ObservableObject {
     /// Nick: "history is only showing yesterday" / pull-to-refresh "does not"
     /// show it. An unstructured task does not inherit the caller's
     /// cancellation, so the request always completes and the array updates.
+    ///
+    /// 🚨 Build 92: RE-ENTRY FROM INSIDE THE IN-FLIGHT TASK RETURNS AT ONCE.
+    /// The build-53 coalescing above is correct for two INDEPENDENT callers,
+    /// but it deadlocks the main actor if anything reached by
+    /// `performHistoryRefresh()` calls `refreshHistory()` again: that caller
+    /// is running INSIDE `historyRefreshTask`, so `await inflight.value`
+    /// makes the task await itself. It can never complete — the main actor
+    /// is parked forever, the UI freezes (buttons render but do nothing) and
+    /// iOS kills the app with a watchdog 0x8badf00d. That is the exact
+    /// signature of Nick's build-91 freeze (unresponsive OK button, then the
+    /// app died). `isRefreshingHistory` is set INSIDE the task body and read
+    /// here on the same actor, so re-entry is detected with no suspension
+    /// point between the check and the await.
+    ///
+    /// Coalescing is deliberately UNCHANGED for ordinary callers: two
+    /// independent concurrent callers still share one fetch and both wait
+    /// for it. Only a caller that is itself part of the refresh returns early.
     @MainActor
     func refreshHistory() async {
         guard mode == .server else { return }
         if let inflight = historyRefreshTask {
+            // Re-entrant: we ARE the in-flight refresh. Awaiting would be a
+            // self-await. The refresh this caller wants is already running.
+            if isRefreshingHistory { return }
             await inflight.value
             return
         }
         let task = Task { @MainActor [weak self] in
             guard let self = self else { return }
+            self.isRefreshingHistory = true
             await self.performHistoryRefresh()
+            self.isRefreshingHistory = false
             self.historyRefreshTask = nil
         }
         historyRefreshTask = task
