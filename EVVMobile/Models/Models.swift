@@ -293,6 +293,15 @@ struct Outcome: Identifiable {
     let clientId: UUID
     let title: String
     let goal: String
+    /// build 91 / server v0.4.636 — outcomes shared onto this visit from
+    /// another service (Settings → Service Codes "Also document this
+    /// service's outcomes on"). `dataOnly` = counts or N/A complete it and NO
+    /// narrative is collected. `sourceServiceName` labels the section header
+    /// ("Also documented here: BSS Direct"); nil = the visit's own service.
+    var dataOnly: Bool = false
+    var sourceService: String? = nil
+    var sourceServiceName: String? = nil
+    var isShared: Bool { sourceServiceName != nil || (sourceService != nil && dataOnly) }
 }
 
 // MARK: - Visit note (per-goal data + narrative)
@@ -330,6 +339,22 @@ struct OutcomeEntry {
     var isComplete: Bool {
         if effectivelyNa { return true }
         return hasCount && hasNarrative
+    }
+
+    /// build 91 — completeness honouring the outcome's mode. A data-only
+    /// (shared) outcome is complete with N/A or at least one count; a
+    /// narrative is never required for it. Mirrors visit-core
+    /// outcomeEntryMissingFor(entry, summaryMode).
+    func isComplete(dataOnly: Bool) -> Bool {
+        if !dataOnly { return isComplete }
+        if na { return true }
+        return hasCount
+    }
+
+    func missingPart(dataOnly: Bool) -> MissingPart? {
+        if !dataOnly { return missingPart }
+        if na { return nil }
+        return hasCount ? nil : .data
     }
 
     /// Which half is missing, for inline UI copy. nil when complete.
@@ -403,7 +428,7 @@ struct VisitNote {
     var transportReviewedGoals: Bool?
 
     func isComplete(for outcomes: [Outcome]) -> Bool {
-        outcomes.allSatisfy { outcomeEntries[$0.id]?.isComplete == true }
+        outcomes.allSatisfy { outcomeEntries[$0.id]?.isComplete(dataOnly: $0.dataOnly) == true }
     }
 }
 

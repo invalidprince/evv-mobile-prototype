@@ -95,8 +95,8 @@ struct OutcomeEntryView: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Image(systemName: entry.isComplete ? "checkmark.circle.fill" : "circle.dashed")
-                    .foregroundColor(entry.isComplete ? Theme.success : .secondary)
+                Image(systemName: entry.isComplete(dataOnly: outcome.dataOnly) ? "checkmark.circle.fill" : "circle.dashed")
+                    .foregroundColor(entry.isComplete(dataOnly: outcome.dataOnly) ? Theme.success : .secondary)
                     .font(.title3)
             }
 
@@ -118,7 +118,9 @@ struct OutcomeEntryView: View {
                             entry.prompts = nil
                             entry.successes = nil
                             entry.opportunities = nil
-                            if entry.narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            // build 91 — a data-only outcome has no narrative field;
+                            // never auto-fill prose the staff member cannot see.
+                            if !outcome.dataOnly && entry.narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 entry.narrative = "We did not work on this outcome today."
                             }
                         }
@@ -127,7 +129,15 @@ struct OutcomeEntryView: View {
                 .font(.subheadline.weight(.semibold))
             }
 
-            // Per-goal narrative (required unless N/A)
+            // Per-goal narrative (required unless N/A). build 91 / server
+            // v0.4.636: NOT rendered for a data-only shared outcome — counts or
+            // N/A complete it (Nick 2026-09-23, answer 4), and no ✨ AI Review
+            // either since there is no field to rewrite.
+            if outcome.dataOnly {
+                Text("Data only — enter at least one data point, or check N/A. No narrative needed for this outcome.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.na ? "Narrative" : "Narrative *")
                     .font(.caption.weight(.semibold))
@@ -144,11 +154,12 @@ struct OutcomeEntryView: View {
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                     )
             }
+            }
 
             // Per Nick 2026-08-17: a non-N/A outcome needs a data point AND a
             // narrative. Say WHICH half is still missing rather than leaving the
             // grey dashed circle as the only signal.
-            if let missing = entry.missingPart {
+            if let missing = entry.missingPart(dataOnly: outcome.dataOnly) {
                 Label("Needs \(missing.label) — or check N/A if this wasn’t worked on.",
                       systemImage: "exclamationmark.circle")
                     .font(.caption2)

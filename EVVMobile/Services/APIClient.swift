@@ -625,11 +625,21 @@ struct ServerOutcome: Decodable, Identifiable {
     let title: String
     let goal: String?
     let status: String?
+    /// build 91 / server v0.4.636 — additive, every key optional (`try?`):
+    /// `group` "service" | "shared", `summaryMode` "with_summary" |
+    /// "data_only", `sourceService` / `sourceServiceName` for shared
+    /// outcomes. An older server omits them → today's behaviour.
+    let group: String?
+    let summaryMode: String?
+    let sourceService: String?
+    let sourceServiceName: String?
+    var isDataOnly: Bool { summaryMode == "data_only" }
 
     enum CodingKeys: String, CodingKey {
         case id, title, goal, status
         case text          // some endpoints emit the outcome text as "text"
         case description   // dashboard stores the goal detail as "description"
+        case group, summaryMode, sourceService, sourceServiceName
     }
 
     init(from decoder: Decoder) throws {
@@ -649,6 +659,10 @@ struct ServerOutcome: Decodable, Identifiable {
         goal = ((try? c.decodeIfPresent(String.self, forKey: .goal)) ?? nil)
             ?? ((try? c.decodeIfPresent(String.self, forKey: .description)) ?? nil)
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? nil
+        group = (try? c.decodeIfPresent(String.self, forKey: .group)) ?? nil
+        summaryMode = (try? c.decodeIfPresent(String.self, forKey: .summaryMode)) ?? nil
+        sourceService = (try? c.decodeIfPresent(String.self, forKey: .sourceService)) ?? nil
+        sourceServiceName = (try? c.decodeIfPresent(String.self, forKey: .sourceServiceName)) ?? nil
     }
 }
 

@@ -67,12 +67,37 @@ struct DocumentationView: View {
                     id: so.localId,
                     clientId: visit.client.id,
                     title: so.title,
-                    goal: so.goal ?? ""
+                    goal: so.goal ?? "",
+                    dataOnly: so.dataOnly,
+                    sourceService: so.sourceService,
+                    sourceServiceName: so.sourceServiceName
                 )
             }
         } else {
             return MockData.outcomes.filter { $0.clientId == visit.client.id }
         }
+    }
+
+    /// build 91 / server v0.4.636 — the section header to render ABOVE
+    /// `outcome`, or nil. Headers exist only when the visit carries outcomes
+    /// shared from another service (otherwise the list looks exactly as before).
+    /// The server orders own outcomes first, then shared ones grouped by source.
+    private func groupHeader(before outcome: Outcome) -> (title: String, subtitle: String?)? {
+        let all = effectiveOutcomes
+        guard all.contains(where: { $0.sourceServiceName != nil }) else { return nil }
+        guard let idx = all.firstIndex(where: { $0.id == outcome.id }) else { return nil }
+        let prev: Outcome? = idx > 0 ? all[idx - 1] : nil
+        let key = outcome.sourceServiceName ?? ""
+        let prevKey = prev?.sourceServiceName ?? ""
+        if prev != nil && key == prevKey { return nil }
+        if let name = outcome.sourceServiceName {
+            let code = outcome.sourceService.map { " (\($0))" } ?? ""
+            let rule = outcome.dataOnly
+                ? "Data only — enter counts or check N/A. No narrative needed."
+                : "Counts and a narrative, or N/A — same as the outcomes above."
+            return ("Also documented here: \(name)\(code)", rule)
+        }
+        return ("This service's outcomes", nil)
     }
 
     // Effective health info
@@ -336,6 +361,23 @@ struct DocumentationView: View {
                             VStack(spacing: 16) {
                                 ForEach(effectiveOutcomes) { outcome in
                                     VStack(spacing: 0) {
+                                        // build 91 / server v0.4.636 — section headers when
+                                        // outcomes from ANOTHER service are documented on this
+                                        // visit (Settings → Service Codes). Rendered on the first
+                                        // outcome of each group only.
+                                        if let header = groupHeader(before: outcome) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(header.title)
+                                                    .font(.subheadline.weight(.bold))
+                                                if let sub = header.subtitle {
+                                                    Text(sub)
+                                                        .font(.caption2)
+                                                        .foregroundColor(.secondary)
+                                                }
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.bottom, 8)
+                                        }
                                         // Unaddressed chip (the AI draft could not address this outcome)
                                         if aiDraftApplied {
                                             if let so = serverOutcomes.first(where: { $0.localId == outcome.id }),
@@ -554,7 +596,10 @@ struct DocumentationView: View {
                         localId: ServerDocOutcome.stableLocalId(for: so.id),
                         title: so.title,
                         goal: so.goal,
-                        status: so.status
+                        status: so.status,
+                        dataOnly: so.isDataOnly,
+                        sourceService: so.group == "shared" ? so.sourceService : nil,
+                        sourceServiceName: so.group == "shared" ? (so.sourceServiceName ?? so.sourceService) : nil
                     )
                 }
 
@@ -1121,6 +1166,10 @@ struct ServerDocOutcome {
     let title: String
     let goal: String?
     let status: String?
+    /// build 91 / server v0.4.636 — shared-outcome fields (see ServerOutcome).
+    var dataOnly: Bool = false
+    var sourceService: String? = nil
+    var sourceServiceName: String? = nil
 
     /// Create a stable, deterministic UUID from a server outcome ID.
     /// This ensures draft outcome entries (keyed by localId) persist
