@@ -393,6 +393,17 @@ struct ClockInConfirmSheet: View {
 // similar to the todo". Signing is ONLINE-ONLY, like every Work-tab action:
 // offline, the rows are inert and say so. `onDismissSign` lets the host
 // refresh its payload so a just-signed document drops off without a reload.
+//
+// 🩸 Build 95 (Nick 2026-09-23: "It shows up the ISP is due. HOWEVER, I click
+// it and nothing happens"): with `.buttonStyle(.plain)` a Button's hit area is
+// its label's CONTENT, not its frame — so on build 90 only the document name
+// (~60-90 pt of a ~345 pt row) and the chevron took a tap; the wide empty
+// Spacer between them, where a thumb naturally lands, was dead, and so was
+// the header line. Reproduced in the simulator (docs/ack-tap-proxy.py +
+// EVVMobileUITests/AckTapShotTests.swift): tap on the name → sign page opened;
+// tap on the row centre / header → nothing. Fix: `.contentShape(Rectangle())`
+// makes the WHOLE row tappable, and the header is a Button too (every row
+// opens the same sign-off page, so "click the notice" is a valid gesture).
 struct PendingAcknowledgementsCard: View {
     let items: [ServerPendingAcknowledgement]
     let online: Bool
@@ -405,15 +416,30 @@ struct PendingAcknowledgementsCard: View {
     var body: some View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "signature")
-                        .foregroundColor(Theme.warning)
-                    Text(items.count == 1
-                         ? "Sign-off required — 1 mandatory document"
-                         : "Sign-off required — \(items.count) mandatory documents")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 0)
+                // Header — tappable: opens the sign-off page for the first
+                // document (all rows share that page). Same online rule as
+                // the rows.
+                Button {
+                    guard online, let first = items.first else { return }
+                    openSign(first)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "signature")
+                            .foregroundColor(Theme.warning)
+                        Text(items.count == 1
+                             ? "Sign-off required — 1 mandatory document"
+                             : "Sign-off required — \(items.count) mandatory documents")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.primary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(!online)
+                .accessibilityIdentifier("pendingAckHeader")
                 ForEach(items) { item in
                     Button {
                         guard online else { return }
@@ -438,6 +464,8 @@ struct PendingAcknowledgementsCard: View {
                                 .foregroundColor(.secondary)
                         }
                         .padding(.vertical, 4)
+                        // The whole row takes the tap — name, gap AND chevron.
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(!online)
@@ -453,6 +481,10 @@ struct PendingAcknowledgementsCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.warning.opacity(0.12))
             .cornerRadius(10)
+            // `.accessibilityElement(children: .contain)` keeps the card's
+            // identifier on the container ONLY — build 90 stamped it on every
+            // child, hiding the per-row identifiers from UI tests.
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("pendingAcknowledgementsCard")
             .sheet(item: $safariItem, onDismiss: { onDismissSign?() }) { item in
                 SafariView(url: item.url)
