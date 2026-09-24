@@ -1,0 +1,20 @@
+// EVVMobile/Config/Live.xcconfig — build settings for the LIVE app (target EVVMobile).
+//
+// These feed EVVMobile/Info.plist via $(VAR) expansion and are read at runtime by
+// EVVMobile/Config/AppEnvironment.swift + GoogleAuthConfig.swift. Nothing in the
+// Swift code hard-codes an environment; the bundle decides.
+//
+// Xcode Cloud: workflow "Default" (branch `release`) archives scheme EVVMobile ->
+// bundle net.fbhi.evvmobile -> TestFlight groups Internal / Internal Auto.
+//
+// NOTE: in xcconfig files "//" starts a comment, so URLs are written with the
+// $() trick: "https:/$()/host" expands to "https://host".
+
+EVV_ENVIRONMENT_NAME = live
+EVV_DISPLAY_NAME = EVV Mobile
+EVV_API_BASE_URL = https:/$()/d2hmfpgqkgeyu.cloudfront.net/api
+
+// Google iOS OAuth client (GCP project 965407510424, type "iOS", bundle net.fbhi.evvmobile)
+EVV_GOOGLE_IOS_CLIENT_ID = 965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n.apps.googleusercontent.com
+// Reversed client id = the custom URL scheme Google redirects back to.
+EVV_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n

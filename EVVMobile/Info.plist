@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>EVV Mobile</string>
+	<string>$(EVV_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,12 +25,18 @@
 			<string>Google Sign-In</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n</string>
+				<string>$(EVV_GOOGLE_REVERSED_CLIENT_ID)</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>97</string>
+	<string>99</string>
+	<key>EVVAPIBaseURL</key>
+	<string>$(EVV_API_BASE_URL)</string>
+	<key>EVVEnvironmentName</key>
+	<string>$(EVV_ENVIRONMENT_NAME)</string>
+	<key>EVVGoogleIOSClientID</key>
+	<string>$(EVV_GOOGLE_IOS_CLIENT_ID)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

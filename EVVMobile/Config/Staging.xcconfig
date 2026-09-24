@@ -1,0 +1,27 @@
+// EVVMobile/Config/Staging.xcconfig — build settings for the STAGING app
+// (target EVVMobileStaging, scheme "EVVMobile Staging", bundle net.fbhi.evvmobile.staging).
+//
+// Installs SIDE BY SIDE with the live app (different bundle id => its own sandbox,
+// keychain and offline queue — nothing is shared). Talks to the NorthStar STAGING
+// stack (branch `main` of focus-nexus, de-identified data, outbound integrations
+// stubbed). Built by Xcode Cloud from branch `main` of this repo.
+//
+// NOTE: in xcconfig files "//" starts a comment, so URLs are written with the
+// $() trick: "https:/$()/host" expands to "https://host".
+
+EVV_ENVIRONMENT_NAME = staging
+EVV_DISPLAY_NAME = EVV Staging
+EVV_API_BASE_URL = https:/$()/d2vx4uq6k3g4bo.cloudfront.net/api
+
+// Google iOS OAuth client for the STAGING bundle.
+// TODO(Nick): create an "iOS" OAuth client in GCP project 965407510424 with bundle id
+// net.fbhi.evvmobile.staging, then paste its client id below and its reversed form
+// on the next line, e.g.
+//   EVV_GOOGLE_IOS_CLIENT_ID = 965407510424-abc123.apps.googleusercontent.com
+//   EVV_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.965407510424-abc123
+// and set GOOGLE_IOS_CLIENT_ID to the same client id in the staging server secret
+// (AWS Secrets Manager evv-staging/app-env) — the server checks the token audience.
+// While the placeholder is in place, GoogleAuthConfig.isConfigured is false: the
+// Google button reports "not configured" and email/password login is the way in.
+EVV_GOOGLE_IOS_CLIENT_ID = REPLACE_ME.apps.googleusercontent.com
+EVV_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_ME

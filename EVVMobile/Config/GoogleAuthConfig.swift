@@ -2,13 +2,16 @@ import Foundation
 
 /// Google OAuth configuration for iOS native sign-in (PKCE flow).
 ///
-/// **Setup:** Replace `REPLACE_ME` in `iosClientID` with the real iOS client ID
-/// from Google Cloud Console, then update the matching URL scheme in Info.plist
-/// (`com.googleusercontent.apps.REPLACE_ME` → the reversed real client ID).
+/// **Setup:** the client id lives in the per-target xcconfig
+/// (`Config/Live.xcconfig` / `Config/Staging.xcconfig` → `EVV_GOOGLE_IOS_CLIENT_ID`
+/// + `EVV_GOOGLE_REVERSED_CLIENT_ID`), which Info.plist exposes as
+/// `EVVGoogleIOSClientID` and as the `CFBundleURLSchemes` entry. Each bundle id
+/// (live / staging) needs its own **iOS** OAuth client in Google Cloud Console.
 enum GoogleAuthConfig {
-    /// iOS OAuth client ID from Google Cloud Console.
+    /// iOS OAuth client ID from Google Cloud Console, read from the bundle.
     /// Must be an **iOS** type client (no client secret required for PKCE).
-    static let iosClientID = "965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n.apps.googleusercontent.com"
+    /// `REPLACE_ME` while the bundle carries no usable value (→ `isConfigured == false`).
+    static let iosClientID: String = AppEnvironment.googleIOSClientID ?? "REPLACE_ME.apps.googleusercontent.com"
 
     /// Reversed client ID used as the custom URL scheme for the OAuth redirect.
     /// e.g. `com.googleusercontent.apps.123456789` for client ID `123456789.apps.googleusercontent.com`

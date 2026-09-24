@@ -1897,7 +1897,11 @@ actor APIClient {
     /// wait for it instead of stampeding the refresh endpoint.
     private var refreshingAfter401 = false
 
-    init(baseURL: String = ProcessInfo.processInfo.environment["EVV_BASE_URL"] ?? "https://d2hmfpgqkgeyu.cloudfront.net/api") {
+    /// Default base URL: the `EVV_BASE_URL` launch-environment override (UI-test
+    /// harnesses) wins; otherwise the BUNDLE decides (Info.plist `EVVAPIBaseURL`,
+    /// fed by the per-target xcconfig — live and staging are the same code built
+    /// twice; see `AppEnvironment`).
+    init(baseURL: String = ProcessInfo.processInfo.environment["EVV_BASE_URL"] ?? AppEnvironment.apiBaseURL) {
         self.baseURL = baseURL
     }
 

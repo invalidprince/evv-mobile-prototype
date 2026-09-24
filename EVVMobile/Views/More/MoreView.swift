@@ -216,12 +216,15 @@ struct MoreView: View {
     }
 
     /// "EVV Mobile 0.1.0 · Build 59" — straight from the bundle so it can
-    /// never drift from what TestFlight shows.
+    /// never drift from what TestFlight shows. The staging app reads
+    /// "EVV Staging 0.1.0 · Build N · d2vx4uq6k3g4bo.cloudfront.net" (display
+    /// name + API host come from the bundle too).
     static var buildLabel: String {
         let info = Bundle.main.infoDictionary ?? [:]
         let version = (info["CFBundleShortVersionString"] as? String) ?? "?"
         let build = (info["CFBundleVersion"] as? String) ?? "?"
-        return "EVV Mobile \(version) · Build \(build)"
+        let label = "\(AppEnvironment.displayName) \(version) · Build \(build)"
+        return AppEnvironment.isStaging ? "\(label) · \(AppEnvironment.apiHost)" : label
     }
 
     private func submitLog() {

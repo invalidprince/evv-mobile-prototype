@@ -14,9 +14,37 @@ targets:
     platform: iOS
     sources:
       - EVVMobile
+    configFiles:
+      Debug: EVVMobile/Config/Live.xcconfig
+      Release: EVVMobile/Config/Live.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.fbhi.evvmobile
+        INFOPLIST_FILE: EVVMobile/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGNING_ALLOWED: "YES"
+        CODE_SIGN_IDENTITY: "-"
+  # STAGING app (2026-09-24): same sources, different bundle id / display name /
+  # API base URL / app icon, all via Config/Staging.xcconfig. Installs side by side
+  # with the live app. Xcode Cloud builds it from branch `main`; the live target is
+  # built from branch `release`. NOTE: project.pbxproj is hand-maintained (this file is
+  # not regenerated); there the staging target uses a folder-synchronized group over
+  # EVVMobile/ so new Swift files never need registering for staging.
+  EVVMobileStaging:
+    type: application
+    platform: iOS
+    sources:
+      - path: EVVMobile
+        excludes:
+          - "Config/*.xcconfig"
+    configFiles:
+      Debug: EVVMobile/Config/Staging.xcconfig
+      Release: EVVMobile/Config/Staging.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.fbhi.evvmobile.staging
+        PRODUCT_MODULE_NAME: EVVMobile
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIconStaging
         INFOPLIST_FILE: EVVMobile/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGNING_ALLOWED: "YES"
@@ -44,3 +72,7 @@ schemes:
     test:
       targets:
         - EVVMobileUITests
+  EVVMobileStaging:
+    build:
+      targets:
+        EVVMobileStaging: all

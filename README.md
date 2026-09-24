@@ -12,6 +12,24 @@ Staff-facing SwiftUI prototype for an Electronic Visit Verification (EVV) platfo
 - **Visit Documentation** — collapsible template sections, ISP outcome data entry (prompt levels, frequency counter, yes/no toggles), photo attach + dictate placeholders, Save Draft / Submit.
 - **More** — profile, credentials with status badges, Sync Center, notification toggles, biometrics, EN/ES, Sign Out.
 
+## Environments — LIVE vs STAGING (2026-09-24)
+
+Two apps are built from this repo; they install **side by side** (different bundle ids ⇒ separate sandbox, keychain, offline queue):
+
+| | target / scheme | bundle id | display name | API | git branch → Xcode Cloud | TestFlight group |
+|---|---|---|---|---|---|---|
+| Live | `EVVMobile` | `net.fbhi.evvmobile` | EVV Mobile | `https://d2hmfpgqkgeyu.cloudfront.net/api` | `release` → workflow "Default" | Internal, Internal Auto |
+| Staging | `EVVMobileStaging` | `net.fbhi.evvmobile.staging` | EVV Staging (orange STAGING icon banner + badge) | `https://d2vx4uq6k3g4bo.cloudfront.net/api` | `main` → workflow "Staging" | EVV Staging (Nick) |
+
+Everything environment-specific lives in `EVVMobile/Config/Live.xcconfig` / `Staging.xcconfig` (→ `Info.plist` `$(VAR)`s → `AppEnvironment.swift` at runtime). There is no `#if STAGING`; never hard-code a URL. The staging target is a **folder-synchronized** group over `EVVMobile/`, so a new Swift file only needs registering in `project.pbxproj` for the live target (the usual 4 insertions) — but build BOTH schemes before publishing:
+
+```bash
+xcodebuild -project EVVMobile.xcodeproj -scheme EVVMobile        -destination 'generic/platform=iOS Simulator' build
+xcodebuild -project EVVMobile.xcodeproj -scheme EVVMobileStaging -destination 'generic/platform=iOS Simulator' build
+```
+
+Flow: commit → `main` (staging TestFlight) → Nick tests → fast-forward `release` (`git push origin <sha>:refs/heads/release`, never force) → live TestFlight. `ci_scripts/ci_post_clone.sh` stamps `CFBundleVersion` from the Xcode Cloud run number for both products.
+
 ## Build & Run
 
 Requirements: Xcode 14+, [xcodegen](https://github.com/yonaskolb/XcodeGen).

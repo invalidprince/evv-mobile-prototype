@@ -20,12 +20,24 @@ struct LoginView: View {
             VStack(spacing: 12) {
                 Image(systemName: "checkmark.shield.fill")
                     .font(.system(size: 56))
-                    .foregroundColor(Theme.primary)
-                Text("EVV Mobile")
+                    .foregroundColor(AppEnvironment.isStaging ? .orange : Theme.primary)
+                Text(AppEnvironment.displayName)
                     .font(.largeTitle.bold())
                 Text("Electronic Visit Verification")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                if AppEnvironment.isStaging {
+                    // Staging build: same code, different bundle + backend. Make it
+                    // impossible to confuse with the live app at a glance.
+                    Text("STAGING · \(AppEnvironment.apiHost)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.orange)
+                        .clipShape(Capsule())
+                        .accessibilityIdentifier("login.stagingBadge")
+                }
             }
 
             Spacer()
