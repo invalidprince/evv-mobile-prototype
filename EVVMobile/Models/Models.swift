@@ -297,7 +297,7 @@ struct Outcome: Identifiable {
     /// another service (Settings → Service Codes "Also document this
     /// service's outcomes on"). `dataOnly` = counts or N/A complete it and NO
     /// narrative is collected. `sourceServiceName` labels the section header
-    /// ("Also documented here: BSS Direct"); nil = the visit's own service.
+    /// (build 96: the bare service name, "BSS Direct"); nil = the visit's own service.
     var dataOnly: Bool = false
     var sourceService: String? = nil
     var sourceServiceName: String? = nil

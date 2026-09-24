@@ -79,25 +79,19 @@ struct DocumentationView: View {
     }
 
     /// build 91 / server v0.4.636 — the section header to render ABOVE
-    /// `outcome`, or nil. Headers exist only when the visit carries outcomes
-    /// shared from another service (otherwise the list looks exactly as before).
-    /// The server orders own outcomes first, then shared ones grouped by source.
-    private func groupHeader(before outcome: Outcome) -> (title: String, subtitle: String?)? {
+    /// `outcome`, or nil. Headers exist only for outcomes shared from another
+    /// service (the visit's own outcomes carry no header, so a visit with
+    /// nothing shared looks exactly as before). The server orders own
+    /// outcomes first, then shared ones grouped by source.
+    /// build 96 (Nick 2026-09-23 Test Adjustments): the header is the source
+    /// service's NAME ONLY — no "Also documented here:", no code, no rule line.
+    private func groupHeader(before outcome: Outcome) -> String? {
         let all = effectiveOutcomes
-        guard all.contains(where: { $0.sourceServiceName != nil }) else { return nil }
+        guard let name = outcome.sourceServiceName, !name.isEmpty else { return nil }
         guard let idx = all.firstIndex(where: { $0.id == outcome.id }) else { return nil }
         let prev: Outcome? = idx > 0 ? all[idx - 1] : nil
-        let key = outcome.sourceServiceName ?? ""
-        let prevKey = prev?.sourceServiceName ?? ""
-        if prev != nil && key == prevKey { return nil }
-        if let name = outcome.sourceServiceName {
-            let code = outcome.sourceService.map { " (\($0))" } ?? ""
-            let rule = outcome.dataOnly
-                ? "Data only — enter counts or check N/A. No narrative needed."
-                : "Counts and a narrative, or N/A — same as the outcomes above."
-            return ("Also documented here: \(name)\(code)", rule)
-        }
-        return ("This service's outcomes", nil)
+        if let prev = prev, (prev.sourceServiceName ?? "") == name { return nil }
+        return name
     }
 
     // Effective health info
@@ -361,22 +355,16 @@ struct DocumentationView: View {
                             VStack(spacing: 16) {
                                 ForEach(effectiveOutcomes) { outcome in
                                     VStack(spacing: 0) {
-                                        // build 91 / server v0.4.636 — section headers when
+                                        // build 91 / server v0.4.636 — a section header when
                                         // outcomes from ANOTHER service are documented on this
                                         // visit (Settings → Service Codes). Rendered on the first
-                                        // outcome of each group only.
+                                        // outcome of each shared group only; build 96: the source
+                                        // service's name and nothing else (Nick 2026-09-23).
                                         if let header = groupHeader(before: outcome) {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(header.title)
-                                                    .font(.subheadline.weight(.bold))
-                                                if let sub = header.subtitle {
-                                                    Text(sub)
-                                                        .font(.caption2)
-                                                        .foregroundColor(.secondary)
-                                                }
-                                            }
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.bottom, 8)
+                                            Text(header)
+                                                .font(.subheadline.weight(.bold))
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.bottom, 8)
                                         }
                                         // Unaddressed chip (the AI draft could not address this outcome)
                                         if aiDraftApplied {

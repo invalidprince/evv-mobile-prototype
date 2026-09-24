@@ -132,12 +132,9 @@ struct OutcomeEntryView: View {
             // Per-goal narrative (required unless N/A). build 91 / server
             // v0.4.636: NOT rendered for a data-only shared outcome — counts or
             // N/A complete it (Nick 2026-09-23, answer 4), and no ✨ AI Review
-            // either since there is no field to rewrite.
-            if outcome.dataOnly {
-                Text("Data only — enter at least one data point, or check N/A. No narrative needed for this outcome.")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            } else {
+            // either since there is no field to rewrite. build 96: no rule text
+            // under the counters either — the card ends at the data row.
+            if !outcome.dataOnly {
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.na ? "Narrative" : "Narrative *")
                     .font(.caption.weight(.semibold))
