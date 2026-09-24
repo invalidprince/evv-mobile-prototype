@@ -130,7 +130,16 @@ struct ClockInConfirmSheet: View {
                 // the punch, never a gate: Confirm Clock In is unchanged.
                 // Dismissing the sign sheet refreshes shifts so a signed doc
                 // drops off without a manual reload.
-                if appState.mode == .server && !livePendingAcknowledgements.isEmpty {
+                // ⚠️ Build 97: the card must stay MOUNTED even when the list is
+                // empty (it renders nothing itself) — the `!…isEmpty` that used
+                // to live on this `if` unmounted the card, and with it the
+                // presented sign-off web view + its @State, whenever a
+                // foreground refresh (e.g. the Face ID password-autofill
+                // round-trip) transiently changed `livePendingAcknowledgements`.
+                // That is what reset the sign-off page back to the Google
+                // sign-in mid-login while the Work tab — whose sheet hangs off
+                // the always-mounted NavigationView — survived the same refresh.
+                if appState.mode == .server {
                     PendingAcknowledgementsCard(
                         items: livePendingAcknowledgements,
                         online: appState.effectivelyOnline,
@@ -414,7 +423,13 @@ struct PendingAcknowledgementsCard: View {
     @State private var safariItem: AckSafariItem?
 
     var body: some View {
-        if !items.isEmpty {
+        // Build 97 — the conditional moved INSIDE the card so the `.sheet`
+        // (and the @State driving it) survive the list emptying or the host
+        // refreshing mid-sign: the presented web view must never be torn down
+        // because the data that spawned it moved. Rendering stays identical —
+        // an empty list draws nothing.
+        Group {
+            if !items.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 // Header — tappable: opens the sign-off page for the first
                 // document (all rows share that page). Same online rule as
@@ -486,9 +501,10 @@ struct PendingAcknowledgementsCard: View {
             // child, hiding the per-row identifiers from UI tests.
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("pendingAcknowledgementsCard")
-            .sheet(item: $safariItem, onDismiss: { onDismissSign?() }) { item in
-                SafariView(url: item.url)
             }
+        }
+        .sheet(item: $safariItem, onDismiss: { onDismissSign?() }) { item in
+            SafariView(url: item.url)
         }
     }
 
@@ -500,13 +516,15 @@ struct PendingAcknowledgementsCard: View {
     }
 
     private func openSign(_ item: ServerPendingAcknowledgement) {
-        // The web portal shares the API host; strip the /api suffix (same as
-        // WorkView.openWeb).
-        let base = APIClient.shared.baseURL.hasSuffix("/api")
-            ? String(APIClient.shared.baseURL.dropLast(4))
-            : APIClient.shared.baseURL
-        guard let url = URL(string: base + item.resolvedSignPath) else { return }
-        safariItem = AckSafariItem(url: url)
+        // Build 97 (server v0.4.641): trade the app's existing API session for
+        // a one-time signed-in URL, so the sign-off page opens ALREADY logged
+        // in — no Google page, nothing to autofill. Falls back to the plain
+        // portal URL (the old behavior, web login gate) if the exchange fails.
+        let path = item.resolvedSignPath
+        Task {
+            guard let url = await APIClient.shared.portalURL(for: path) else { return }
+            await MainActor.run { safariItem = AckSafariItem(url: url) }
+        }
     }
 }
 

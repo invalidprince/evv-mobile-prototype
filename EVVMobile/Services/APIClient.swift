@@ -1995,6 +1995,56 @@ actor APIClient {
         self.token = refreshed.token
     }
 
+    // MARK: - Web session handoff (build 97 / server v0.4.641)
+
+    /// One-time signed-in URL for a web-portal path. The server mints a 60s
+    /// single-use token bound to THIS session's staff account; loading the
+    /// returned URL sets the normal web session cookie and redirects to
+    /// `path` — so in-app web views (Work tab, ISP sign-off) open already
+    /// signed in instead of greeting an authenticated user with the Google
+    /// sign-in page (Nick 2026-09-23: "is there a way to just have me signed
+    /// in already since I'm already authed from the app?").
+    private struct WebHandoffRequest: Encodable { let next: String }
+    private struct WebHandoffResponse: Decodable { let path: String }
+
+    /// The portal shares the API host; strip the /api suffix. (The one copy —
+    /// WorkView.openWeb and PendingAcknowledgementsCard used to each derive it.)
+    nonisolated var portalBaseURL: String {
+        baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
+    }
+
+    private func webHandoffPath(next: String) async throws -> String {
+        let url = URL(string: "\(baseURL)/web-session/handoff")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(WebHandoffRequest(next: next))
+        request.timeoutInterval = 10
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Handoff failed"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        return try JSONDecoder().decode(WebHandoffResponse.self, from: data).path
+    }
+
+    /// Signed-in URL for `path`, falling back to the plain portal URL when the
+    /// exchange fails for any reason (offline, old server, 429…) — the web
+    /// login gate then takes over, which is exactly the pre-build-97 behavior.
+    /// Never throws: opening the page must not get flakier than it was.
+    func portalURL(for path: String) async -> URL? {
+        guard let direct = URL(string: portalBaseURL + path) else { return nil }
+        if let handoffPath = try? await webHandoffPath(next: path),
+           let handoff = URL(string: portalBaseURL + handoffPath) {
+            return handoff
+        }
+        return direct
+    }
+
     // MARK: - Shifts
 
     func fetchShifts() async throws -> [ServerShift] {

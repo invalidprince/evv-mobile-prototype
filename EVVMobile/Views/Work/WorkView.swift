@@ -463,12 +463,14 @@ struct WorkView: View {
     }
 
     private func openWeb(_ path: String) {
-        // The web portal shares the API host; strip the /api suffix.
-        let base = APIClient.shared.baseURL.hasSuffix("/api")
-            ? String(APIClient.shared.baseURL.dropLast(4))
-            : APIClient.shared.baseURL
-        guard let url = URL(string: base + path) else { return }
-        safariItem = SafariItem(url: url)
+        // Build 97 (server v0.4.641): open via the web-session handoff so the
+        // page is ALREADY signed in — the app trades its Bearer session for a
+        // one-time login URL. Falls back to the plain portal URL (the old
+        // behavior) whenever the exchange fails.
+        Task {
+            guard let url = await APIClient.shared.portalURL(for: path) else { return }
+            await MainActor.run { safariItem = SafariItem(url: url) }
+        }
     }
 }
 

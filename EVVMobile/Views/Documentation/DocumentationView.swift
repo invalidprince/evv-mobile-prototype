@@ -198,7 +198,10 @@ struct DocumentationView: View {
                 // as the clock-in sheet; tapping opens the web sign-off page
                 // in-app, and dismissing it reloads the template so a signed
                 // document drops off without leaving the form.
-                if appState.mode == .server && !pendingAcknowledgements.isEmpty {
+                // Build 97: no `!…isEmpty` here — the card must stay mounted
+                // so its presented sign-off web view survives a template
+                // reload (see ClockInConfirmSheet). Empty list renders nothing.
+                if appState.mode == .server {
                     PendingAcknowledgementsCard(
                         items: pendingAcknowledgements,
                         online: appState.effectivelyOnline,
