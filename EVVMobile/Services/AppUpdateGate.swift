@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import Combine
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -149,9 +148,12 @@ final class AppUpdateGate: ObservableObject {
     func checkNow() async {
         guard !isChecking else { return }
         isChecking = true
+        defer { isChecking = false }
         await APIClient.shared.refreshToken()
         lastCheckAt = Date()
-        isChecking = false
+        // `verdict` is derived (rules + wall clock); publishing here makes the
+        // 7-day staleness release visible even when the server was unreachable.
+        objectWillChange.send()
     }
 
     /// "Friday, Oct 2" style for the banner / block screen.
@@ -189,14 +191,31 @@ final class AppUpdateGate: ObservableObject {
 struct UpdateRequiredView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gate = AppUpdateGate.shared
-    /// Build 101: re-check the rules every 60 s while blocked, so a corrected
-    /// rule on the dashboard clears the screen without a relaunch.
-    private let recheck = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+    @State private var confirmSignOut = false
 
     var body: some View {
         content
-            .onAppear { Task { await gate.checkNow() } }
-            .onReceive(recheck) { _ in Task { await gate.checkNow() } }
+            // Build 101: re-check the rules on appear and every 60 s while
+            // blocked, so a corrected rule on the dashboard clears the screen
+            // without a relaunch. `.task` is cancelled when the view leaves.
+            .task {
+                await gate.checkNow()
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    guard !Task.isCancelled else { break }
+                    await gate.checkNow()
+                }
+            }
+            .confirmationDialog("Sign out of this phone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+                Button("Sign out", role: .destructive) { appState.signOut() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                if appState.pendingSyncCount > 0 {
+                    Text("Your \(appState.pendingSyncCount) queued item(s) stay saved on this phone and sync when you sign back in after updating.")
+                } else {
+                    Text("You can sign back in after updating the app.")
+                }
+            }
     }
 
     private var content: some View {
@@ -238,15 +257,12 @@ struct UpdateRequiredView: View {
                 Button {
                     Task { await gate.checkNow() }
                 } label: {
-                    if gate.isChecking {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Check again", systemImage: "arrow.clockwise")
-                    }
+                    Label("Check again", systemImage: "arrow.clockwise")
+                        .opacity(gate.isChecking ? 0.4 : 1)
                 }
                 .disabled(gate.isChecking)
                 Button("Sign out", role: .destructive) {
-                    appState.signOut()
+                    confirmSignOut = true
                 }
             }
             .font(.subheadline)
