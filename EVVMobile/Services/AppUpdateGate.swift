@@ -82,10 +82,16 @@ final class AppUpdateGate: ObservableObject {
         Task { @MainActor in shared.ingest(payload) }
     }
 
+    /// Every successful parse bumps this (not @Published: it changes on every
+    /// API response). checkNow compares it before/after to know whether the
+    /// server was actually reached.
+    private(set) var lastIngestAt: Date?
+
     /// Also called with the `appUpdate` object from login / refresh bodies.
     func ingest(_ data: Data) {
         guard var parsed = try? JSONDecoder().decode(AppUpdateRules.self, from: data) else { return }
         parsed.receivedAt = Date()
+        lastIngestAt = parsed.receivedAt
         // Avoid churning @Published (and the UI) when nothing changed.
         var comparable = parsed; comparable.receivedAt = nil
         var current = rules; current?.receivedAt = nil
@@ -122,16 +128,28 @@ final class AppUpdateGate: ObservableObject {
         return .ok
     }
 
-    // Build 101 review: no wall-clock expiry on cached rules. A local-time
-    // escape hatch lets anyone defeat the hard block by moving the phone's
-    // date forward; a block is only ever relaxed by fresh rules from the
-    // server (the block screen re-checks on its own, see checkNow).
+    // POLICY (build 102, per Nick on the card: "Hard being you MUST update,
+    // no way around it"): cached rules never expire on their own. A hard
+    // block is relaxed ONLY by fresh rules from the server — not by the
+    // phone's clock (a date-forward escape hatch), not by failed re-checks
+    // (an airplane-mode escape hatch). The deadline (hard_pending) is the
+    // grace period; after it, the only ways out are updating the app or an
+    // admin lowering the required build on Settings → App Versions, which
+    // this screen picks up on its next re-check (see checkNow).
     var verdict: AppUpdateVerdict { Self.verdict(for: rules) }
     var isHardBlocked: Bool { verdict == .hard }
 
-    /// Last time UpdateRequiredView asked the server for fresh rules.
+    /// Last time UpdateRequiredView asked the server for fresh rules, and
+    /// whether that attempt actually got a response (false = offline /
+    /// timed out; the rules shown are still the cached ones).
     @Published var lastCheckAt: Date?
+    @Published var lastCheckReachedServer = true
     @Published var isChecking = false
+
+    /// Hard ceiling on one re-check. URLRequest.timeoutInterval (15 s) is an
+    /// idle timeout, so a stalled connection could otherwise pin isChecking
+    /// and leave "Check again" disabled indefinitely.
+    private static let checkTimeoutNanos: UInt64 = 20_000_000_000
 
     /// Re-ask the server for current rules (build 101). Any authenticated
     /// /api call refreshes them via the X-EVV-App-Update header; the token
@@ -143,10 +161,22 @@ final class AppUpdateGate: ObservableObject {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
-        // The class is @MainActor, so this continuation resumes on the main
-        // actor and the @Published writes below are main-thread publishes.
-        await APIClient.shared.refreshToken()
+        let before = lastIngestAt
+        // Race the refresh against a fixed timeout so isChecking always
+        // clears. If the refresh finishes late anyway, observe() still
+        // ingests its header — nothing is lost, the button is just live again.
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await APIClient.shared.refreshToken() }
+            group.addTask { try? await Task.sleep(nanoseconds: Self.checkTimeoutNanos) }
+            await group.next()
+            group.cancelAll()
+        }
+        // observe() hops to the main actor in its own Task; let it land
+        // before we judge whether the server answered.
+        await Task.yield()
+        // The class is @MainActor, so these are main-thread publishes.
         lastCheckAt = Date()
+        lastCheckReachedServer = lastIngestAt != nil && lastIngestAt != before
     }
 
     /// "Friday, Oct 2" style for the banner / block screen.
@@ -212,8 +242,11 @@ struct UpdateRequiredView: View {
     }
 
     private var content: some View {
-        VStack(spacing: 20) {
-            Spacer()
+        // ScrollView so the queued-items note and footer survive small
+        // phones / large Dynamic Type instead of clipping (build 102).
+        ScrollView {
+            VStack(spacing: 20) {
+                Spacer(minLength: 40)
             Image(systemName: "arrow.down.app.fill")
                 .font(.system(size: 64))
                 .foregroundColor(Theme.primary)
@@ -260,9 +293,13 @@ struct UpdateRequiredView: View {
             }
             .font(.subheadline)
             if let at = gate.lastCheckAt {
-                Text("Last checked \(at.formatted(date: .omitted, time: .shortened))")
+                Text(gate.lastCheckReachedServer
+                     ? "Last checked \(at.formatted(date: .omitted, time: .shortened))"
+                     : "Couldn't reach the server at \(at.formatted(date: .omitted, time: .shortened)) — showing the last rules this phone received.")
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(gate.lastCheckReachedServer ? .secondary : .orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
             }
             if appState.pendingSyncCount > 0 {
                 Label("\(appState.pendingSyncCount) queued item\(appState.pendingSyncCount == 1 ? " is" : "s are") saved on this phone and will sync after you update.", systemImage: "tray.full.fill")
@@ -271,11 +308,15 @@ struct UpdateRequiredView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
             }
-            Spacer()
+            Spacer(minLength: 40)
             Text("Already updated? Fully close and reopen the app. This screen re-checks on its own every minute.")
                 .font(.caption)
                 .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
                 .padding(.bottom, 24)
+            }
+            .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
