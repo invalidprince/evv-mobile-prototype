@@ -122,18 +122,11 @@ final class AppUpdateGate: ObservableObject {
         return .ok
     }
 
-    /// Cached rules older than this are ignored (build 101). A phone that
-    /// has not heard from the server in a week must not stay blocked on a
-    /// rule that may since have been relaxed — it opens normally and picks up
-    /// fresh rules on its next successful call.
-    static let maxRuleAge: TimeInterval = 7 * 24 * 60 * 60
-
-    static func isStale(_ rules: AppUpdateRules?, now: Date = Date()) -> Bool {
-        guard let at = rules?.receivedAt else { return false }
-        return now.timeIntervalSince(at) > maxRuleAge
-    }
-
-    var verdict: AppUpdateVerdict { Self.isStale(rules) ? .ok : Self.verdict(for: rules) }
+    // Build 101 review: no wall-clock expiry on cached rules. A local-time
+    // escape hatch lets anyone defeat the hard block by moving the phone's
+    // date forward; a block is only ever relaxed by fresh rules from the
+    // server (the block screen re-checks on its own, see checkNow).
+    var verdict: AppUpdateVerdict { Self.verdict(for: rules) }
     var isHardBlocked: Bool { verdict == .hard }
 
     /// Last time UpdateRequiredView asked the server for fresh rules.
@@ -145,15 +138,15 @@ final class AppUpdateGate: ObservableObject {
     /// refresh is the cheapest one and keeps the session alive too. This is
     /// how an admin typo (required build 9999) gets undone without the staff
     /// member having to relaunch the app.
+    @MainActor
     func checkNow() async {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
+        // The class is @MainActor, so this continuation resumes on the main
+        // actor and the @Published writes below are main-thread publishes.
         await APIClient.shared.refreshToken()
         lastCheckAt = Date()
-        // `verdict` is derived (rules + wall clock); publishing here makes the
-        // 7-day staleness release visible even when the server was unreachable.
-        objectWillChange.send()
     }
 
     /// "Friday, Oct 2" style for the banner / block screen.
