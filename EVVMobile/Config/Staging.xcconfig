@@ -13,7 +13,7 @@ EVV_ENVIRONMENT_NAME = staging
 EVV_DISPLAY_NAME = EVV Staging
 EVV_API_BASE_URL = https:/$()/d2vx4uq6k3g4bo.cloudfront.net/api
 
-// Google iOS OAuth client for the STAGING bundle.
+// Google iOS OAuth client for the STAGING bundle — NOT CREATED YET.
 // TODO(Nick): create an "iOS" OAuth client in GCP project 965407510424 with bundle id
 // net.fbhi.evvmobile.staging, then paste its client id below and its reversed form
 // on the next line, e.g.
@@ -21,7 +21,20 @@ EVV_API_BASE_URL = https:/$()/d2vx4uq6k3g4bo.cloudfront.net/api
 //   EVV_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.965407510424-abc123
 // and set GOOGLE_IOS_CLIENT_ID to the same client id in the staging server secret
 // (AWS Secrets Manager evv-staging/app-env) — the server checks the token audience.
-// While the placeholder is in place, GoogleAuthConfig.isConfigured is false: the
-// Google button reports "not configured" and email/password login is the way in.
+// While the placeholder client id is in place, GoogleAuthConfig.isConfigured is false:
+// the Google button reports "not configured" and email/password login is the way in.
 EVV_GOOGLE_IOS_CLIENT_ID = REPLACE_ME.apps.googleusercontent.com
-EVV_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.REPLACE_ME
+
+// 🚨 2026-09-28 — CFBundleURLSchemes must be a WELL-FORMED scheme or App Store Connect
+// rejects the upload: staging build 5 was rejected with ITMS-90158 because the
+// placeholder "com.googleusercontent.apps.REPLACE_ME" contains an underscore (URL
+// schemes allow only letters, digits, "+", "-", "."). Info.plist is SHARED by both
+// targets (its CFBundleURLSchemes entry is $(EVV_GOOGLE_REVERSED_CLIENT_ID)), so the
+// staging target cannot simply drop the entry without a second plist — and a second
+// plist would also fall outside ci_scripts/ci_post_clone.sh's CFBundleVersion stamping
+// (the 2026-08-27 build-number-collision failure). Instead staging registers a valid,
+// app-owned scheme that is never used at runtime: nothing links to it, and Google
+// sign-in is inert here anyway (isConfigured == false, no redirect is ever made).
+// When the real staging iOS OAuth client exists, replace BOTH lines with the reversed
+// client id, exactly like Live.xcconfig, and this note goes away.
+EVV_GOOGLE_REVERSED_CLIENT_ID = net.fbhi.evvmobile.staging
