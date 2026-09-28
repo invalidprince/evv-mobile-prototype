@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -122,8 +123,36 @@ final class AppUpdateGate: ObservableObject {
         return .ok
     }
 
-    var verdict: AppUpdateVerdict { Self.verdict(for: rules) }
+    /// Cached rules older than this are ignored (build 101). A phone that
+    /// has not heard from the server in a week must not stay blocked on a
+    /// rule that may since have been relaxed — it opens normally and picks up
+    /// fresh rules on its next successful call.
+    static let maxRuleAge: TimeInterval = 7 * 24 * 60 * 60
+
+    static func isStale(_ rules: AppUpdateRules?, now: Date = Date()) -> Bool {
+        guard let at = rules?.receivedAt else { return false }
+        return now.timeIntervalSince(at) > maxRuleAge
+    }
+
+    var verdict: AppUpdateVerdict { Self.isStale(rules) ? .ok : Self.verdict(for: rules) }
     var isHardBlocked: Bool { verdict == .hard }
+
+    /// Last time UpdateRequiredView asked the server for fresh rules.
+    @Published var lastCheckAt: Date?
+    @Published var isChecking = false
+
+    /// Re-ask the server for current rules (build 101). Any authenticated
+    /// /api call refreshes them via the X-EVV-App-Update header; the token
+    /// refresh is the cheapest one and keeps the session alive too. This is
+    /// how an admin typo (required build 9999) gets undone without the staff
+    /// member having to relaunch the app.
+    func checkNow() async {
+        guard !isChecking else { return }
+        isChecking = true
+        await APIClient.shared.refreshToken()
+        lastCheckAt = Date()
+        isChecking = false
+    }
 
     /// "Friday, Oct 2" style for the banner / block screen.
     var deadlineDisplay: String? {
@@ -160,8 +189,17 @@ final class AppUpdateGate: ObservableObject {
 struct UpdateRequiredView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gate = AppUpdateGate.shared
+    /// Build 101: re-check the rules every 60 s while blocked, so a corrected
+    /// rule on the dashboard clears the screen without a relaunch.
+    private let recheck = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
+        content
+            .onAppear { Task { await gate.checkNow() } }
+            .onReceive(recheck) { _ in Task { await gate.checkNow() } }
+    }
+
+    private var content: some View {
         VStack(spacing: 20) {
             Spacer()
             Image(systemName: "arrow.down.app.fill")
@@ -196,6 +234,27 @@ struct UpdateRequiredView: View {
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 28)
+            HStack(spacing: 24) {
+                Button {
+                    Task { await gate.checkNow() }
+                } label: {
+                    if gate.isChecking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Check again", systemImage: "arrow.clockwise")
+                    }
+                }
+                .disabled(gate.isChecking)
+                Button("Sign out", role: .destructive) {
+                    appState.signOut()
+                }
+            }
+            .font(.subheadline)
+            if let at = gate.lastCheckAt {
+                Text("Last checked \(at.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
             if appState.pendingSyncCount > 0 {
                 Label("\(appState.pendingSyncCount) queued item\(appState.pendingSyncCount == 1 ? " is" : "s are") saved on this phone and will sync after you update.", systemImage: "tray.full.fill")
                     .font(.footnote)
@@ -204,7 +263,7 @@ struct UpdateRequiredView: View {
                     .padding(.horizontal, 28)
             }
             Spacer()
-            Text("Already updated? Fully close and reopen the app.")
+            Text("Already updated? Fully close and reopen the app. This screen re-checks on its own every minute.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 24)
