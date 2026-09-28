@@ -82,16 +82,10 @@ final class AppUpdateGate: ObservableObject {
         Task { @MainActor in shared.ingest(payload) }
     }
 
-    /// Every successful parse bumps this (not @Published: it changes on every
-    /// API response). checkNow compares it before/after to know whether the
-    /// server was actually reached.
-    private(set) var lastIngestAt: Date?
-
     /// Also called with the `appUpdate` object from login / refresh bodies.
     func ingest(_ data: Data) {
         guard var parsed = try? JSONDecoder().decode(AppUpdateRules.self, from: data) else { return }
         parsed.receivedAt = Date()
-        lastIngestAt = parsed.receivedAt
         // Avoid churning @Published (and the UI) when nothing changed.
         var comparable = parsed; comparable.receivedAt = nil
         var current = rules; current?.receivedAt = nil
@@ -151,6 +145,18 @@ final class AppUpdateGate: ObservableObject {
     /// and leave "Check again" disabled indefinitely.
     private static let checkTimeoutNanos: UInt64 = 20_000_000_000
 
+    /// The in-flight re-check, if any. Whichever of {refresh finished,
+    /// timeout fired} happens first resumes it; the other is a no-op because
+    /// the generation no longer matches. All touched on the main actor.
+    private var pendingCheck: CheckedContinuation<Bool, Never>?
+    private var checkGeneration = 0
+
+    private func finishCheck(_ generation: Int, reached: Bool) {
+        guard generation == checkGeneration, let c = pendingCheck else { return }
+        pendingCheck = nil
+        c.resume(returning: reached)
+    }
+
     /// Re-ask the server for current rules (build 101). Any authenticated
     /// /api call refreshes them via the X-EVV-App-Update header; the token
     /// refresh is the cheapest one and keeps the session alive too. This is
@@ -161,22 +167,28 @@ final class AppUpdateGate: ObservableObject {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
-        let before = lastIngestAt
-        // Race the refresh against a fixed timeout so isChecking always
-        // clears. If the refresh finishes late anyway, observe() still
-        // ingests its header — nothing is lost, the button is just live again.
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await APIClient.shared.refreshToken() }
-            group.addTask { try? await Task.sleep(nanoseconds: Self.checkTimeoutNanos) }
-            await group.next()
-            group.cancelAll()
+        checkGeneration += 1
+        let generation = checkGeneration
+        // Race the refresh against a fixed timeout using unstructured tasks:
+        // a task group would wait for the refresh child no matter what, so
+        // a cancellation-deaf socket could still pin isChecking. Here the
+        // continuation resumes on whichever finishes first; if the refresh
+        // lands late, observe() still ingests its rules header — nothing is
+        // lost, the button was just live again sooner.
+        let reached = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            pendingCheck = c
+            Task { @MainActor [weak self] in
+                let ok = await APIClient.shared.refreshToken()
+                self?.finishCheck(generation, reached: ok)
+            }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.checkTimeoutNanos)
+                self?.finishCheck(generation, reached: false)
+            }
         }
-        // observe() hops to the main actor in its own Task; let it land
-        // before we judge whether the server answered.
-        await Task.yield()
         // The class is @MainActor, so these are main-thread publishes.
         lastCheckAt = Date()
-        lastCheckReachedServer = lastIngestAt != nil && lastIngestAt != before
+        lastCheckReachedServer = reached
     }
 
     /// "Friday, Oct 2" style for the banner / block screen.
@@ -243,7 +255,11 @@ struct UpdateRequiredView: View {
 
     private var content: some View {
         // ScrollView so the queued-items note and footer survive small
-        // phones / large Dynamic Type instead of clipping (build 102).
+        // phones / large Dynamic Type instead of clipping (build 102). The
+        // GeometryReader minHeight keeps the Spacers expanding — i.e. the
+        // stack stays vertically centred and the footer pinned to the bottom
+        // whenever the content fits; it only scrolls when it does not.
+        GeometryReader { geo in
         ScrollView {
             VStack(spacing: 20) {
                 Spacer(minLength: 40)
@@ -316,7 +332,8 @@ struct UpdateRequiredView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 24)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: geo.size.height)
+        }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
