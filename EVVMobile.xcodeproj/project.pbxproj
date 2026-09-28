@@ -48,6 +48,7 @@
 		A04AAFC880D0004E16536567 /* MyDocumentsShotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD1CDAA6FDDA5B4B2A2C456 /* MyDocumentsShotTests.swift */; };
 		A4CAEA872281BED8E53FDAEF /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A592BA84612CB09A2A4F61 /* Models.swift */; };
 		BC6517613BF8B062885D1C43 /* DiagnosticLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */; };
+		F1A2B3C4D5E6F70819202100 /* AppUpdateGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F70819202101 /* AppUpdateGate.swift */; };
 		C2B795D7F0DC9FF417F17D9D /* EVVMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */; };
 		C47A7068FCEA6C8B0F3B62B6 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CABA5A108F36DC92A278BCD /* Theme.swift */; };
 		A1B2C3D4E5F6A7B8C9D00075 /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D00076 /* KeyboardDismiss.swift */; };
@@ -84,6 +85,7 @@
 		A1B2C3D4E5F6A7B8C9D00072 /* MissedShiftCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissedShiftCard.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D00074 /* CorrectAdministrationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CorrectAdministrationSheet.swift; sourceTree = "<group>"; };
 		0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogger.swift; sourceTree = "<group>"; };
+		F1A2B3C4D5E6F70819202101 /* AppUpdateGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateGate.swift; sourceTree = "<group>"; };
 		0CABA5A108F36DC92A278BCD /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D00076 /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
 		0FDD9B3C4CBD3DC12DD05D94 /* EVVMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EVVMobileApp.swift; sourceTree = "<group>"; };
@@ -228,6 +230,7 @@
 			isa = PBXGroup;
 			children = (
 				F4CD8D7E3B1AAC27D8DFC2A4 /* APIClient.swift */,
+				F1A2B3C4D5E6F70819202101 /* AppUpdateGate.swift */,
 				0C7D43012C109451774A2ACD /* DiagnosticLogger.swift */,
 				998C2DED284D6434E76D7284 /* GoogleAuthService.swift */,
 				1A77C2BA6F8CD8A0E2A5A367 /* LocalCache.swift */,
@@ -506,6 +509,7 @@
 				D8023CDFE17E0B42DD5FBA9D /* ClockOutFlow.swift in Sources */,
 				ED6C4A56E32AC020351F1AB7 /* DeleteRequestSheet.swift in Sources */,
 				BC6517613BF8B062885D1C43 /* DiagnosticLogger.swift in Sources */,
+				F1A2B3C4D5E6F70819202100 /* AppUpdateGate.swift in Sources */,
 				1E43A4B58D6F386F8D322E52 /* DictationButton.swift in Sources */,
 				8405CF635B64E963DCDAB439 /* DocumentationView.swift in Sources */,
 				C2B795D7F0DC9FF417F17D9D /* EVVMobileApp.swift in Sources */,

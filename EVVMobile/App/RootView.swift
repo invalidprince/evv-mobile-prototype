@@ -21,8 +21,25 @@ struct RootView: View {
 
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
+    // Forced-update gate (build 100, Todoist 6hcHPc4VFcRcFPCH). Rules arrive
+    // on every server response; the verdict is recomputed locally against
+    // the running build. Demo / mock mode is never blocked, and with no
+    // rules ever received (fresh install offline) the app opens normally.
+    @ObservedObject private var updateGate = AppUpdateGate.shared
+
+    private var isUpdateBlocked: Bool {
+        appState.mode == .server && !appState.isDemoMode && updateGate.isHardBlocked
+    }
 
     var body: some View {
+        if isUpdateBlocked {
+            UpdateRequiredView()
+        } else {
+            tabs
+        }
+    }
+
+    private var tabs: some View {
         VStack(spacing: 0) {
             if appState.isDemoMode {
                 DemoModeBanner(isReviewDemo: true)
@@ -30,6 +47,9 @@ struct MainTabView: View {
                 DemoModeBanner(isReviewDemo: false)
             }
             SyncStatusBanner()
+            if appState.mode == .server && !appState.isDemoMode {
+                AppUpdateBanner()
+            }
             TabView {
                 TodayView()
                     .tabItem { Label("Today", systemImage: "sun.max.fill") }

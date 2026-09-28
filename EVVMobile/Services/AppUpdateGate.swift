@@ -1,0 +1,266 @@
+import Foundation
+import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+// MARK: - App update gate (build 100, Todoist 6hcHPc4VFcRcFPCH)
+//
+// The server (evv-poc v0.4.649+) stamps EVERY /api response with an
+// `X-EVV-App-Update` header — a JSON object with the rules set at
+// Settings → App Versions plus the verdict it computed for the build it saw
+// in our User-Agent / X-EVV-App-Build header. We cache the RULES (not the
+// verdict) and recompute locally against the build we are actually running,
+// so a phone that just updated is unblocked the moment it relaunches even
+// before it talks to the server again.
+//
+// Verdicts:
+//   ok           nothing to show
+//   soft         below the recommended build → dismissible banner (per launch)
+//   hard_pending below the required build, deadline still ahead → banner
+//                "must update by <date>", dismissible (comes back next launch)
+//   hard         below the required build, no deadline or deadline passed →
+//                full-screen block (UpdateRequiredView). Queue is untouched.
+//
+// Never blocks: demo / mock mode, or when no rules have ever been received.
+
+struct AppUpdateRules: Codable, Equatable {
+    var minRequiredBuild: Int?
+    var minRecommendedBuild: Int?
+    var requiredDeadline: String?   // "YYYY-MM-DD", inclusive
+    var message: String?
+    var receivedAt: Date?
+
+    /// Server's own verdict, for logging only — we recompute locally.
+    var verdict: String?
+}
+
+enum AppUpdateVerdict: String {
+    case ok, soft, hardPending = "hard_pending", hard
+}
+
+@MainActor
+final class AppUpdateGate: ObservableObject {
+    static let shared = AppUpdateGate()
+
+    @Published private(set) var rules: AppUpdateRules?
+    /// Soft banner dismissed this launch.
+    @Published var softDismissed = false
+    /// "Must update by" banner dismissed this launch.
+    @Published var pendingDismissed = false
+
+    private let defaultsKey = "evv.appUpdateRules.v1"
+
+    /// The build we are running (CFBundleVersion). 0 if unreadable — in that
+    /// case we never block, mirroring the server's "unknown build → ok".
+    nonisolated static var currentBuild: Int {
+        let raw = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        return Int(raw.trimmingCharacters(in: .whitespaces)) ?? 0
+    }
+
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: defaultsKey),
+           let cached = try? JSONDecoder().decode(AppUpdateRules.self, from: data) {
+            rules = cached
+        }
+    }
+
+    /// Called from APIClient for every response. Cheap: no-op unless the header
+    /// is present and parses.
+    nonisolated static func observe(_ response: URLResponse) {
+        guard let http = response as? HTTPURLResponse,
+              let raw = http.value(forHTTPHeaderField: "X-EVV-App-Update") else { return }
+        // Server sends "b64:<base64 of UTF-8 JSON>" (headers must stay ASCII);
+        // accept plain JSON too.
+        let data: Data?
+        if raw.hasPrefix("b64:") {
+            data = Data(base64Encoded: String(raw.dropFirst(4)))
+        } else {
+            data = raw.data(using: .utf8)
+        }
+        guard let payload = data else { return }
+        Task { @MainActor in shared.ingest(payload) }
+    }
+
+    /// Also called with the `appUpdate` object from login / refresh bodies.
+    func ingest(_ data: Data) {
+        guard var parsed = try? JSONDecoder().decode(AppUpdateRules.self, from: data) else { return }
+        parsed.receivedAt = Date()
+        // Avoid churning @Published (and the UI) when nothing changed.
+        var comparable = parsed; comparable.receivedAt = nil
+        var current = rules; current?.receivedAt = nil
+        if comparable != current {
+            rules = parsed
+            if let encoded = try? JSONEncoder().encode(parsed) {
+                UserDefaults.standard.set(encoded, forKey: defaultsKey)
+            }
+            // New rules → give banners a fresh chance to show.
+            softDismissed = false
+            pendingDismissed = false
+        } else if rules?.receivedAt == nil {
+            rules = parsed
+        }
+    }
+
+    /// Local today as "YYYY-MM-DD" (deadline is inclusive of the whole day).
+    private static func todayKey(_ now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: now)
+    }
+
+    static func verdict(for rules: AppUpdateRules?, build: Int = currentBuild, now: Date = Date()) -> AppUpdateVerdict {
+        guard let r = rules, build > 0 else { return .ok }
+        if let req = r.minRequiredBuild, build < req {
+            if let dl = r.requiredDeadline, !dl.isEmpty, todayKey(now) <= dl { return .hardPending }
+            return .hard
+        }
+        if let rec = r.minRecommendedBuild, build < rec { return .soft }
+        return .ok
+    }
+
+    var verdict: AppUpdateVerdict { Self.verdict(for: rules) }
+    var isHardBlocked: Bool { verdict == .hard }
+
+    /// "Friday, Oct 2" style for the banner / block screen.
+    var deadlineDisplay: String? {
+        guard let dl = rules?.requiredDeadline, !dl.isEmpty else { return nil }
+        let inF = DateFormatter(); inF.locale = Locale(identifier: "en_US_POSIX"); inF.dateFormat = "yyyy-MM-dd"
+        guard let d = inF.date(from: dl) else { return dl }
+        let outF = DateFormatter(); outF.dateFormat = "EEEE, MMM d"
+        return outF.string(from: d)
+    }
+
+    var message: String? {
+        let m = rules?.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return m.isEmpty ? nil : m
+    }
+
+    /// Open TestFlight. The itms-beta scheme opens the TestFlight app directly;
+    /// if it is not installed, fall back to its App Store page.
+    static func openTestFlight() {
+        #if canImport(UIKit)
+        if let direct = URL(string: "itms-beta://"), UIApplication.shared.canOpenURL(direct) {
+            UIApplication.shared.open(direct)
+        } else if let store = URL(string: "https://apps.apple.com/app/testflight/id899247664") {
+            UIApplication.shared.open(store)
+        }
+        #endif
+    }
+}
+
+// MARK: - Views
+
+/// Full-screen block shown instead of the tabs when the running build is below
+/// the required build (and any deadline has passed). Read-only: no punch,
+/// no sync — but the offline queue is kept on disk and syncs after the update.
+struct UpdateRequiredView: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject private var gate = AppUpdateGate.shared
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "arrow.down.app.fill")
+                .font(.system(size: 64))
+                .foregroundColor(Theme.primary)
+            Text("Update required")
+                .font(.title.bold())
+            VStack(spacing: 8) {
+                Text("This version of the EVV app (build \(AppUpdateGate.currentBuild)) is no longer supported. Install the latest build from TestFlight to keep clocking in and out.")
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                if let m = gate.message {
+                    Text(m)
+                        .multilineTextAlignment(.center)
+                        .font(.callout.weight(.semibold))
+                        .padding(.top, 4)
+                }
+                if let req = gate.rules?.minRequiredBuild {
+                    Text("Minimum build: \(req)")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 28)
+            Button {
+                AppUpdateGate.openTestFlight()
+            } label: {
+                Label("Open TestFlight", systemImage: "paperplane.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal, 28)
+            if appState.pendingSyncCount > 0 {
+                Label("\(appState.pendingSyncCount) queued item\(appState.pendingSyncCount == 1 ? " is" : "s are") saved on this phone and will sync after you update.", systemImage: "tray.full.fill")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+            }
+            Spacer()
+            Text("Already updated? Fully close and reopen the app.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+}
+
+/// Thin dismissible banner for `soft` and `hard_pending`. Sits under the sync
+/// banner in MainTabView. Nothing is shown for `ok` / `hard` (hard is handled
+/// by UpdateRequiredView).
+struct AppUpdateBanner: View {
+    @ObservedObject private var gate = AppUpdateGate.shared
+
+    var body: some View {
+        switch gate.verdict {
+        case .soft where !gate.softDismissed:
+            banner(color: Theme.primary,
+                   icon: "arrow.down.circle.fill",
+                   title: "Update available",
+                   detail: gate.message ?? "A newer build of the EVV app is in TestFlight.",
+                   dismiss: { gate.softDismissed = true })
+        case .hardPending where !gate.pendingDismissed:
+            banner(color: .orange,
+                   icon: "exclamationmark.triangle.fill",
+                   title: "Update required by \(gate.deadlineDisplay ?? "soon")",
+                   detail: gate.message ?? "After that date this build stops working. Update from TestFlight before then.",
+                   dismiss: { gate.pendingDismissed = true })
+        default:
+            EmptyView()
+        }
+    }
+
+    private func banner(color: Color, icon: String, title: String, detail: String, dismiss: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).font(.body).foregroundColor(.white).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption.weight(.bold)).foregroundColor(.white)
+                Text(detail).font(.caption2).foregroundColor(.white.opacity(0.92)).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Update") { AppUpdateGate.openTestFlight() }
+                .font(.caption.weight(.bold))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Color.white.opacity(0.22))
+                .foregroundColor(.white)
+                .clipShape(Capsule())
+            Button(action: dismiss) {
+                Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundColor(.white)
+            }
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(color)
+    }
+}

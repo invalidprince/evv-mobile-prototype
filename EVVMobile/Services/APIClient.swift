@@ -3441,26 +3441,39 @@ actor APIClient {
         return urlError.code == .timedOut ? 1 : maxTransientRetries
     }
 
+    /// Single choke point for every network round-trip (build 100, forced-update
+    /// gate): stamps X-EVV-App-Build so the server knows exactly which build is
+    /// calling (the CFNetwork User-Agent "EVVMobile/<build>" is a fallback),
+    /// and hands every response to AppUpdateGate, which reads the
+    /// X-EVV-App-Update header the server (v0.4.649+) puts on all /api replies.
+    private func sendStamped(_ original: URLRequest) async throws -> (Data, URLResponse) {
+        var request = original
+        request.setValue(String(AppUpdateGate.currentBuild), forHTTPHeaderField: "X-EVV-App-Build")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        AppUpdateGate.observe(response)
+        return (data, response)
+    }
+
     private func transportRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         let idempotent = Self.isIdempotent(request)
         let label = "\(request.httpMethod ?? "GET") \(request.url?.path ?? "?")"
         var attempt = 0
         while true {
             do {
-                return try await URLSession.shared.data(for: request)
+                return try await sendStamped(request)
             } catch let error as URLError where error.code == .cancelled {
                 // Retry once after a brief pause — cancellations are often
                 // transient (structured-task teardown, network path change).
                 try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 s
                 do {
-                    return try await URLSession.shared.data(for: request)
+                    return try await sendStamped(request)
                 } catch {
                     throw APIError.networkError(error)
                 }
             } catch is CancellationError {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 do {
-                    return try await URLSession.shared.data(for: request)
+                    return try await sendStamped(request)
                 } catch {
                     throw APIError.networkError(error)
                 }
