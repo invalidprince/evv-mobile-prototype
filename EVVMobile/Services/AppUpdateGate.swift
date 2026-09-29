@@ -134,11 +134,14 @@ final class AppUpdateGate: ObservableObject {
     var isHardBlocked: Bool { verdict == .hard }
 
     /// Last time UpdateRequiredView asked the server for fresh rules, and
-    /// whether that attempt actually got a response (false = offline /
-    /// timed out; the rules shown are still the cached ones).
+    /// whether that attempt got a 200 with current rules (false = offline,
+    /// timed out, session rejected or server error; the rules shown are
+    /// still the cached ones either way).
     @Published var lastCheckAt: Date?
     @Published var lastCheckReachedServer = true
     @Published var isChecking = false
+    /// Consecutive failed re-checks; drives the block screen's poll backoff.
+    @Published private(set) var consecutiveFailedChecks = 0
 
     /// Hard ceiling on one re-check. URLRequest.timeoutInterval (15 s) is an
     /// idle timeout, so a stalled connection could otherwise pin isChecking
@@ -189,6 +192,7 @@ final class AppUpdateGate: ObservableObject {
         // The class is @MainActor, so these are main-thread publishes.
         lastCheckAt = Date()
         lastCheckReachedServer = reached
+        consecutiveFailedChecks = reached ? 0 : consecutiveFailedChecks + 1
     }
 
     /// "Friday, Oct 2" style for the banner / block screen.
@@ -226,17 +230,25 @@ final class AppUpdateGate: ObservableObject {
 struct UpdateRequiredView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gate = AppUpdateGate.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var confirmSignOut = false
 
     var body: some View {
         content
-            // Build 101: re-check the rules on appear and every 60 s while
+            // Build 101: re-check the rules on appear and periodically while
             // blocked, so a corrected rule on the dashboard clears the screen
-            // without a relaunch. `.task` is cancelled when the view leaves.
-            .task {
+            // without a relaunch. Build 102: the loop runs ONLY while the
+            // scene is active (`.task(id:)` restarts it on each phase change
+            // and cancels it when the view leaves), so a blocked phone left
+            // on a desk does not keep renewing its session from the
+            // background — the sliding-window auto-logoff still applies. Backs
+            // off 60 s → 2 → 4 → 5 min cap while checks keep failing.
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
                 await gate.checkNow()
                 while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    let backoff = min(60.0 * pow(2.0, Double(gate.consecutiveFailedChecks)), 300.0)
+                    try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
                     guard !Task.isCancelled else { break }
                     await gate.checkNow()
                 }
@@ -295,23 +307,18 @@ struct UpdateRequiredView: View {
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 28)
-            HStack(spacing: 24) {
-                Button {
-                    Task { await gate.checkNow() }
-                } label: {
-                    Label("Check again", systemImage: "arrow.clockwise")
-                        .opacity(gate.isChecking ? 0.4 : 1)
-                }
-                .disabled(gate.isChecking)
-                Button("Sign out", role: .destructive) {
-                    confirmSignOut = true
-                }
+            // ViewThatFits: side by side normally, stacked at accessibility
+            // Dynamic Type sizes / narrow widths instead of truncating.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 24) { checkAgainButton; signOutButton }
+                VStack(spacing: 12) { checkAgainButton; signOutButton }
             }
             .font(.subheadline)
+            .padding(.horizontal, 28)
             if let at = gate.lastCheckAt {
                 Text(gate.lastCheckReachedServer
                      ? "Last checked \(at.formatted(date: .omitted, time: .shortened))"
-                     : "Couldn't reach the server at \(at.formatted(date: .omitted, time: .shortened)) — showing the last rules this phone received.")
+                     : "Couldn't get current rules from the server at \(at.formatted(date: .omitted, time: .shortened)) — showing the last rules this phone received.")
                     .font(.caption2)
                     .foregroundColor(gate.lastCheckReachedServer ? .secondary : .orange)
                     .multilineTextAlignment(.center)
@@ -332,11 +339,31 @@ struct UpdateRequiredView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 24)
             }
-            .frame(maxWidth: .infinity, minHeight: geo.size.height)
+            // Subtract the insets: the ScrollView's content area is the
+            // container minus safe areas, so this is the exact "fits without
+            // scrolling" height and the footer stays above the home indicator.
+            .frame(maxWidth: .infinity,
+                   minHeight: max(0, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom))
         }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
+    }
+
+    private var checkAgainButton: some View {
+        Button {
+            Task { await gate.checkNow() }
+        } label: {
+            Label("Check again", systemImage: "arrow.clockwise")
+                .opacity(gate.isChecking ? 0.4 : 1)
+        }
+        .disabled(gate.isChecking)
+    }
+
+    private var signOutButton: some View {
+        Button("Sign out", role: .destructive) {
+            confirmSignOut = true
+        }
     }
 }
 

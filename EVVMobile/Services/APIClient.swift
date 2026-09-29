@@ -2005,10 +2005,12 @@ actor APIClient {
     /// (HIPAA automatic logoff); refreshing while the app is in active use
     /// keeps a long shift alive without weakening the expiry.
     /// Also the recovery path for a 401 (build 46) — see refreshAfter401.
-    /// Returns whether the server answered at all (any HTTP status), so the
-    /// forced-update block screen (build 102) can tell "offline" from "server
-    /// reached but the token was not renewed". A failed refresh is still
-    /// best-effort: the current token is left in place either way.
+    /// Returns true only for a 200 with a decodable body — i.e. the server
+    /// accepted the session and (via sendStamped) delivered a current
+    /// X-EVV-App-Update header. Offline, timed out, 401, 5xx all return
+    /// false; the forced-update block screen (build 102) uses this to say
+    /// honestly that it could NOT get current rules. A failed refresh is
+    /// still best-effort: the current token is left in place either way.
     @discardableResult
     func refreshToken() async -> Bool {
         guard token != nil else { return false }
@@ -2017,11 +2019,11 @@ actor APIClient {
         request.httpMethod = "POST"
         addAuth(&request)
         request.timeoutInterval = 15
-        guard let (data, response) = try? await performRequest(request) else { return false }
-        if (response as? HTTPURLResponse)?.statusCode == 200,
-           let refreshed = try? JSONDecoder().decode(TokenRefreshResponse.self, from: data) {
-            self.token = refreshed.token
-        }
+        guard let (data, response) = try? await performRequest(request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let refreshed = try? JSONDecoder().decode(TokenRefreshResponse.self, from: data)
+        else { return false }
+        self.token = refreshed.token
         return true
     }
 
