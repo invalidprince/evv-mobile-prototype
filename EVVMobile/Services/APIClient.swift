@@ -2006,8 +2006,11 @@ actor APIClient {
     /// keeps a long shift alive without weakening the expiry.
     /// Also the recovery path for a 401 (build 46) — see refreshAfter401.
     /// Returns true only for a 200 with a decodable body — i.e. the server
-    /// accepted the session and (via sendStamped) delivered a current
-    /// X-EVV-App-Update header. Offline, timed out, 401, 5xx all return
+    /// accepted the session and delivered a current X-EVV-App-Update header:
+    /// performRequest -> transportRequest -> sendStamped, and sendStamped
+    /// hands EVERY response to AppUpdateGate.observe(_:) — so a refresh that
+    /// returns true has already updated gate.rules (pinned in
+    /// docs/signout-queue-check/check.sh section 5). Offline, timed out, 401, 5xx all return
     /// false; the forced-update block screen (build 102) uses this to say
     /// honestly that it could NOT get current rules. A failed refresh is
     /// still best-effort: the current token is left in place either way.

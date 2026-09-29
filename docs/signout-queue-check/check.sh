@@ -81,6 +81,14 @@ else
   fail=$((fail+1)); echo "  ✗ standalone compile failed — see $TMP/compile.log"
 fi
 
+echo "[5] the re-check path really ingests the update header (block-screen escape hatch)"
+API=EVVMobile/Services/APIClient.swift
+ok "refreshToken() goes through performRequest" "awk '/func refreshToken\(\) async -> Bool/,/^    }$/' $API | grep -q 'try? await performRequest(request)'"
+ok "performRequest -> transportRequest" "awk '/private func performRequest/,/^    }$/' $API | grep -q 'try await transportRequest(request)'"
+ok "transportRequest -> sendStamped (every attempt)" "awk '/private func transportRequest/,/^    }$/' $API | grep -q 'try await sendStamped(request)'"
+ok "sendStamped hands every response to AppUpdateGate.observe" "awk '/private func sendStamped/,/^    }$/' $API | grep -q 'AppUpdateGate.observe(response)'"
+ok "sendStamped is the only place URLSession is called" "test $(grep -c 'URLSession.shared.data(for:' $API) -eq 1"
+
 echo
 echo "$pass passed, $fail failed"
 [ $fail -eq 0 ]
