@@ -389,11 +389,11 @@ struct UpdateRequiredView: View {
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 28)
-            // Side by side normally, stacked at accessibility Dynamic Type
-            // sizes instead of truncating. (Deployment target is iOS 15, so
-            // no ViewThatFits.)
+            // Side by side normally, stacked from .xLarge Dynamic Type up so
+            // the two labels never truncate on a 390pt phone. (Deployment
+            // target is iOS 15, so no ViewThatFits.)
             Group {
-                if dynamicTypeSize.isAccessibilitySize {
+                if dynamicTypeSize >= .xLarge {
                     VStack(spacing: 12) { checkAgainButton; signOutButton }
                 } else {
                     HStack(spacing: 24) { checkAgainButton; signOutButton }
