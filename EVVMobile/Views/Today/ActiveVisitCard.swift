@@ -7,6 +7,11 @@ struct ActiveVisitCard: View {
     @State private var clockOutAndNext = false
     /// Build 87 — "Request second staff" / "Request again" (server v0.4.615).
     @State private var showTwoToOneRequest = false
+    /// Build 102 — "delete a current clock in" (Nick, 2026-09-23). Opens the
+    /// SAME DeleteRequestSheet History uses; that sheet swaps its copy for a
+    /// running visit and the SERVER decides immediate-delete vs request
+    /// (visit-core.requestVisitDelete). No second sheet, no second route.
+    @State private var showDelete = false
     private var nextVisit: Visit? {
         appState.todayVisits
             .filter { $0.status == .scheduled }
@@ -129,6 +134,26 @@ struct ActiveVisitCard: View {
                         }
                     }
                 }
+
+                // Build 102 — Delete lives BELOW Clock Out and below the note
+                // row, right-aligned and small. Clocking out is the common
+                // action and must not move or get crowded; this is a phone,
+                // mid-shift, often in someone's home. The confirm sheet with
+                // a required reason is the real guard against a fat-finger.
+                // Gated on server mode + a server visit id: the whole flow is
+                // a server route, and it is online-only (the sheet says so).
+                if appState.mode == .server, visit.serverVisitId != nil,
+                   visit.deleteRequestStatus == .none {
+                    HStack {
+                        Spacer()
+                        Button(action: { showDelete = true }) {
+                            Label("Delete Visit", systemImage: "trash")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(Theme.danger)
+                        }
+                        .accessibilityIdentifier("activeVisit.delete")
+                    }
+                }
             }
             .cardStyle()
             .fullScreenCover(isPresented: $showClockOut) {
@@ -141,6 +166,9 @@ struct ActiveVisitCard: View {
             }
             .sheet(isPresented: $showTwoToOneRequest) {
                 TwoToOneRequestSheet(visit: visit)
+            }
+            .sheet(isPresented: $showDelete) {
+                DeleteRequestSheet(visit: visit)
             }
         }
     }

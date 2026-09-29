@@ -697,17 +697,29 @@ struct ServerHistoryRow: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(Theme.primary)
                 }
-                // Build 53: no Time Fix / Delete on a running visit (Nick,
-                // 2026-09-02 answer 3: read-only until clock-out).
+                // Build 53: no Time Fix on a running visit (Nick, 2026-09-02
+                // answer 3: read-only until clock-out). Time Fix still obeys
+                // that — there are no times to fix until you clock out.
                 if !isInProgress && visit.timeFixStatus == .none {
                     Button("Time Fix", action: onTimeFix)
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(Theme.primary)
                 }
-                if !isInProgress && visit.deleteRequestStatus == .none {
+                // Build 102 — DELETE is now allowed on a running visit, which
+                // REVERSES the Delete half of that 2026-09-02 answer. Nick
+                // asked for it on 2026-09-23 ("In iOS AND today the ability
+                // to delete a current clock in"): read-only until clock-out
+                // left a staff member who punched on the wrong individual
+                // stuck finishing a visit that never happened. The pin above
+                // is kept rather than deleted so the reversal is visible.
+                // The immediate-vs-request decision is the SERVER's
+                // (visit-core.requestVisitDelete); the button just opens the
+                // same sheet.
+                if visit.deleteRequestStatus == .none {
                     Button("Delete", action: onRequestDelete)
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(Theme.danger)
+                        .accessibilityIdentifier("history.delete")
                 }
                 Spacer()
             }

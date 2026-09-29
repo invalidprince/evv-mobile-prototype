@@ -74,6 +74,19 @@ enum DeleteRequestStatus: String {
     case denied = "Denied"
 }
 
+/// Build 102 — what came back from POST /visits/:id/delete-request.
+///
+/// A delete on a clocked-OUT visit is a REQUEST a supervisor decides
+/// (`.requested`). A delete on a STILL-RUNNING visit takes effect
+/// immediately (`.deletedNow`, carrying the server's message) — Nick,
+/// 2026-09-23: "nope a delete is a delete. But show a delete message."
+/// The server decides which, never the phone.
+enum DeleteSubmitOutcome {
+    case deletedNow(String)
+    case requested
+    case failed(String)
+}
+
 struct ManualLocation: Hashable {
     var street: String = ""
     var city: String

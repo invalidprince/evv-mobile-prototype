@@ -2892,22 +2892,51 @@ final class AppState: ObservableObject {
 
     // MARK: - Server Delete Request
 
-    /// Returns nil on success, or an error message on failure.
     @MainActor  // Build 94 — publishes historyVisits; see refreshMissedShifts
-    func submitServerDeleteRequest(visitId: UUID, serverVisitId: String, reason: String) async -> String? {
+    /// Build 102 — the same route now has two outcomes and the phone has to
+    /// tell them apart, because the copy and the local state changes differ
+    /// completely. `.requested` leaves the visit in place with a pending chip;
+    /// `.deletedNow` means the row is already gone server-side.
+    func submitServerDeleteRequest(visitId: UUID, serverVisitId: String, reason: String) async -> DeleteSubmitOutcome {
         do {
-            _ = try await APIClient.shared.requestDelete(visitId: serverVisitId, reason: reason)
+            let resp = try await APIClient.shared.requestDelete(visitId: serverVisitId, reason: reason)
+            if resp.wasDeletedImmediately {
+                let msg = resp.message ?? "Visit deleted."
+                await MainActor.run { self.dropDeletedVisitLocally(serverVisitId: serverVisitId) }
+                return .deletedNow(msg)
+            }
             await MainActor.run {
-                if let i = historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
-                    historyVisits[i].deleteRequestStatus = .pending
+                if let i = self.historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    self.historyVisits[i].deleteRequestStatus = .pending
                 }
             }
-            return nil
+            return .requested
         } catch let error as APIError {
-            return error.localizedDescription
+            return .failed(error.localizedDescription)
         } catch {
-            return error.localizedDescription
+            return .failed(error.localizedDescription)
         }
+    }
+
+    /// Build 102 — the local half of an immediate delete.
+    ///
+    /// 🩸 THIS IS THE ANTI-GHOST STEP, not housekeeping. Server-side the row
+    /// is soft-deleted (`active = false`, `approval_status = 'deleted'`) and
+    /// both the active-visit lookup and the duplicate-punch guard exclude it.
+    /// If the phone kept its copy, `activeVisit` (todayVisits.first where
+    /// .inProgress) would keep returning it: the CLOCKED IN card stays up,
+    /// the clock keeps ticking, and `hasActiveVisit` blocks the next
+    /// clock-in locally even though the server would accept it. That is
+    /// exactly the V-2044/V-2046 shape — deleted visit, no clock-out.
+    /// `startTimerIfNeeded()` re-reads `activeVisit`, so it both invalidates
+    /// the ticker and zeroes `elapsed` once the row is gone.
+    @MainActor
+    private func dropDeletedVisitLocally(serverVisitId: String) {
+        todayVisits.removeAll { $0.serverVisitId == serverVisitId }
+        pastVisits.removeAll { $0.serverVisitId == serverVisitId }
+        historyVisits.removeAll { $0.serverVisitId == serverVisitId }
+        startTimerIfNeeded()
+        DiagnosticLogger.shared.logAPI("Visit \(serverVisitId) deleted while clocked in — dropped from Today/History locally")
     }
 
     // MARK: - Diagnostic log submission (F3)

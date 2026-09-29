@@ -1017,6 +1017,26 @@ struct ExceptionResponse: Decodable {
     let exceptionId: String?
 }
 
+/// Build 102 — the answer to POST /visits/:id/delete-request.
+///
+/// Two shapes, one route, decided by the SERVER (evv-poc v0.4.656):
+/// - clocked-OUT visit → `{ ok: true, exceptionId }` — the classic request
+///   ladder: a supervisor decides, the visit stays on the record meanwhile.
+/// - still-RUNNING visit → `{ ok: true, deleted: true, message }` — the
+///   visit is gone NOW, no approval wait (Nick, 2026-09-23: "nope a delete
+///   is a delete. But show a delete message.").
+/// Every field is optional so an OLDER server (no `deleted` key) still
+/// decodes and falls through to the request path.
+struct DeleteVisitResponse: Decodable {
+    let ok: Bool?
+    let exceptionId: String?
+    let deleted: Bool?
+    let message: String?
+
+    /// True only when the server says it actually deleted the visit.
+    var wasDeletedImmediately: Bool { deleted == true }
+}
+
 // MARK: - Individuals (for unscheduled visit selection)
 
 struct ServerIndividualOption: Codable, Identifiable {
@@ -2610,7 +2630,7 @@ actor APIClient {
 
     // MARK: - Delete Request
 
-    func requestDelete(visitId: String, reason: String) async throws -> ExceptionResponse {
+    func requestDelete(visitId: String, reason: String) async throws -> DeleteVisitResponse {
         let url = URL(string: "\(baseURL)/visits/\(visitId)/delete-request")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -2636,7 +2656,7 @@ actor APIClient {
             throw APIError.serverError(statusCode, errBody)
         }
         do {
-            return try JSONDecoder().decode(ExceptionResponse.self, from: data)
+            return try JSONDecoder().decode(DeleteVisitResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }
