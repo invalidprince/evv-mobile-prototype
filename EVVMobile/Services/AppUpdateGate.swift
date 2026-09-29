@@ -458,6 +458,9 @@ struct UpdateRequiredView: View {
         // Always available (review round 5): signOut() keeps queued punches
         // on disk keyed to this staff id, and the confirmation dialog says so.
         // A blocked shared phone must never be a dead end for the next person.
+        // Proof: docs/signout-queue-check/check.sh executes the real LocalCache
+        // queue envelope through the signOut() order (preserve -> clearAll ->
+        // re-save) and asserts the same staff gets the punches back on login.
         Button("Sign out", role: .destructive) {
             confirmSignOut = true
         }
