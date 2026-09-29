@@ -262,6 +262,10 @@ struct UpdateRequiredView: View {
     @State private var confirmSignOut = false
     /// Automatic re-checks used so far on this screen (see maxAutomaticChecks).
     @State private var automaticChecks = 0
+    /// Set on a real .background transition so the re-check budget resets
+    /// only when the phone actually left the app — not on the inactive→active
+    /// churn from Control Center / notification banners (review round 5).
+    @State private var wasBackgrounded = true
 
     var body: some View {
         content
@@ -277,31 +281,57 @@ struct UpdateRequiredView: View {
             // check renews the session (sliding-window auto-logoff), and a
             // timer on a screen nobody can use must not count as presence.
             // After that only the "Check again" tap re-checks (and renews).
-            // The budget resets each time the app comes back to the
-            // foreground (review round 4): returning to the app IS presence,
-            // and the card requires a re-check on every foreground entry so
-            // an admin's corrected rule always clears the screen.
+            // The budget resets when the app comes back from a REAL
+            // background stay (review rounds 4–5): returning to the app is
+            // presence, and the card requires a re-check on every foreground
+            // entry so an admin's corrected rule always clears the screen.
+            //
+            // Blocked ≠ stranded: the server only ADVISES via the header and
+            // still accepts punches, so this loop also drains the offline
+            // queue — with a sync-only call (no token refresh, so it never
+            // counts as presence) — and KEEPS draining on a slow timer after
+            // the re-check budget is spent. An unsent clock-in/out never sits
+            // on this screen waiting for a tap.
             .task(id: scenePhase) {
+                if scenePhase == .background { wasBackgrounded = true; return }
                 guard scenePhase == .active else { return }
-                automaticChecks = 0
-                // Blocked ≠ stranded: the server only ADVISES via the header,
-                // it still accepts punches, so drain the offline queue while
-                // the person waits (handleSceneActive also refreshes the token).
-                appState.handleSceneActive()
-                while !Task.isCancelled, automaticChecks < AppUpdateGate.maxAutomaticChecks {
-                    automaticChecks += 1
-                    await gate.checkNow()
-                    if appState.pendingSyncCount > 0 { appState.handleSceneActive() }
-                    let backoff = min(60.0 * pow(2.0, Double(gate.consecutiveFailedChecks)), 300.0)
-                    try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+                if wasBackgrounded { automaticChecks = 0; wasBackgrounded = false }
+                drainQueueIfNeeded()
+                while !Task.isCancelled {
+                    if automaticChecks < AppUpdateGate.maxAutomaticChecks {
+                        if !gate.isChecking {
+                            automaticChecks += 1
+                            await gate.checkNow()
+                        }
+                        drainQueueIfNeeded()
+                        let backoff = min(60.0 * pow(2.0, Double(gate.consecutiveFailedChecks)), 300.0)
+                        try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+                    } else {
+                        // Re-checks stopped; keep the punch queue moving.
+                        try? await Task.sleep(nanoseconds: 120 * 1_000_000_000)
+                        drainQueueIfNeeded()
+                    }
                 }
             }
             .confirmationDialog("Sign out of this phone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) { appState.signOut() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("You can sign back in after updating the app.")
+                if appState.pendingSyncCount > 0 {
+                    Text("\(appState.pendingSyncCount) saved punch\(appState.pendingSyncCount == 1 ? " stays" : "es stay") on this phone and will send after you sign back in. You can sign back in after updating the app.")
+                } else {
+                    Text("You can sign back in after updating the app.")
+                }
             }
+    }
+
+    /// Sync-only drain of the offline queue: replays queued punches when the
+    /// phone is online and nothing is already syncing. Deliberately NOT
+    /// handleSceneActive(), which also refreshes the session token — a blocked
+    /// screen must not renew the sliding-window session on a timer.
+    private func drainQueueIfNeeded() {
+        guard appState.pendingSyncCount > 0, appState.effectivelyOnline, !appState.isSyncing else { return }
+        appState.syncNow()
     }
 
     private var content: some View {
@@ -370,7 +400,7 @@ struct UpdateRequiredView: View {
             if appState.pendingSyncCount > 0 {
                 Label(appState.isSyncing
                       ? "Sending your saved punches… \(appState.pendingSyncCount) left"
-                      : "\(appState.pendingSyncCount) saved punch\(appState.pendingSyncCount == 1 ? "" : "es") waiting to send — kept on this phone until \(appState.effectivelyOnline ? "sent" : "you are back online").", systemImage: "tray.full.fill")
+                      : "\(appState.pendingSyncCount) saved punch\(appState.pendingSyncCount == 1 ? "" : "es") waiting to send — kept on this phone until \(appState.effectivelyOnline ? "sent (retrying every 2 minutes)" : "you are back online").", systemImage: "tray.full.fill")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -395,7 +425,10 @@ struct UpdateRequiredView: View {
 
     private var checkAgainButton: some View {
         Button {
-            Task { await gate.checkNow() }
+            Task {
+                await gate.checkNow()
+                drainQueueIfNeeded()
+            }
         } label: {
             Label("Check again", systemImage: "arrow.clockwise")
                 .opacity(gate.isChecking ? 0.4 : 1)
@@ -404,14 +437,12 @@ struct UpdateRequiredView: View {
     }
 
     private var signOutButton: some View {
+        // Always available (review round 5): signOut() keeps queued punches
+        // on disk keyed to this staff id, and the confirmation dialog says so.
+        // A blocked shared phone must never be a dead end for the next person.
         Button("Sign out", role: .destructive) {
             confirmSignOut = true
         }
-        // Not while punches are still queued: signOut() keeps them on disk
-        // (keyed to this staff id), but the screen drains them first so an
-        // unsent clock-in/out never has to wait for a re-login.
-        .disabled(appState.pendingSyncCount > 0)
-        .opacity(appState.pendingSyncCount > 0 ? 0.4 : 1)
     }
 }
 
