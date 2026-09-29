@@ -200,6 +200,10 @@ final class AppUpdateGate: ObservableObject {
                 // Lost the race to the timeout but the server did answer
                 // (slow link): reconcile so the screen does not show an
                 // "offline" line and back off against a healthy server.
+                // Only if no newer check has started since — a stale
+                // generation must never overwrite the state a later check
+                // already published (review round 4).
+                guard generation == self.checkGeneration, !self.isChecking else { return }
                 if ok {
                     self.lastCheckAt = Date()
                     self.lastCheckReachedServer = true
@@ -247,8 +251,9 @@ final class AppUpdateGate: ObservableObject {
 // MARK: - Views
 
 /// Full-screen block shown instead of the tabs when the running build is below
-/// the required build (and any deadline has passed). Read-only: no punch,
-/// no sync — but the offline queue is kept on disk and syncs after the update.
+/// the required build (and any deadline has passed). No new punches — but
+/// the offline queue keeps draining (the server only advises via the header,
+/// it still accepts punches) and is kept on disk if the phone is offline.
 struct UpdateRequiredView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gate = AppUpdateGate.shared
@@ -266,16 +271,27 @@ struct UpdateRequiredView: View {
             // scene is active (`.task(id:)` restarts it on each phase change
             // and cancels it when the view leaves), so a blocked phone left
             // on a desk does not keep renewing its session from the
-            // background. Backs off 60 s → 2 → 4 → 5 min cap while checks
-            // keep failing, and STOPS after AppUpdateGate.maxAutomaticChecks:
-            // every check renews the session (sliding-window auto-logoff), and
-            // a timer on a screen nobody can use must not count as presence.
+            // background. Backs off 60 s after a good check, then 120 s →
+            // 240 s → 5 min cap while checks keep failing, and STOPS after
+            // AppUpdateGate.maxAutomaticChecks per foreground session: every
+            // check renews the session (sliding-window auto-logoff), and a
+            // timer on a screen nobody can use must not count as presence.
             // After that only the "Check again" tap re-checks (and renews).
+            // The budget resets each time the app comes back to the
+            // foreground (review round 4): returning to the app IS presence,
+            // and the card requires a re-check on every foreground entry so
+            // an admin's corrected rule always clears the screen.
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
+                automaticChecks = 0
+                // Blocked ≠ stranded: the server only ADVISES via the header,
+                // it still accepts punches, so drain the offline queue while
+                // the person waits (handleSceneActive also refreshes the token).
+                appState.handleSceneActive()
                 while !Task.isCancelled, automaticChecks < AppUpdateGate.maxAutomaticChecks {
                     automaticChecks += 1
                     await gate.checkNow()
+                    if appState.pendingSyncCount > 0 { appState.handleSceneActive() }
                     let backoff = min(60.0 * pow(2.0, Double(gate.consecutiveFailedChecks)), 300.0)
                     try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
                 }
@@ -284,11 +300,7 @@ struct UpdateRequiredView: View {
                 Button("Sign out", role: .destructive) { appState.signOut() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                if appState.pendingSyncCount > 0 {
-                    Text("Your \(appState.pendingSyncCount) queued item(s) stay saved on this phone and sync when you sign back in after updating.")
-                } else {
-                    Text("You can sign back in after updating the app.")
-                }
+                Text("You can sign back in after updating the app.")
             }
     }
 
@@ -356,7 +368,9 @@ struct UpdateRequiredView: View {
                     .padding(.horizontal, 28)
             }
             if appState.pendingSyncCount > 0 {
-                Label("\(appState.pendingSyncCount) queued item\(appState.pendingSyncCount == 1 ? " is" : "s are") saved on this phone and will sync after you update.", systemImage: "tray.full.fill")
+                Label(appState.isSyncing
+                      ? "Sending your saved punches… \(appState.pendingSyncCount) left"
+                      : "\(appState.pendingSyncCount) saved punch\(appState.pendingSyncCount == 1 ? "" : "es") waiting to send — kept on this phone until \(appState.effectivelyOnline ? "sent" : "you are back online").", systemImage: "tray.full.fill")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -393,6 +407,11 @@ struct UpdateRequiredView: View {
         Button("Sign out", role: .destructive) {
             confirmSignOut = true
         }
+        // Not while punches are still queued: signOut() keeps them on disk
+        // (keyed to this staff id), but the screen drains them first so an
+        // unsent clock-in/out never has to wait for a re-login.
+        .disabled(appState.pendingSyncCount > 0)
+        .opacity(appState.pendingSyncCount > 0 ? 0.4 : 1)
     }
 }
 
