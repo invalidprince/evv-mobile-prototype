@@ -31,7 +31,7 @@ echo "[3] the block screen itself"
 ok "Sign out is behind a confirmation dialog, not a bare tap" "grep -q 'Sign out of this phone?' $GATE && grep -q 'isPresented: \$confirmSignOut' $GATE"
 ok "dialog tells the user their saved punches stay on the phone" "grep -q 'stay.* on this phone and will send after you sign back in' $GATE || grep -q 'on this phone and will send after you sign back in' $GATE"
 ok "block screen drains the sync queue on its own (blocked != stranded)" "grep -q 'pendingSyncCount > 0, appState.effectivelyOnline, !appState.isSyncing' $GATE"
-ok "hard verdict is cached in UserDefaults, not in the per-staff LocalCache (sign-out is not a bypass)" "grep -q 'UserDefaults.standard' $GATE && ! grep -q 'LocalCache' $GATE"
+ok "hard verdict is cached in UserDefaults, not in the per-staff LocalCache (sign-out is not a bypass)" "grep -q 'UserDefaults.standard' $GATE && ! grep -v '^ *//' $GATE | grep -q 'LocalCache'"
 
 echo "[4] EXECUTE the real LocalCache queue envelope (lifted verbatim)"
 {
