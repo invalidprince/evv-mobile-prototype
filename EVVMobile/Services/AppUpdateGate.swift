@@ -221,6 +221,13 @@ final class AppUpdateGate: ObservableObject {
         consecutiveFailedChecks = reached ? 0 : consecutiveFailedChecks + 1
     }
 
+    /// Called by the block screen when the app returns to the foreground so
+    /// the re-check backoff restarts at 60 s instead of wherever it was capped.
+    @MainActor
+    func resetFailureBackoff() {
+        consecutiveFailedChecks = 0
+    }
+
     /// "Friday, Oct 2" style for the banner / block screen.
     var deadlineDisplay: String? {
         guard let dl = rules?.requiredDeadline, !dl.isEmpty else { return nil }
@@ -295,7 +302,13 @@ struct UpdateRequiredView: View {
             .task(id: scenePhase) {
                 if scenePhase == .background { wasBackgrounded = true; return }
                 guard scenePhase == .active else { return }
-                if wasBackgrounded { automaticChecks = 0; wasBackgrounded = false }
+                if wasBackgrounded {
+                    automaticChecks = 0
+                    wasBackgrounded = false
+                    // Fresh foreground = fresh backoff; a phone that failed
+                    // earlier should not start this pass at the 300 s cap.
+                    gate.resetFailureBackoff()
+                }
                 drainQueueIfNeeded()
                 while !Task.isCancelled {
                     if automaticChecks < AppUpdateGate.maxAutomaticChecks {
@@ -400,12 +413,17 @@ struct UpdateRequiredView: View {
             if appState.pendingSyncCount > 0 {
                 Label(appState.isSyncing
                       ? "Sending your saved punches… \(appState.pendingSyncCount) left"
-                      : "\(appState.pendingSyncCount) saved punch\(appState.pendingSyncCount == 1 ? "" : "es") waiting to send — kept on this phone until \(appState.effectivelyOnline ? "sent (retrying every 2 minutes)" : "you are back online").", systemImage: "tray.full.fill")
+                      : "\(appState.pendingSyncCount) saved punch\(appState.pendingSyncCount == 1 ? "" : "es") waiting to send — kept on this phone until \(appState.effectivelyOnline ? "sent (this screen retries on its own)" : "you are back online").", systemImage: "tray.full.fill")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
             }
+            // Escalation path for staff stranded mid-shift (card requirement).
+            Text("Can't update right now? Call your supervisor — your saved punches stay on this phone.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
             Spacer(minLength: 40)
             Text("Already updated? Fully close and reopen the app. This screen re-checks on its own for a while after it opens — tap Check again to retry now.")
                 .font(.caption)
