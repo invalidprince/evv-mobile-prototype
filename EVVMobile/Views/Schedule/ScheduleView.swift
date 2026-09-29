@@ -28,6 +28,13 @@ struct ServerScheduleContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
 
+                // Card 6hcQmMwRQMr2r28H: open shifts moved off this screen onto
+                // their own Open Shift Board. This row is the only trace left
+                // here, and it hides itself when nothing is open.
+                if !appState.serverOpenRules.isEmpty || !appState.serverOpenShifts.isEmpty {
+                    OpenShiftBoardEntryRow()
+                }
+
                 // B5: Offline banner
                 if !appState.effectivelyOnline {
                     HStack(spacing: 8) {
@@ -112,23 +119,8 @@ struct ServerScheduleContent: View {
                     }
                 }
 
-                if !appState.serverOpenRules.isEmpty {
-                    ServerOpenRulesSection()
-                }
-
-                if !appState.serverOpenShifts.isEmpty {
-                    ServerOpenShiftsSection()
-                }
             }
             .padding(16)
-        }
-        .alert("You're on the schedule", isPresented: Binding(
-            get: { appState.ruleClaimMessage != nil },
-            set: { if !$0 { appState.ruleClaimMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { appState.ruleClaimMessage = nil }
-        } message: {
-            Text(appState.ruleClaimMessage ?? "")
         }
         .refreshable {
             await appState.refreshServerShifts()
