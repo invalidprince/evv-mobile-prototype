@@ -560,9 +560,10 @@ struct ServerHistoryRow: View {
     /// under "Today" AND on the Today tab (Nick, 2026-09-02: "It should").
     /// Read-only in History until clock-out — Time Fix / Delete are
     /// meaningless before the visit has an end time.
-    private var isInProgress: Bool {
-        visit.status == .inProgress || (visit.actualStart != nil && visit.actualEnd == nil)
-    }
+    /// Build 102, review nit — this WAS the definition; it now lives on
+    /// Visit as `isRunning` so the Today card, this row and
+    /// DeleteRequestSheet all agree. Same test, one copy.
+    private var isInProgress: Bool { visit.isRunning }
 
     /// Build 83 — running, and the clock-in was on a PRIOR day. Nick, #evv
     /// 2026-09-21: "even if over 2 weeks (should NEVER happen), if you're

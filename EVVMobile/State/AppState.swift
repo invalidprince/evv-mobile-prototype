@@ -2901,9 +2901,16 @@ final class AppState: ObservableObject {
         do {
             let resp = try await APIClient.shared.requestDelete(visitId: serverVisitId, reason: reason)
             if resp.wasDeletedImmediately {
-                let msg = resp.message ?? "Visit deleted."
-                await MainActor.run { self.dropDeletedVisitLocally(serverVisitId: serverVisitId) }
-                return .deletedNow(msg)
+                // 🩸 REVIEW BLOCK (gate 1, round 1) — do NOT drop the row here.
+                // The delete sheet is presented FROM the card that renders off
+                // `activeVisit` (todayVisits.first{ .inProgress }). Removing
+                // the row takes that card out of the hierarchy, SwiftUI tears
+                // the presented sheet down with it, and the "Visit deleted"
+                // alert never appears — which is precisely the thing Nick
+                // asked for ("But show a delete message"). The caller drops
+                // the row from the alert's OK handler instead, so the message
+                // is seen FIRST and the teardown happens on dismiss.
+                return .deletedNow(resp.message ?? "Visit deleted.")
             }
             await MainActor.run {
                 if let i = self.historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
@@ -2912,10 +2919,24 @@ final class AppState: ObservableObject {
             }
             return .requested
         } catch let error as APIError {
+            await reconcileAfterFailedDelete()
             return .failed(error.localizedDescription)
         } catch {
+            await reconcileAfterFailedDelete()
             return .failed(error.localizedDescription)
         }
+    }
+
+    /// Build 102, review warn 1 — a timeout or dropped connection AFTER the
+    /// server already soft-deleted the visit would otherwise leave the phone
+    /// holding an in-progress row the server no longer has: CLOCKED IN card
+    /// up, timer ticking, `hasActiveVisit` blocking the next clock-in. That
+    /// is the V-2044/V-2046 ghost shape arriving through the error path
+    /// instead of the success path. Re-pull today's shifts so the server's
+    /// view wins. Read-only and idempotent — `refreshServerShifts` already
+    /// self-guards against a concurrent refresh.
+    private func reconcileAfterFailedDelete() async {
+        await refreshServerShifts()
     }
 
     /// Build 102 — the local half of an immediate delete.
@@ -2930,8 +2951,11 @@ final class AppState: ObservableObject {
     /// exactly the V-2044/V-2046 shape — deleted visit, no clock-out.
     /// `startTimerIfNeeded()` re-reads `activeVisit`, so it both invalidates
     /// the ticker and zeroes `elapsed` once the row is gone.
+    /// Call this AFTER the staff member has acknowledged the delete message
+    /// (DeleteRequestSheet's alert OK handler), never before — see the review
+    /// note in submitServerDeleteRequest.
     @MainActor
-    private func dropDeletedVisitLocally(serverVisitId: String) {
+    func dropDeletedVisitLocally(serverVisitId: String) {
         todayVisits.removeAll { $0.serverVisitId == serverVisitId }
         pastVisits.removeAll { $0.serverVisitId == serverVisitId }
         historyVisits.removeAll { $0.serverVisitId == serverVisitId }

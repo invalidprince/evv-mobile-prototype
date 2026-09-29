@@ -212,6 +212,19 @@ struct Visit: Identifiable {
         return start < Calendar.current.startOfDay(for: Date())
     }
 
+    /// Build 102 — THE single "still clocked in" predicate.
+    ///
+    /// Review nit: three views had grown three slightly different versions of
+    /// this test, and they now drive a DESTRUCTIVE branch — if History opened
+    /// the delete sheet in request-mode for a visit the server treats as
+    /// running (or vice versa) the copy would lie about what the button does.
+    /// This is the ServerHistoryRow definition, which is the widest of the
+    /// three, so it matches the server's own `actual_out IS NULL` test most
+    /// closely; every caller now uses it.
+    var isRunning: Bool {
+        status == .inProgress || (actualStart != nil && actualEnd == nil)
+    }
+
     var client: Client { clients[0] }
 
     // MARK: - Same-day note rule
