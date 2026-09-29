@@ -33,13 +33,15 @@ struct OpenShiftBoardView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "wifi.slash")
                             .foregroundColor(Theme.danger)
-                        Text("You're offline")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(Theme.danger)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("You're offline")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(Theme.danger)
+                            Text("Showing cached open shifts")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         Spacer()
-                        Text("Showing cached open shifts")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
                     .padding(12)
                     .background(Theme.danger.opacity(0.1))
@@ -87,11 +89,13 @@ struct OpenShiftBoardView: View {
         .refreshable {
             await appState.refreshServerShifts()
         }
-        .onAppear {
+        .task {
             // Risk #2 on the card: the board needs its own refresh trigger or
             // it shows stale counts when opened after a background period.
+            // .task (not .onAppear + unstructured Task) so the refresh is
+            // cancelled if the staff member taps Back mid-flight.
             guard appState.effectivelyOnline else { return }
-            Task { await appState.refreshServerShifts() }
+            await appState.refreshServerShifts()
         }
         .accessibilityIdentifier("openShiftBoard")
     }
@@ -105,12 +109,17 @@ struct OpenShiftBoardView: View {
 struct OpenShiftBoardEntryRow: View {
     @EnvironmentObject var appState: AppState
 
+    /// Flips `ServerScheduleContent.showOpenShiftBoard`. The NavigationLink
+    /// lives there, on a view that never leaves the hierarchy, so claiming the
+    /// last open shift cannot pop the board while the staff member is on it.
+    let openBoard: () -> Void
+
     var openCount: Int {
         appState.serverOpenShifts.count + appState.serverOpenRules.count
     }
 
     var body: some View {
-        NavigationLink(destination: OpenShiftBoardView()) {
+        Button(action: openBoard) {
             HStack(spacing: 12) {
                 Image(systemName: "hand.raised.fill")
                     .font(.title3)

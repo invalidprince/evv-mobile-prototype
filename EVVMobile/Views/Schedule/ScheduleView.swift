@@ -24,16 +24,16 @@ struct ScheduleView: View {
 struct ServerScheduleContent: View {
     @EnvironmentObject var appState: AppState
 
+    /// Card 6hcQmMwRQMr2r28H. Drives the push to the Open Shift Board. The
+    /// NavigationLink itself hangs off the ScrollView's .background below, NOT
+    /// off the visible entry row: the row hides when the count hits zero, and a
+    /// link that leaves the hierarchy pops the board out from under the staff
+    /// member the instant they claim the last open shift.
+    @State private var showOpenShiftBoard = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-
-                // Card 6hcQmMwRQMr2r28H: open shifts moved off this screen onto
-                // their own Open Shift Board. This row is the only trace left
-                // here, and it hides itself when nothing is open.
-                if !appState.serverOpenRules.isEmpty || !appState.serverOpenShifts.isEmpty {
-                    OpenShiftBoardEntryRow()
-                }
 
                 // B5: Offline banner
                 if !appState.effectivelyOnline {
@@ -79,6 +79,13 @@ struct ServerScheduleContent: View {
                     .cornerRadius(12)
                 }
 
+                // Card 6hcQmMwRQMr2r28H: open shifts moved off this screen onto
+                // their own Open Shift Board. This row is the only trace left
+                // here, and it is hidden entirely when nothing is open.
+                if !appState.serverOpenRules.isEmpty || !appState.serverOpenShifts.isEmpty {
+                    OpenShiftBoardEntryRow(openBoard: { showOpenShiftBoard = true })
+                }
+
                 if appState.isLoadingShifts && appState.todayVisits.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -122,6 +129,13 @@ struct ServerScheduleContent: View {
             }
             .padding(16)
         }
+        .background(
+            NavigationLink(destination: OpenShiftBoardView(), isActive: $showOpenShiftBoard) {
+                EmptyView()
+            }
+            .opacity(0)
+            .accessibilityHidden(true)
+        )
         .refreshable {
             await appState.refreshServerShifts()
         }
