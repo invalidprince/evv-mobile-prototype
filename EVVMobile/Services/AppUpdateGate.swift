@@ -143,6 +143,15 @@ final class AppUpdateGate: ObservableObject {
     /// Consecutive failed re-checks; drives the block screen's poll backoff.
     @Published private(set) var consecutiveFailedChecks = 0
 
+    /// Automatic re-checks per block-screen session. Each one renews the
+    /// session token (refreshToken is the HIPAA sliding-window renewal), so
+    /// an unattended, screen-on phone must not be able to keep itself logged
+    /// in forever from this screen: after this many the timer stops and only
+    /// an explicit "Check again" tap (real user presence) renews. Clock-out
+    /// arrivals in the field can still tap; an admin fix is picked up on the
+    /// next tap or the next launch.
+    static let maxAutomaticChecks = 8
+
     /// Hard ceiling on one re-check. URLRequest.timeoutInterval (15 s) is an
     /// idle timeout, so a stalled connection could otherwise pin isChecking
     /// and leave "Check again" disabled indefinitely.
@@ -154,10 +163,14 @@ final class AppUpdateGate: ObservableObject {
     private var pendingCheck: CheckedContinuation<Bool, Never>?
     private var checkGeneration = 0
 
-    private func finishCheck(_ generation: Int, reached: Bool) {
-        guard generation == checkGeneration, let c = pendingCheck else { return }
+    /// Returns false when this generation's check had already been resumed
+    /// (by the other racer) so the caller can reconcile a late result.
+    @discardableResult
+    private func finishCheck(_ generation: Int, reached: Bool) -> Bool {
+        guard generation == checkGeneration, let c = pendingCheck else { return false }
         pendingCheck = nil
         c.resume(returning: reached)
+        return true
     }
 
     /// Re-ask the server for current rules (build 101). Any authenticated
@@ -182,7 +195,16 @@ final class AppUpdateGate: ObservableObject {
             pendingCheck = c
             Task { @MainActor [weak self] in
                 let ok = await APIClient.shared.refreshToken()
-                self?.finishCheck(generation, reached: ok)
+                guard let self else { return }
+                if self.finishCheck(generation, reached: ok) { return }
+                // Lost the race to the timeout but the server did answer
+                // (slow link): reconcile so the screen does not show an
+                // "offline" line and back off against a healthy server.
+                if ok {
+                    self.lastCheckAt = Date()
+                    self.lastCheckReachedServer = true
+                    self.consecutiveFailedChecks = 0
+                }
             }
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: Self.checkTimeoutNanos)
@@ -231,7 +253,10 @@ struct UpdateRequiredView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gate = AppUpdateGate.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var confirmSignOut = false
+    /// Automatic re-checks used so far on this screen (see maxAutomaticChecks).
+    @State private var automaticChecks = 0
 
     var body: some View {
         content
@@ -241,16 +266,18 @@ struct UpdateRequiredView: View {
             // scene is active (`.task(id:)` restarts it on each phase change
             // and cancels it when the view leaves), so a blocked phone left
             // on a desk does not keep renewing its session from the
-            // background — the sliding-window auto-logoff still applies. Backs
-            // off 60 s → 2 → 4 → 5 min cap while checks keep failing.
+            // background. Backs off 60 s → 2 → 4 → 5 min cap while checks
+            // keep failing, and STOPS after AppUpdateGate.maxAutomaticChecks:
+            // every check renews the session (sliding-window auto-logoff), and
+            // a timer on a screen nobody can use must not count as presence.
+            // After that only the "Check again" tap re-checks (and renews).
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
-                await gate.checkNow()
-                while !Task.isCancelled {
+                while !Task.isCancelled, automaticChecks < AppUpdateGate.maxAutomaticChecks {
+                    automaticChecks += 1
+                    await gate.checkNow()
                     let backoff = min(60.0 * pow(2.0, Double(gate.consecutiveFailedChecks)), 300.0)
                     try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
-                    guard !Task.isCancelled else { break }
-                    await gate.checkNow()
                 }
             }
             .confirmationDialog("Sign out of this phone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
@@ -307,11 +334,15 @@ struct UpdateRequiredView: View {
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 28)
-            // ViewThatFits: side by side normally, stacked at accessibility
-            // Dynamic Type sizes / narrow widths instead of truncating.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 24) { checkAgainButton; signOutButton }
-                VStack(spacing: 12) { checkAgainButton; signOutButton }
+            // Side by side normally, stacked at accessibility Dynamic Type
+            // sizes instead of truncating. (Deployment target is iOS 15, so
+            // no ViewThatFits.)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 12) { checkAgainButton; signOutButton }
+                } else {
+                    HStack(spacing: 24) { checkAgainButton; signOutButton }
+                }
             }
             .font(.subheadline)
             .padding(.horizontal, 28)
@@ -332,18 +363,16 @@ struct UpdateRequiredView: View {
                     .padding(.horizontal, 28)
             }
             Spacer(minLength: 40)
-            Text("Already updated? Fully close and reopen the app. This screen re-checks on its own every minute.")
+            Text("Already updated? Fully close and reopen the app. This screen re-checks on its own for a while after it opens — tap Check again to retry now.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
                 .padding(.bottom, 24)
             }
-            // Subtract the insets: the ScrollView's content area is the
-            // container minus safe areas, so this is the exact "fits without
-            // scrolling" height and the footer stays above the home indicator.
-            .frame(maxWidth: .infinity,
-                   minHeight: max(0, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom))
+            // geo is inside the safe area, so its height is already the
+            // "fits without scrolling" height; no inset arithmetic.
+            .frame(maxWidth: .infinity, minHeight: geo.size.height)
         }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
