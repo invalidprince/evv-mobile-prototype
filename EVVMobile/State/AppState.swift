@@ -2900,6 +2900,14 @@ final class AppState: ObservableObject {
     func submitServerDeleteRequest(visitId: UUID, serverVisitId: String, reason: String) async -> DeleteSubmitOutcome {
         do {
             let resp = try await APIClient.shared.requestDelete(visitId: serverVisitId, reason: reason)
+            // Review warn 1 (round 3) — `ok` was decoded and never checked. A
+            // 2xx body that says ok:false and neither deleted nor an
+            // exceptionId means NOTHING was created, but it used to fall into
+            // .requested and hide the Delete button behind a pending state
+            // that does not exist. Deterministic, so uncertain: false.
+            if resp.ok == false || (resp.ok == nil && resp.exceptionId == nil && resp.deleted != true) {
+                return .failed(resp.message ?? "The server did not accept the delete. Try again.", uncertain: false)
+            }
             if resp.wasDeletedImmediately {
                 // 🩸 REVIEW BLOCK (gate 1, round 1) — do NOT drop the row here.
                 // The delete sheet is presented FROM the card that renders off
@@ -2955,6 +2963,11 @@ final class AppState: ObservableObject {
         case .serverError(let code, _):
             return code >= 500
         case .networkError, .decodingError, .responseUnreadable:
+            return true
+        // Review nit 1 (round 3) — fail TOWARD reconcile. A case added to
+        // APIError later should make the phone re-check the server, not
+        // silently assume the delete never happened.
+        default:
             return true
         }
     }

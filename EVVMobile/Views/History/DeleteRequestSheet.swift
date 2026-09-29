@@ -54,7 +54,7 @@ struct DeleteRequestSheet: View {
     /// spoken.
     private var footerText: String {
         if isInProgress {
-            return "Still running: deleted right away, no supervisor approval, and the shift goes back to not started. Already clocked out: a delete request goes to your supervisor."
+            return "Deletes this visit now — no supervisor approval. The shift goes back to not started. If it was already clocked out on another device, this becomes a request instead."
         }
         return "This sends a delete request to your supervisor for review. The visit stays on your record until it's approved."
     }
@@ -142,9 +142,17 @@ struct DeleteRequestSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
+                    // Review block (round 3) — Cancel was live during the
+                    // round-trip. Tapping it (or swiping down) tore the sheet
+                    // out from under an in-flight delete, so a .deletedNow
+                    // that landed a moment later set showSuccess on a view
+                    // that no longer existed: no alert, no drop, no refresh,
+                    // and the ghost in-progress row stayed on the phone.
                     Button("Cancel") { dismiss() }
+                        .disabled(isSubmitting)
                 }
             }
+            .interactiveDismissDisabled(isSubmitting)
             .alert(deletedMessage == nil ? "Delete request submitted" : "Visit deleted",
                    isPresented: $showSuccess) {
                 Button("OK") {
@@ -158,6 +166,10 @@ struct DeleteRequestSheet: View {
                     // asked for is never seen. Order matters: show the
                     // message, wait for the acknowledgement, THEN clear the
                     // local state.
+                    // onDisappear performs the same drop, so this is belt and
+                    // braces rather than the only path (round-3 block). The
+                    // drop is idempotent: removeAll on an id that is already
+                    // gone is a no-op.
                     if let svid = visit.serverVisitId, deletedMessage != nil {
                         appState.dropDeletedVisitLocally(serverVisitId: svid)
                     }
@@ -173,9 +185,17 @@ struct DeleteRequestSheet: View {
         // Build 75: supervisor comment field.
         .keyboardDismissable()
         .onDisappear {
-            // Review warn 3 — reconcile a possibly-landed delete only after
-            // this sheet is gone, so republishing todayVisits cannot tear it
-            // down mid-read.
+            // Review block (round 3) — the drop must be dismiss-SAFE, not
+            // only alert-driven. If the visit was deleted and this sheet went
+            // away by any route other than the alert OK, clear the local row
+            // here; otherwise the phone keeps a visit the server no longer
+            // has (the V-2044/V-2046 ghost shape).
+            if deletedMessage != nil, let svid = visit.serverVisitId {
+                appState.dropDeletedVisitLocally(serverVisitId: svid)
+            }
+            // Review warn 3 (round 2) — reconcile a possibly-landed delete
+            // only after this sheet is gone, so republishing todayVisits
+            // cannot tear it down mid-read.
             if needsReconcile {
                 needsReconcile = false
                 Task { await appState.reconcileAfterFailedDelete() }
