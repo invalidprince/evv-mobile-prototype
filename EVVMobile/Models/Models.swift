@@ -84,7 +84,13 @@ enum DeleteRequestStatus: String {
 enum DeleteSubmitOutcome {
     case deletedNow(String)
     case requested
-    case failed(String)
+    /// Build 102, review warn 3 — the Bool is "the outcome is UNKNOWN".
+    /// A 4xx is a deterministic refusal: the server definitely did not
+    /// delete anything, so there is nothing to reconcile and nothing to
+    /// hedge about. Only a transport-class failure (connection dropped,
+    /// timeout, unreadable 2xx body) can hide a delete that really
+    /// happened, and only that case earns a re-sync and a hedged message.
+    case failed(String, uncertain: Bool)
 }
 
 struct ManualLocation: Hashable {

@@ -558,8 +558,10 @@ struct ServerHistoryRow: View {
 
     /// Build 53: a visit that is clocked in but not out. It appears here
     /// under "Today" AND on the Today tab (Nick, 2026-09-02: "It should").
-    /// Read-only in History until clock-out — Time Fix / Delete are
-    /// meaningless before the visit has an end time.
+    /// Read-only in History until clock-out — that was Nick 2026-09-02, and
+    /// TIME FIX still obeys it (there are no times to fix before the visit
+    /// has an end time). DELETE no longer does: build 102 allows it on a
+    /// running visit per Nick 2026-09-23 — see the Delete button below.
     /// Build 102, review nit — this WAS the definition; it now lives on
     /// Visit as `isRunning` so the Today card, this row and
     /// DeleteRequestSheet all agree. Same test, one copy.

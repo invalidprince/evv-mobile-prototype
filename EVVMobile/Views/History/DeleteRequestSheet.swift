@@ -13,6 +13,12 @@ struct DeleteRequestSheet: View {
     /// Build 102 — the server's own delete message, shown verbatim when the
     /// visit was deleted on the spot rather than queued for a supervisor.
     @State private var deletedMessage: String?
+    /// Build 102, review warn 3 — set when a delete failed in a way that
+    /// could still have landed server-side. The re-sync runs on DISMISS, not
+    /// on the failure: refreshServerShifts() republishes todayVisits, and if
+    /// that drops the row the Today card unmounts and takes this sheet (and
+    /// the unread error) with it.
+    @State private var needsReconcile = false
 
     /// Build 102 — a RUNNING visit is deleted immediately, not requested
     /// (Nick, 2026-09-23), so this sheet's copy has to change with it.
@@ -48,7 +54,7 @@ struct DeleteRequestSheet: View {
     /// spoken.
     private var footerText: String {
         if isInProgress {
-            return "If this visit is still running, it is deleted right away with no supervisor approval — a scheduled shift goes back to not started so you can clock in again, and a visit you started without a shift is cancelled. If it has already been clocked out, a delete request goes to your supervisor instead. Either way the note on it goes with the visit."
+            return "Still running: deleted right away, no supervisor approval, and the shift goes back to not started. Already clocked out: a delete request goes to your supervisor."
         }
         return "This sends a delete request to your supervisor for review. The visit stays on your record until it's approved."
     }
@@ -166,6 +172,15 @@ struct DeleteRequestSheet: View {
         }
         // Build 75: supervisor comment field.
         .keyboardDismissable()
+        .onDisappear {
+            // Review warn 3 — reconcile a possibly-landed delete only after
+            // this sheet is gone, so republishing todayVisits cannot tear it
+            // down mid-read.
+            if needsReconcile {
+                needsReconcile = false
+                Task { await appState.reconcileAfterFailedDelete() }
+            }
+        }
     }
 
     private func submit() {
@@ -184,15 +199,17 @@ struct DeleteRequestSheet: View {
                 await MainActor.run {
                     isSubmitting = false
                     switch outcome {
-                    case .failed(let err):
-                        // Review warn 1 — AppState has already re-pulled
-                        // today's shifts, so if the server did delete it and
-                        // only the response was lost, Today is already
-                        // correct. Say so instead of implying nothing
-                        // happened.
-                        errorMessage = isInProgress
+                    case .failed(let err, let uncertain):
+                        // Review warn 3 — hedge ONLY when the outcome really
+                        // is unknown. After a 403/409/billed refusal the
+                        // server did not touch the visit, and "you do not
+                        // have permission … it may already be deleted" is a
+                        // lie. The reconcile is deferred to dismiss so this
+                        // text cannot be torn down before it is read.
+                        errorMessage = (isInProgress && uncertain)
                             ? err + " Check Today — the visit may already be deleted."
                             : err
+                        needsReconcile = uncertain
                     case .deletedNow(let msg):
                         deletedMessage = msg
                         showSuccess = true

@@ -2913,17 +2913,49 @@ final class AppState: ObservableObject {
                 return .deletedNow(resp.message ?? "Visit deleted.")
             }
             await MainActor.run {
+                // Review warn 2 — a RUNNING visit lives in todayVisits, not
+                // just historyVisits, and the new Today card gates its
+                // Delete button on deleteRequestStatus == .none. Marking only
+                // the History copy left that button live, so a second tap hit
+                // the server duplicate-pending guard and surfaced as an
+                // error. Mark every list that can hold the row.
+                if let i = self.todayVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    self.todayVisits[i].deleteRequestStatus = .pending
+                }
+                if let i = self.pastVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
+                    self.pastVisits[i].deleteRequestStatus = .pending
+                }
                 if let i = self.historyVisits.firstIndex(where: { $0.serverVisitId == serverVisitId }) {
                     self.historyVisits[i].deleteRequestStatus = .pending
                 }
             }
             return .requested
         } catch let error as APIError {
-            await reconcileAfterFailedDelete()
-            return .failed(error.localizedDescription)
+            // Review warn 3 — do NOT reconcile here. refreshServerShifts()
+            // republishes todayVisits; if that drops the row the Today card
+            // unmounts and takes this sheet down with it, losing the error
+            // the staff member has not read yet (same teardown as the
+            // success path). The sheet asks for the reconcile on dismiss.
+            return .failed(error.localizedDescription, uncertain: Self.deleteOutcomeUncertain(error))
         } catch {
-            await reconcileAfterFailedDelete()
-            return .failed(error.localizedDescription)
+            return .failed(error.localizedDescription, uncertain: true)
+        }
+    }
+
+    /// Build 102, review warn 3 — did the delete's fate become UNKNOWN?
+    /// A deterministic refusal (403 non-owner, 409 duplicate-pending, a
+    /// billed/submitted block, an expired session) means the server did not
+    /// touch the visit: saying "it may already be deleted" after "you do not
+    /// have permission" is simply false. Only a dropped connection, a 5xx or
+    /// an unreadable body can hide a delete that actually landed.
+    private static func deleteOutcomeUncertain(_ error: APIError) -> Bool {
+        switch error {
+        case .unauthorized, .conflict, .forbidden, .stillClockedIn:
+            return false
+        case .serverError(let code, _):
+            return code >= 500
+        case .networkError, .decodingError, .responseUnreadable:
+            return true
         }
     }
 
@@ -2935,7 +2967,9 @@ final class AppState: ObservableObject {
     /// instead of the success path. Re-pull today's shifts so the server's
     /// view wins. Read-only and idempotent — `refreshServerShifts` already
     /// self-guards against a concurrent refresh.
-    private func reconcileAfterFailedDelete() async {
+    /// Called by DeleteRequestSheet on dismiss, never mid-sheet — see the
+    /// teardown note in the catch branch above.
+    func reconcileAfterFailedDelete() async {
         await refreshServerShifts()
     }
 
@@ -2960,6 +2994,15 @@ final class AppState: ObservableObject {
         pastVisits.removeAll { $0.serverVisitId == serverVisitId }
         historyVisits.removeAll { $0.serverVisitId == serverVisitId }
         startTimerIfNeeded()
+        // Review warn 1 — the local drop makes the ghost card disappear
+        // SYNCHRONOUSLY, but the server has also put the scheduled shift back
+        // to "scheduled" (releaseShiftAfterVisitRemoval). Without this pull
+        // the shift merely vanishes from Today until some unrelated refresh,
+        // and the staff member cannot clock back into the shift the sheet just
+        // promised is "back to not started" — which is Nick's answer 1 as the
+        // user experiences it. Fire-and-forget: refreshServerShifts()
+        // self-guards against a concurrent refresh.
+        Task { await self.refreshServerShifts() }
         DiagnosticLogger.shared.logAPI("Visit \(serverVisitId) deleted while clocked in — dropped from Today/History locally")
     }
 
