@@ -306,6 +306,11 @@ struct MedicationsDueCard: View {
             switch med.status {
             case "given": return (Theme.success, "given")
             case "refused": return (Theme.warning, "refused")
+            // Build 110 / server v0.4.668 — MAR codes: H = hospital,
+            // E = error, RE = respite. "held" is retired (legacy rows only).
+            case "hospital": return (Theme.primary, "hospital")
+            case "error": return (Theme.danger, "error")
+            case "respite": return (Theme.primary, "respite")
             case "held": return (Theme.primary, "held")
             case "missed": return (Theme.danger, "missed")
             default: return (.secondary, med.status)
@@ -321,7 +326,7 @@ struct MedicationsDueCard: View {
     }
 }
 
-// MARK: - Record sheet (given / refused / held — missed is automatic, v0.4.315)
+// MARK: - Record sheet (given / refused / hospital / error / respite — missed is automatic, v0.4.315; held retired v0.4.668)
 
 struct RecordAdministrationSheet: View {
     let med: DueMedication
@@ -345,8 +350,12 @@ struct RecordAdministrationSheet: View {
     /// clear error rather than writing anything.
     private let allActions: [(id: String, label: String, icon: String)] = [
         ("given", "Given", "checkmark.circle.fill"),
-        ("refused", "Refused", "hand.raised.fill"),
-        ("held", "Held", "pause.circle.fill"),
+        ("refused", "Refused (R)", "hand.raised.fill"),
+        // Build 110 / server v0.4.668 (Lifesharing 9/29): Held retired;
+        // H = Hospital, E = Error, RE = Respite. The server refuses "held".
+        ("hospital", "Hospital (H)", "cross.case.fill"),
+        ("error", "Error (E)", "exclamationmark.triangle.fill"),
+        ("respite", "Respite (RE)", "house.fill"),
     ]
 
     /// 🔒 build 44 / server v0.4.322 — once the server refuses on the window,
@@ -362,8 +371,9 @@ struct RecordAdministrationSheet: View {
         return allActions
     }
 
-    /// Same rule the server enforces: refused / held need a reason.
-    private var reasonRequired: Bool { action != "given" }
+    /// Same rule the server enforces (emar-core REASON_REQUIRED): refused and
+    /// error need a reason; hospital / respite take an optional note.
+    private var reasonRequired: Bool { action == "refused" || action == "error" }
     private var canSubmit: Bool {
         !isSubmitting && appState.effectivelyOnline
             && actions.contains(where: { $0.id == action })
@@ -481,7 +491,7 @@ struct RecordAdministrationSheet: View {
     private var notesSection: some View {
         Section(header: Text(reasonRequired ? "Reason (required)" : "Notes (optional)")) {
             MultilineTextBox(
-                placeholder: reasonRequired ? "Why was the medication \(action)?" : "Optional notes",
+                placeholder: action == "error" ? "Describe the medication error" : (reasonRequired ? "Why was the medication \(action)?" : "Optional notes"),
                 text: $notes
             )
         }

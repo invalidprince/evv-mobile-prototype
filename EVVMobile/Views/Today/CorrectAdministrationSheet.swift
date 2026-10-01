@@ -53,9 +53,12 @@ struct CorrectAdministrationSheet: View {
     /// only truthful repair of a false "given".
     private let actions: [(id: String, label: String, icon: String)] = [
         ("given", "Given", "checkmark.circle.fill"),
-        ("refused", "Refused", "hand.raised.fill"),
-        ("held", "Held", "pause.circle.fill"),
-        ("missed", "Missed", "xmark.circle.fill"),
+        ("refused", "Refused (R)", "hand.raised.fill"),
+        // Build 110 / server v0.4.668: Held retired; H/E/RE added.
+        ("hospital", "Hospital (H)", "cross.case.fill"),
+        ("error", "Error (E)", "exclamationmark.triangle.fill"),
+        ("respite", "Respite (RE)", "house.fill"),
+        ("missed", "Missed (M)", "xmark.circle.fill"),
     ]
 
     private var online: Bool { appState.effectivelyOnline }
