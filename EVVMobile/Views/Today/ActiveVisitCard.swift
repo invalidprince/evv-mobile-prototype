@@ -84,11 +84,26 @@ struct ActiveVisitCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(visit.clients.map { $0.name }.joined(separator: " & "))
                             .font(.headline)
-                        Text(visit.serviceLabel)
+                        Text(visit.noServiceAssigned ? "No service assigned" : visit.serviceLabel)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
+                }
+
+                // Build 107 / server v0.4.660 — non-blocking: outcomes come from
+                // the service, so a serviceless visit has none until the office
+                // assigns one. Re-opening the note afterwards shows them.
+                if visit.noServiceAssigned {
+                    Label("No service assigned — outcomes will appear once the office assigns one.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(Theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.warning.opacity(0.14))
+                        .cornerRadius(8)
                 }
 
                 if visit.isStaleOpen, let start = visit.actualStart {

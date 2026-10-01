@@ -172,6 +172,12 @@ struct Visit: Identifiable {
     var lateDocumentation: Bool = false
     /// Free-text name for an unlisted individual (F2)
     var unlistedIndividualName: String?
+    /// Build 107 / server v0.4.660 — the visit was clocked in with NO service
+    /// code (unscheduled "no service" punch, or a shift the office fills in
+    /// later). Outcomes resolve from the service, so the documentation form
+    /// has none until the office assigns one; the active-visit card says so.
+    /// Cleared by the next shift refresh once the server reports a service.
+    var noServiceAssigned: Bool = false
     /// Whether the shift's service requires live EVV punches. Non-EVV
     /// services (e.g. Lifesharing per diem) use manual time entry — staff
     /// enter start/end times instead of clocking in/out; no GPS.

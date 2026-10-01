@@ -1116,6 +1116,7 @@ final class AppState: ObservableObject {
                           actualStart: now, actualEnd: nil,
                           status: .inProgress, isGroup: clients.count > 1)
         visit.unlistedIndividualName = unlistedName
+        visit.noServiceAssigned = noService
         todayVisits.append(visit)
         startTimerIfNeeded()
         haptic(.success)
@@ -1987,6 +1988,7 @@ final class AppState: ObservableObject {
         // build 90 — sign-off prompt source for the clock-in sheet.
         visit.pendingAcknowledgements = s.pendingAcknowledgements ?? []
         visit.serviceName = s.serviceName ?? s.service
+        visit.noServiceAssigned = (s.service ?? "").trimmingCharacters(in: .whitespaces).isEmpty
         visit.serverLocation = s.location
         visit.evvRequired = s.evvRequired ?? true
         visit.requiresClockIn = s.requiresClockIn ?? (s.evvRequired ?? true)
