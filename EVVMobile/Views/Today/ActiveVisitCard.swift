@@ -94,8 +94,8 @@ struct ActiveVisitCard: View {
                 // Build 107 / server v0.4.660 — non-blocking: outcomes come from
                 // the service, so a serviceless visit has none until the office
                 // assigns one. Re-opening the note afterwards shows them.
-                if visit.noServiceAssigned {
-                    Label("No service assigned — outcomes will appear once the office assigns one.", systemImage: "exclamationmark.triangle.fill")
+                if visit.noServiceAssigned && visit.status == .inProgress {
+                    Label("Outcomes will appear once the office assigns a service.", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(Theme.warning)
                         .fixedSize(horizontal: false, vertical: true)
