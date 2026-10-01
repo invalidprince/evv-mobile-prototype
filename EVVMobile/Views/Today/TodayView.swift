@@ -8,6 +8,8 @@ struct TodayView: View {
     @State private var noteVisit: Visit?
     /// Build 71 — missed scheduled shift being resolved (server v0.4.505).
     @State private var missedTarget: MissedShiftItem?
+    /// Server v0.4.662 — the forgotten shift being clocked out (assisted).
+    @State private var assistTarget: ForgottenShiftOffer?
 
     private var greeting: String {
         let hour = Calendar.current.component(.hour, from: Date())
@@ -36,6 +38,15 @@ struct TodayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
+
+                    // v0.4.662 — "Clock out of your last shift?" for a FORGOTTEN
+                    // open visit (server-decided). Above the active-visit card:
+                    // it is the thing blocking every clock-in.
+                    if appState.mode == .server, let offer = appState.forgottenShift {
+                        ForgottenShiftCard(offer: offer, isOffline: !appState.effectivelyOnline) {
+                            assistTarget = offer
+                        }
+                    }
 
                     // Build 83 — a visit still running from a PRIOR day is a
                     // problem that blocks every clock-in; say so at the top of
@@ -170,6 +181,7 @@ struct TodayView: View {
                     await appState.refreshHistory()
                     await appState.refreshDueMedications()
                     await appState.refreshMissedShifts()
+                    await appState.refreshForgottenShift()
                 } else {
                     appState.syncNow()
                     // Brief delay so the spinner is visible in mock mode
@@ -191,6 +203,7 @@ struct TodayView: View {
                 // precisely because SwiftUI cancels these.
                 if appState.mode == .server {
                     Task { await appState.refreshHistoryIfStale() }
+                    Task { await appState.refreshForgottenShift() }
                 }
             }
             .sheet(item: $clockInTarget) { visit in
@@ -200,6 +213,10 @@ struct TodayView: View {
                     // Service doesn't require clock-in: manual time entry
                     ManualTimeEntrySheet(visit: visit)
                 }
+            }
+            .sheet(item: $assistTarget) { offer in
+                AssistedClockOutSheet(offer: offer)
+                    .environmentObject(appState)
             }
             .sheet(isPresented: $showUnscheduled) {
                 UnscheduledVisitSheet()
@@ -703,5 +720,157 @@ struct TwoToOneRequestSheet: View {
 
     static func timeLabel(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "h:mm a"; return f.string(from: d)
+    }
+}
+
+
+// MARK: - Assisted clock-out for a forgotten shift (server v0.4.662)
+//
+// Todoist 6hg2MJ8rwRrQ5RPH — Nick: "You have to clock out of your last shift.
+// Would you like me to do that now?" The SERVER picks the visit (another day,
+// or open past the long-shift warning) and proposes the time; the staff member
+// may edit it. Confirming files a time-fix REQUEST a manager approves — the
+// app never stamps a clock-out on a forgotten visit by itself. "Not now"
+// sends nothing.
+
+struct ForgottenShiftOffer: Identifiable, Equatable {
+    /// Server visit id (V-xxxx).
+    let id: String
+    let prompt: String
+    let individualName: String?
+    let date: String?
+    let clockIn: String?
+    let proposed: ProposedClockOut
+
+    /// The proposed time as a Date (only hour + minute matter; the server
+    /// applies it on the visit's own date — earlier than clock-in = after
+    /// midnight).
+    var proposedDate: Date {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = "h:mm a"
+        guard let t = f.date(from: proposed.time) else { return Date() }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        let hm = cal.dateComponents([.hour, .minute], from: t)
+        return cal.date(bySettingHour: hm.hour ?? 0, minute: hm.minute ?? 0, second: 0, of: Date()) ?? Date()
+    }
+}
+
+struct ForgottenShiftCard: View {
+    let offer: ForgottenShiftOffer
+    var isOffline: Bool = false
+    let onClockOut: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundColor(Theme.warning)
+                Text("Clock out of your last shift?")
+                    .font(.headline)
+            }
+            Text(offer.prompt)
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: onClockOut) {
+                Text("Clock me out")
+                    .font(.subheadline.bold())
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isOffline)
+            if isOffline {
+                Text("You\u{2019}re offline \u{2014} connect to fix this shift.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(14)
+        .background(Theme.warning.opacity(0.12))
+        .cornerRadius(12)
+    }
+}
+
+struct AssistedClockOutSheet: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    let offer: ForgottenShiftOffer
+
+    @State private var finishedAt: Date
+    @State private var reason: String = "Forgot to clock out \u{2014} assisted clock-out at next clock-in"
+    @State private var isSubmitting = false
+    @State private var submitError: String?
+
+    init(offer: ForgottenShiftOffer) {
+        self.offer = offer
+        _finishedAt = State(initialValue: offer.proposedDate)
+    }
+
+    private var hint: String {
+        var s = "Suggested: \(offer.proposed.time)"
+        if let d = offer.proposed.date { s += " on \(d)" }
+        switch offer.proposed.source {
+        case "scheduled_end": s += " (the scheduled end)"
+        case "default_length": s += " (a typical shift length)"
+        default: break
+        }
+        return s + ". A time earlier than the clock-in counts as after midnight."
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    Text(offer.prompt)
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Section(header: Text("What time did you actually finish?"), footer: Text(hint)) {
+                    DatePicker("Clock-out time", selection: $finishedAt, displayedComponents: .hourAndMinute)
+                }
+                Section(header: Text("Reason"), footer: Text("Your manager approves this time before it counts.")) {
+                    TextEditor(text: $reason)
+                        .frame(minHeight: 70)
+                }
+                if let err = submitError {
+                    Section {
+                        Text(err)
+                            .font(.footnote)
+                            .foregroundColor(Theme.danger)
+                    }
+                }
+                Section {
+                    Button {
+                        Task {
+                            isSubmitting = true
+                            submitError = nil
+                            let err = await appState.submitAssistedClockOut(
+                                visitId: offer.id, finishedAt: finishedAt,
+                                reason: reason.trimmingCharacters(in: .whitespacesAndNewlines))
+                            isSubmitting = false
+                            if let err = err { submitError = err } else { dismiss() }
+                        }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if isSubmitting { ProgressView() } else { Text("Clock out & continue").bold() }
+                            Spacer()
+                        }
+                    }
+                    .disabled(isSubmitting)
+                }
+            }
+            .navigationTitle("Clock out")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Not now") { dismiss() }
+                        .disabled(isSubmitting)
+                }
+            }
+        }
     }
 }

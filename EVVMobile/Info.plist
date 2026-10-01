@@ -30,7 +30,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>108</string>
+	<string>109</string>
 	<key>EVVAPIBaseURL</key>
 	<string>$(EVV_API_BASE_URL)</string>
 	<key>EVVEnvironmentName</key>

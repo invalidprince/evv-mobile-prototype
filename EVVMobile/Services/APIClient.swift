@@ -69,6 +69,41 @@ struct ServerVisitInfo: Decodable {
     let minutes: Int?
     let docStatus: String?
     let hasNote: Bool?
+    /// Server v0.4.662 — an assisted clock-out is waiting for a manager: the
+    /// visit has no clock-out yet but is NOT running. Older servers omit it.
+    let assistedClockOutPending: Bool?
+}
+
+// MARK: - Assisted clock-out (server v0.4.662)
+
+struct ProposedClockOut: Decodable, Equatable {
+    let time: String
+    let date: String?
+    /// "scheduled_end" | "default_length" | "now"
+    let source: String?
+    let minutes: Int?
+}
+
+struct OpenVisitsAssistResponse: Decodable {
+    let openVisits: [OpenVisitAssistEntry]?
+    let assistVisitId: String?
+    let assistRecommended: Bool?
+    let assistPrompt: String?
+    let proposedClockOut: ProposedClockOut?
+    let error: String?
+}
+
+struct OpenVisitAssistEntry: Decodable {
+    let id: String
+    let individualName: String?
+    let date: String?
+    let clockIn: String?
+}
+
+struct AssistedClockOutResponse: Decodable {
+    let ok: Bool?
+    let message: String?
+    let exceptionIds: [String]?
 }
 
 struct ServerShiftVisitInfo: Decodable {
@@ -402,6 +437,9 @@ struct ServerHistoryVisit: Decodable, Identifiable {
     /// Older servers omit it; the app then derives in-progress from
     /// `clockOut == nil` exactly as before.
     let stillOpen: Bool?
+    /// Server v0.4.662 — parked by an assisted clock-out, waiting for the
+    /// manager. No clock-out yet, but not running. Older servers omit it.
+    let assistedClockOutPending: Bool?
 }
 
 struct HistoryVisitsResponse: Decodable {
@@ -2634,6 +2672,66 @@ actor APIClient {
         }
         do {
             return try JSONDecoder().decode(ExceptionResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    // MARK: - Assisted clock-out (server v0.4.662, Todoist 6hg2MJ8rwRrQ5RPH)
+
+    /// GET /me/open-visits — READ-ONLY. The caller's own open visits plus the
+    /// server-proposed clock-out for the oldest one (same shape as the 409
+    /// visit_in_progress body). Writes nothing.
+    func fetchOpenVisitsAssist() async throws -> OpenVisitsAssistResponse {
+        let url = URL(string: "\(baseURL)/me/open-visits")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        addAuth(&request)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to load open visits"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(OpenVisitsAssistResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
+
+    /// POST /visits/:id/assisted-clock-out — files the confirmed clock-out as a
+    /// time-fix CORRECTION (a manager approves it) and pauses the forgotten
+    /// visit so the next clock-in is no longer refused. Never a direct punch.
+    func assistedClockOut(visitId: String, newOut: String, reason: String) async throws -> AssistedClockOutResponse {
+        let url = URL(string: "\(baseURL)/visits/\(visitId)/assisted-clock-out")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["newOut": newOut, "reason": reason])
+        request.timeoutInterval = 15
+
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "This visit can't be clocked out right now."
+            throw APIError.conflict(errBody)
+        }
+        if statusCode == 403 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Not authorized"
+            throw APIError.forbidden(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to send the clock-out"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do {
+            return try JSONDecoder().decode(AssistedClockOutResponse.self, from: data)
         } catch {
             throw APIError.decodingError(error)
         }

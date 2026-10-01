@@ -24,6 +24,10 @@ final class AppState: ObservableObject {
     @Published var isLoadingShifts = false
     @Published var serverError: String?
     @Published var showServerError = false
+    /// Server v0.4.662 — the open visit the server says looks FORGOTTEN
+    /// (another day, or open past the long-shift warning). Drives the Today
+    /// "Clock out of your last shift?" card. nil = nothing to offer.
+    @Published var forgottenShift: ForgottenShiftOffer?
     @Published var claimingShiftId: Int?  // tracks which open shift is being claimed
 
     // MARK: - Server open shifts (7-day window unassigned shifts)
@@ -545,6 +549,14 @@ final class AppState: ObservableObject {
         // tap through.
         guard !hasActiveVisit else {
             haptic(.error)
+            // v0.4.662 — a FORGOTTEN shift gets the assisted clock-out card on
+            // Today ("Clock me out") instead of a dead end.
+            if mode == .server && effectivelyOnline {
+                await refreshForgottenShift()
+                if forgottenShift != nil {
+                    return .rejected(punchBlockedMessage + "\n\nClose this and tap \u{201C}Clock me out\u{201D} on your Today screen \u{2014} I\u{2019}ll suggest the time.")
+                }
+            }
             return .rejected(punchBlockedMessage)
         }
         guard let idx = todayIndex(forVisitId: visitId, serverShiftId: hintShiftId) else {
@@ -667,6 +679,8 @@ final class AppState: ObservableObject {
                 // up on the phone with its STILL CLOCKED IN row + Today banner.
                 DiagnosticLogger.shared.logAPI("Clock-in blocked by open visit \(blocker?.id ?? "?") (\(blocker?.date ?? "?") \(blocker?.clockIn ?? "?"))")
                 refreshHistoryInBackground()
+                // v0.4.662 — arm the Today assisted clock-out card.
+                await refreshForgottenShift()
                 return .stillClockedIn(msg, blocker)
             }
             return .rejected(punchRejectionMessage(error))
@@ -688,6 +702,68 @@ final class AppState: ObservableObject {
         case .forbidden(let msg): return msg
         case .stillClockedIn(let msg, _): return msg
         default: return error.errorDescription ?? "The clock-in could not be saved."
+        }
+    }
+
+    // MARK: - Assisted clock-out for a forgotten shift (server v0.4.662)
+    //
+    // Nick (Todoist 6hg2MJ8rwRrQ5RPH): "You have to clock out of your last
+    // shift. Would you like me to do that now?" The server decides which open
+    // visit qualifies (another day, or open past the long-shift warning) and
+    // proposes the clock-out time, so web and iOS always agree. Confirming
+    // files a time-fix REQUEST a manager approves — never a direct punch.
+
+    /// Read-only refresh of the Today "forgotten shift" card. Online + server
+    /// mode only; a failure keeps the previous value (never invents one).
+    @MainActor
+    func refreshForgottenShift() async {
+        guard mode == .server, effectivelyOnline else { return }
+        do {
+            let r = try await APIClient.shared.fetchOpenVisitsAssist()
+            guard r.assistRecommended == true, let vid = r.assistVisitId, let p = r.proposedClockOut else {
+                forgottenShift = nil
+                return
+            }
+            let entry = r.openVisits?.first { $0.id == vid }
+            forgottenShift = ForgottenShiftOffer(
+                id: vid,
+                prompt: r.assistPrompt ?? "You're still clocked in on an earlier shift. Would you like me to clock you out of it now?",
+                individualName: entry?.individualName,
+                date: entry?.date,
+                clockIn: entry?.clockIn,
+                proposed: p
+            )
+        } catch {
+            let apiErr = error as? APIError ?? .networkError(error)
+            if !apiErr.isCancellation {
+                DiagnosticLogger.shared.logAPI("Open-visit assist refresh failed: \(apiErr.localizedDescription)")
+            }
+        }
+    }
+
+    /// Send the confirmed clock-out time. Returns nil on success, else the
+    /// staff-readable reason (the server's own words).
+    @MainActor
+    func submitAssistedClockOut(visitId: String, finishedAt: Date, reason: String) async -> String? {
+        guard mode == .server else { return "Assisted clock-out needs a server connection." }
+        guard effectivelyOnline else { return "You're offline. Connect to the internet and try again — nothing was sent." }
+        let label = serverTimeLabel(finishedAt)
+        do {
+            let r = try await APIClient.shared.assistedClockOut(visitId: visitId, newOut: label, reason: reason)
+            DiagnosticLogger.shared.logAPI("Assisted clock-out sent for visit \(visitId) at \(label) — exceptions \(r.exceptionIds?.joined(separator: ",") ?? "?")")
+            forgottenShift = nil
+            haptic(.success)
+            await refreshServerShifts()
+            await refreshHistory()
+            await refreshForgottenShift()
+            return nil
+        } catch let error as APIError {
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("Assisted clock-out REFUSED for visit \(visitId): \(error.localizedDescription)")
+            return punchRejectionMessage(error)
+        } catch {
+            haptic(.error)
+            return error.localizedDescription
         }
     }
 
@@ -789,6 +865,11 @@ final class AppState: ObservableObject {
                             self.todayVisits[i].syncState = .synced
                         }
                         self.startTimerIfNeeded()
+                        // v0.4.662 — a 409 shift_too_long (open > 24 h) can
+                        // only be closed by an assisted clock-out: surface it.
+                        if case .conflict = error {
+                            await self.refreshForgottenShift()
+                        }
                     }
                 } catch {
                     self.surfaceServerError(APIError.networkError(error))
@@ -1219,6 +1300,8 @@ final class AppState: ObservableObject {
                 DiagnosticLogger.shared.logAPI("Unscheduled visit blocked by open visit \(blocker?.id ?? "?") (\(blocker?.date ?? "?") \(blocker?.clockIn ?? "?"))")
                 Task { await self.refreshServerShifts() }
                 refreshHistoryInBackground()
+                // v0.4.662 — arm the Today assisted clock-out card.
+                await refreshForgottenShift()
                 return .stillClockedIn(msg, blocker)
             }
             return .rejected(punchRejectionMessage(error))
@@ -1948,6 +2031,10 @@ final class AppState: ObservableObject {
             if let co = myVisit.clockOut {
                 actualEnd = parseShiftDateTime(dateStr: s.date, timeStr: co)
                     ?? parseISO8601(co)
+                status = .completed
+            } else if myVisit.assistedClockOutPending == true {
+                // Server v0.4.662 — assisted clock-out awaiting a manager:
+                // not running (never blocks clock-in, no Clock Out button).
                 status = .completed
             } else {
                 status = .inProgress
@@ -2711,6 +2798,14 @@ final class AppState: ObservableObject {
         if visit.stillOpen && visit.status != .inProgress {
             visit.status = .inProgress
             visit.actualEnd = nil
+        }
+        // Server v0.4.662 — parked by an assisted clock-out (manager has not
+        // approved the time yet): no clock-out, but NOT running, so it must
+        // not hold the one-active-visit guard or show a Clock Out button.
+        if sv.assistedClockOutPending == true && sv.clockOut == nil {
+            visit.stillOpen = false
+            visit.status = .completed
+            visit.timeFixStatus = .pending
         }
         // Build 64 — the server's minutes are authoritative for History and
         // Total Hours (14d); the local span math is only the fallback.
