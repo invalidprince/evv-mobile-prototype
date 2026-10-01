@@ -551,8 +551,10 @@ final class AppState: ObservableObject {
             haptic(.error)
             // v0.4.662 — a FORGOTTEN shift gets the assisted clock-out card on
             // Today ("Clock me out") instead of a dead end.
-            if mode == .server && effectivelyOnline {
-                await refreshForgottenShift()
+            // Never wait on the network here (review warn): use the card state
+            // from the last refresh and re-arm it in the background.
+            if mode == .server {
+                Task { await self.refreshForgottenShift() }
                 if forgottenShift != nil {
                     return .rejected(punchBlockedMessage + "\n\nClose this and tap \u{201C}Clock me out\u{201D} on your Today screen \u{2014} I\u{2019}ll suggest the time.")
                 }
@@ -753,9 +755,12 @@ final class AppState: ObservableObject {
             DiagnosticLogger.shared.logAPI("Assisted clock-out sent for visit \(visitId) at \(label) — exceptions \(r.exceptionIds?.joined(separator: ",") ?? "?")")
             forgottenShift = nil
             haptic(.success)
-            await refreshServerShifts()
-            await refreshHistory()
-            await refreshForgottenShift()
+            // The write succeeded — release the sheet now; refresh behind it.
+            Task {
+                await self.refreshServerShifts()
+                await self.refreshHistory()
+                await self.refreshForgottenShift()
+            }
             return nil
         } catch let error as APIError {
             haptic(.error)
