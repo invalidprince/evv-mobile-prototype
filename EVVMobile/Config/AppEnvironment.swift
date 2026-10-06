@@ -35,6 +35,26 @@ enum AppEnvironment {
     /// `CFBundleDisplayName` — "EVV Mobile" (live) / "EVV Staging".
     static let displayName: String = infoString("CFBundleDisplayName") ?? "EVV Mobile"
 
+    /// App Review demo credentials (`EVVReviewDemoEmail` / `EVVReviewDemoPassword`,
+    /// from the xcconfig). `nil` when either is unset — the demo login is then off.
+    static let reviewDemoEmail: String? = infoString("EVVReviewDemoEmail")
+    static let reviewDemoPassword: String? = infoString("EVVReviewDemoPassword")
+
+    /// True only for an exact match of BOTH demo credentials (email is
+    /// case-insensitive, password is exact). Never true when either is unset.
+    static func isReviewDemoLogin(email: String, password: String) -> Bool {
+        guard let demoEmail = reviewDemoEmail, let demoPassword = reviewDemoPassword else { return false }
+        let typed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return typed == demoEmail.lowercased() && password == demoPassword
+    }
+
+    /// "Version 0.1.0 (112)" — the real bundle values, shown on the login screen.
+    static var versionLabel: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "Version \(short) (\(build))"
+    }
+
     /// Google iOS OAuth client id (`EVVGoogleIOSClientID`). `nil` when the
     /// bundle carries no usable value (staging until Nick creates its client).
     static let googleIOSClientID: String? = {

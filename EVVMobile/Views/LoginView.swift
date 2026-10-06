@@ -130,7 +130,7 @@ struct LoginView: View {
 
             Spacer()
 
-            Text("v0.3.1")
+            Text(AppEnvironment.versionLabel)
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 8)
@@ -148,6 +148,15 @@ struct LoginView: View {
     private func doAccountLogin() {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, !password.isEmpty else { return }
+
+        // Build 112 — App Review demo credentials open the offline demo
+        // (sample data, no network, nothing syncs). See Config/*.xcconfig.
+        if AppEnvironment.isReviewDemoLogin(email: trimmedEmail, password: password) {
+            password = ""
+            appState.loginAsDemo()
+            return
+        }
+
         isAccountLoggingIn = true
 
         Task {

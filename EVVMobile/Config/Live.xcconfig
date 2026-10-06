@@ -18,3 +18,12 @@ EVV_API_BASE_URL = https:/$()/d2hmfpgqkgeyu.cloudfront.net/api
 EVV_GOOGLE_IOS_CLIENT_ID = 965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n.apps.googleusercontent.com
 // Reversed client id = the custom URL scheme Google redirects back to.
 EVV_GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.965407510424-s6m2p7oue9ta04ebljc4abgfgo363r4n
+
+// App Review demo login (build 112, Todoist 6hfjGWqR5JMJPwrq — unlisted App Store
+// readiness). Entering EXACTLY these credentials on the email/password form opens the
+// built-in demo mode (AppState.loginAsDemo): sample data only, no network call, nothing
+// syncs, orange "DEMO MODE — Not real data" banner. It never reaches the server, so the
+// password is not a secret — it unlocks fake data and nothing else. Give both to App
+// Review in the "Sign-in required" box. Leave either blank to disable the demo login.
+EVV_REVIEW_DEMO_EMAIL = appreview@fbhi.net
+EVV_REVIEW_DEMO_PASSWORD = NorthStarReview-2026

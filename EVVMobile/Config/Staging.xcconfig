@@ -38,3 +38,12 @@ EVV_GOOGLE_IOS_CLIENT_ID = REPLACE_ME.apps.googleusercontent.com
 // When the real staging iOS OAuth client exists, replace BOTH lines with the reversed
 // client id, exactly like Live.xcconfig, and this note goes away.
 EVV_GOOGLE_REVERSED_CLIENT_ID = net.fbhi.evvmobile.staging
+
+// App Review demo login (build 112, Todoist 6hfjGWqR5JMJPwrq — unlisted App Store
+// readiness). Entering EXACTLY these credentials on the email/password form opens the
+// built-in demo mode (AppState.loginAsDemo): sample data only, no network call, nothing
+// syncs, orange "DEMO MODE — Not real data" banner. It never reaches the server, so the
+// password is not a secret — it unlocks fake data and nothing else. Give both to App
+// Review in the "Sign-in required" box. Leave either blank to disable the demo login.
+EVV_REVIEW_DEMO_EMAIL = appreview@fbhi.net
+EVV_REVIEW_DEMO_PASSWORD = NorthStarReview-2026

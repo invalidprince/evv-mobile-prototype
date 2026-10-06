@@ -1,0 +1,58 @@
+import XCTest
+
+/// Build 112 — App Review demo login (Todoist 6hfjGWqR5JMJPwrq).
+/// Drop over EVVMobileUITests/MyDocumentsShotTests.swift (overlay convention);
+/// docs/review-demo-check/check.sh does that and restores the file afterwards.
+/// Types the review credentials, proves the offline demo opened (banner +
+/// demo staff name), walks all five tabs and screenshots each to
+/// /tmp/review-demo/. No network write: the demo path never calls the server.
+final class MyDocumentsShotTests: XCTestCase {
+    override func setUpWithError() throws { continueAfterFailure = false }
+
+    private func shot(_ app: XCUIApplication, _ name: String) {
+        try? FileManager.default.createDirectory(atPath: "/tmp/review-demo", withIntermediateDirectories: true)
+        try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/review-demo/\(name).png"))
+    }
+
+    func testReviewDemoLogin() throws {
+        let app = XCUIApplication()
+        addUIInterruptionMonitor(withDescription: "Permissions") { alert in
+            for label in ["Allow", "Allow While Using App", "Don't Allow"] where alert.buttons[label].exists {
+                alert.buttons[label].tap(); return true
+            }
+            return false
+        }
+        app.launch()
+
+        let emailField = app.textFields["Email"].firstMatch
+        XCTAssertTrue(emailField.waitForExistence(timeout: 15), "login screen not shown (stale session?)")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'Version '")).firstMatch.exists,
+                      "login footer should show the real bundle version, not a hard-coded label")
+        XCTAssertFalse(app.staticTexts["v0.3.1"].exists, "stale hard-coded version label still on login")
+        shot(app, "0_login")
+
+        emailField.tap(); emailField.typeText("AppReview@fbhi.net")
+        let pw = app.secureTextFields["Password"].firstMatch
+        pw.tap(); pw.typeText("NorthStarReview-2026")
+        app.buttons["Log In"].firstMatch.tap()
+
+        let banner = app.staticTexts["DEMO MODE — Not real data"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 10), "demo banner not shown after review login")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Demo Reviewer'")).firstMatch.waitForExistence(timeout: 5)
+                      || app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Demo'")).firstMatch.exists,
+                      "demo staff not shown")
+        shot(app, "1_today")
+
+        for (i, tab) in ["Schedule", "History", "Work", "More"].enumerated() {
+            let b = app.tabBars.buttons[tab]
+            XCTAssertTrue(b.waitForExistence(timeout: 5), "\(tab) tab missing")
+            var tries = 0
+            while !b.isSelected && tries < 4 { b.tap(); sleep(1); tries += 1 }
+            XCTAssertTrue(b.isSelected, "\(tab) never selected")
+            sleep(2)
+            XCTAssertTrue(app.state == .runningForeground, "app died on \(tab)")
+            XCTAssertTrue(banner.exists, "demo banner vanished on \(tab)")
+            shot(app, "\(i + 2)_\(tab.lowercased())")
+        }
+    }
+}

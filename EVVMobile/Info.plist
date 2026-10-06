@@ -30,23 +30,25 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>111</string>
+	<string>112</string>
 	<key>EVVAPIBaseURL</key>
 	<string>$(EVV_API_BASE_URL)</string>
 	<key>EVVEnvironmentName</key>
 	<string>$(EVV_ENVIRONMENT_NAME)</string>
 	<key>EVVGoogleIOSClientID</key>
 	<string>$(EVV_GOOGLE_IOS_CLIENT_ID)</string>
+	<key>EVVReviewDemoEmail</key>
+	<string>$(EVV_REVIEW_DEMO_EMAIL)</string>
+	<key>EVVReviewDemoPassword</key>
+	<string>$(EVV_REVIEW_DEMO_PASSWORD)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>EVV uses the camera to photograph your compliance documents (license, insurance, trainings) for upload.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Use Face ID to sign in quickly.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>EVV requires your location at clock in and clock out to verify visits.</string>
+	<string>EVV verifies your location at visit start/end as required by Medicaid EVV rules.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>EVV uses the microphone to dictate visit notes hands-free.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
