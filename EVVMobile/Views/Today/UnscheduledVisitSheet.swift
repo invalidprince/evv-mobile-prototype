@@ -362,8 +362,11 @@ struct ServerUnscheduledContent: View {
                                 unlistedServiceName = ""
                             }
                             // Build 111 — a typed service follows the switch
-                            // between listed / unlisted individual.
-                            if serviceNotListed { syncCustomServiceName() }
+                            // between listed / unlisted individual; with
+                            // nobody left to serve it is dropped instead.
+                            if serviceNotListed {
+                                if canTypeService { syncCustomServiceName() } else { clearTypedService() }
+                            }
                         }
                     }) {
                         HStack {
@@ -737,6 +740,7 @@ struct ServerUnscheduledContent: View {
     /// stay disabled.
     private func syncCustomServiceName() {
         var t = customServiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.count > 80 { t = String(t.prefix(80)) }
         // If the typed text is a known service up to case/spacing, send the
         // canonical name so the never-punch / 2:1 rules and the server's
         // authorization match see the real service, not a near-duplicate.
@@ -787,7 +791,7 @@ struct ServerUnscheduledContent: View {
                 }
             }
             .padding(.vertical, 6)
-            .padding(.horizontal, on ? 10 : 0)
+            .padding(.horizontal, 10)
             .background(bg)
             .cornerRadius(8)
         }
@@ -799,9 +803,14 @@ struct ServerUnscheduledContent: View {
     /// it cannot come back silently on the next pick.
     private func clearTypedServiceIfNobody(_ ids: Set<String>) {
         guard ids.isEmpty, !isUnlisted, serviceNotListed else { return }
+        clearTypedService()
+    }
+
+    private func clearTypedService() {
         serviceNotListed = false
         customServiceName = ""
         selectedServiceName = ""
+        unlistedServiceName = ""
     }
 
     /// Build 111 — Service section body, pulled out of `body` so the Form
@@ -899,7 +908,7 @@ struct ServerUnscheduledContent: View {
     @ViewBuilder
     private var serviceSectionFooter: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let msg = noCommonServicesMessage, !serviceNotListed {
+            if let msg = noCommonServicesMessage {
                 Text(msg).foregroundColor(Theme.danger)
             }
             if serviceNotListed && canTypeService {
