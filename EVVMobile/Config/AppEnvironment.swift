@@ -43,7 +43,8 @@ enum AppEnvironment {
     /// True only for an exact match of BOTH demo credentials (email is
     /// case-insensitive, password is exact). Never true when either is unset.
     static func isReviewDemoLogin(email: String, password: String) -> Bool {
-        guard let demoEmail = reviewDemoEmail, let demoPassword = reviewDemoPassword else { return false }
+        guard let demoEmail = reviewDemoEmail, !demoEmail.isEmpty,
+              let demoPassword = reviewDemoPassword, !demoPassword.isEmpty else { return false }
         let typed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return typed == demoEmail.lowercased() && password == demoPassword
     }

@@ -27,7 +27,7 @@ ok "no hard-coded v0.3.1" '! grep -q "v0.3.1" $L'
 if [ "${1:-}" != "--no-ui" ]; then
   echo "[4] simulator UI run"
   T=EVVMobileUITests/MyDocumentsShotTests.swift
-  cp $T /tmp/review-demo-orig.swift
+  cp $T /tmp/review-demo-orig.swift && trap 'cp /tmp/review-demo-orig.swift "$T"' EXIT INT TERM
   cp docs/review-demo-check/review_demo_ui_test.swift.txt $T
   rm -rf /tmp/review-demo /tmp/review-demo.xcresult
   SIMID=$(xcrun simctl list devices available -j | python3 -c "import sys,json;d=json.load(sys.stdin)['devices'];print(next((x['udid'] for v in d.values() for x in v if 'iPhone' in x['name'] and x.get('state')=='Booted'), next((x['udid'] for v in d.values() for x in v if 'iPhone' in x['name']),'')))")

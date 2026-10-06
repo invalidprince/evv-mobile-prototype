@@ -38,9 +38,8 @@ final class MyDocumentsShotTests: XCTestCase {
 
         let banner = app.staticTexts["DEMO MODE — Not real data"]
         XCTAssertTrue(banner.waitForExistence(timeout: 10), "demo banner not shown after review login")
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Demo Reviewer'")).firstMatch.waitForExistence(timeout: 5)
-                      || app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Demo'")).firstMatch.exists,
-                      "demo staff not shown")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Good' AND label CONTAINS 'Demo'")).firstMatch.waitForExistence(timeout: 5),
+                      "demo staff greeting not shown")
         shot(app, "1_today")
 
         for (i, tab) in ["Schedule", "History", "Work", "More"].enumerated() {
