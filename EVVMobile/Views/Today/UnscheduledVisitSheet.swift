@@ -764,6 +764,15 @@ struct ServerUnscheduledContent: View {
             // any change to what is being started clears the choice.
             .onChange(of: selectedServiceName) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: customServiceName) { _ in if serviceNotListed { syncCustomServiceName() } }
+            .onChange(of: selectedIndividualIds) { ids in
+                // Nobody left to serve (and Unlisted off): drop the typed
+                // service so it cannot come back silently on the next pick.
+                if ids.isEmpty && !isUnlisted && serviceNotListed {
+                    serviceNotListed = false
+                    customServiceName = ""
+                    selectedServiceName = ""
+                }
+            }
             .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
             .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
@@ -835,7 +844,17 @@ struct ServerUnscheduledContent: View {
     /// active path submits. Whitespace-only stays "" so the start buttons
     /// stay disabled.
     private func syncCustomServiceName() {
-        let t = customServiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var t = customServiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // If the typed text is a known service up to case/spacing, send the
+        // canonical name so the never-punch / 2:1 rules and the server's
+        // authorization match see the real service, not a near-duplicate.
+        let needle = t.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        if !needle.isEmpty,
+           let canonical = (authorizedServices + allAvailableServices).first(where: {
+               $0.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") == needle
+           }) {
+            t = canonical
+        }
         if isUnlisted {
             unlistedServiceName = t
         } else {
@@ -848,7 +867,7 @@ struct ServerUnscheduledContent: View {
     @ViewBuilder
     private var serviceSectionFooter: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let msg = noCommonServicesMessage {
+            if let msg = noCommonServicesMessage, !serviceNotListed {
                 Text(msg).foregroundColor(Theme.danger)
             }
             if serviceNotListed && (isUnlisted || !selectedIndividualIds.isEmpty) {
