@@ -666,10 +666,8 @@ struct ServerUnscheduledContent: View {
             // Build 80 — a stale answer must never ride onto another service:
             // any change to what is being started clears the choice.
             .onChange(of: selectedServiceName) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
-            .onChange(of: customServiceName) { _ in if serviceNotListed { syncCustomServiceName() } }
-            .onChange(of: selectedIndividualIds) { ids in clearTypedServiceIfNobody(ids) }
             .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
-            .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
+            .onChange(of: selectedIndividualIds) { ids in deliveryChoice = nil; twoToOneSecondStaffId = nil; clearTypedServiceIfNobody(ids) }
             .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
             // A refusal is about what was just tried; changing the attempt
             // clears it.
@@ -828,6 +826,7 @@ struct ServerUnscheduledContent: View {
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("customServiceNameField")
+                    .onChange(of: customServiceName) { _ in if serviceNotListed { syncCustomServiceName() } }
             } else if isUnlisted {
                 // F2: Show all available services for unlisted individual
                 if allAvailableServices.isEmpty && !appState.effectivelyOnline {
