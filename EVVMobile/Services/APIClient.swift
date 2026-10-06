@@ -1767,6 +1767,30 @@ enum APIError: LocalizedError {
         return false
     }
 
+    /// True ONLY when the device itself has no usable network path. This is
+    /// the one condition that may be reported to a caregiver as "no internet".
+    /// A REQUEST TIMEOUT IS NOT OFFLINE: before build 111 AI Assist showed
+    /// "No internet connection" whenever /ai-draft outran the client's 25 s
+    /// ceiling, on a phone that was demonstrably online (Nick, 2026-10-05).
+    var isOffline: Bool {
+        guard case .networkError(let err) = self else { return false }
+        guard let urlError = err as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost,
+             .dataNotAllowed, .internationalRoamingOff:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// True when the request outran its own timeoutInterval. The work may well
+    /// have SUCCEEDED server-side — never phrase this as "failed" or "offline".
+    var isTimeout: Bool {
+        guard case .networkError(let err) = self else { return false }
+        return (err as? URLError)?.code == .timedOut
+    }
+
     /// True when the underlying error is a task/request cancellation
     /// (NSURLErrorCancelled or Swift CancellationError).  These should
     /// never be surfaced to the user as real failures.
@@ -2495,19 +2519,47 @@ actor APIClient {
         addAuth(&request)
         let body: [String: Any] = ["inputText": inputText]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 25 // AI calls can take up to 20s server-side
+        // Build 111 — a real Anthropic draft routinely runs 20-45 s (big system
+        // prompt, 2048 max_tokens, non-streamed). The old 25 s ceiling made the
+        // CLIENT give up first and throw URLError.timedOut, which AIAssistSheet
+        // then showed as "No internet connection" on a phone that was provably
+        // online (Nick, 2026-10-05 20:07 ET — the diagnostic log has successful
+        // /api/me/individuals calls seconds either side of the failure).
+        // CloudFront caps the origin response at 60 s, so 75 s guarantees the
+        // SERVER's honest answer (200, or a 504/502) always arrives before the
+        // client's own clock runs out. Never lower this below ~65 s.
+        request.timeoutInterval = 75
 
-        let (data, response) = try await performRequest(request)
+        let startedAt = Date()
+        DiagnosticLogger.shared.logAPI("AI draft requested for visit \(visitId) (\(inputText.count) chars, 75s ceiling)")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await performRequest(request)
+        } catch {
+            let secs = String(format: "%.1f", Date().timeIntervalSince(startedAt))
+            let code = ((error as? APIError).flatMap { err -> Int? in
+                if case .networkError(let underlying) = err { return (underlying as? URLError)?.code.rawValue }
+                return nil
+            }) ?? 0
+            DiagnosticLogger.shared.logAPI("AI draft transport failure after \(secs)s (\(code)): \(error.localizedDescription)")
+            throw error
+        }
         try checkAuth(response, data: data)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let elapsed = String(format: "%.1f", Date().timeIntervalSince(startedAt))
 
         guard statusCode == 200 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "AI draft failed"
+            DiagnosticLogger.shared.logAPI("AI draft failed: HTTP \(statusCode) after \(elapsed)s (\(errBody))")
             throw APIError.serverError(statusCode, errBody)
         }
         do {
-            return try JSONDecoder().decode(AIDraftResponse.self, from: data)
+            let decoded = try JSONDecoder().decode(AIDraftResponse.self, from: data)
+            DiagnosticLogger.shared.logAPI("AI draft returned in \(elapsed)s (model \(decoded.model ?? "unknown"))")
+            return decoded
         } catch {
+            DiagnosticLogger.shared.logAPI("AI draft body unreadable after \(elapsed)s: \(error.localizedDescription)")
             throw APIError.decodingError(error)
         }
     }

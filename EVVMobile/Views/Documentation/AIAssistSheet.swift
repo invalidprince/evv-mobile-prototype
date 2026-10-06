@@ -5,6 +5,10 @@ import SwiftUI
 /// The server calls the AI model to map the description into the structured form.
 struct AIAssistSheet: View {
     @Environment(\.dismiss) private var dismiss
+    /// Build 111 — the ONLY source of truth for "is this phone offline".
+    /// DocumentationView already gates the AI Assist button on
+    /// `appState.effectivelyOnline`, so the sheet inherits the same object.
+    @EnvironmentObject var appState: AppState
 
     /// Callback: delivers the parsed draft to DocumentationView.
     let serverVisitId: String
@@ -13,6 +17,9 @@ struct AIAssistSheet: View {
     @State private var inputText: String = ""
     @State private var isGenerating = false
     @State private var errorMessage: String?
+    /// Set when the LAST attempt timed out — the error row then offers a
+    /// one-tap retry instead of making the caregiver re-type anything.
+    @State private var canRetry = false
 
     private let exampleHint = """
     Example: "Worked on meal prep with Jamie today. She needed two verbal prompts to start but did great once going. We also practiced budgeting — she counted change independently for the first time. Good mood overall, no health concerns."
@@ -67,12 +74,21 @@ struct AIAssistSheet: View {
 
                     // Error message
                     if let error = errorMessage {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(Theme.danger)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundColor(Theme.danger)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(Theme.danger)
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundColor(Theme.danger)
+                            }
+                            if canRetry && !isGenerating {
+                                Button(action: generateDraft) {
+                                    Label("Try again", systemImage: "arrow.clockwise")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .buttonStyle(.bordered)
+                            }
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -123,6 +139,7 @@ struct AIAssistSheet: View {
 
         isGenerating = true
         errorMessage = nil
+        canRetry = false
 
         Task {
             do {
@@ -143,15 +160,31 @@ struct AIAssistSheet: View {
                     await MainActor.run { isGenerating = false }
                     return
                 }
+                let offline = !appState.effectivelyOnline || apiErr.isOffline
                 await MainActor.run {
                     isGenerating = false
+                    canRetry = false
                     switch apiErr {
                     case .serverError(429, _):
                         errorMessage = "Too many requests — please wait a few minutes and try again."
-                    case .serverError(503, _), .serverError(502, _):
-                        errorMessage = "AI Assist is temporarily unavailable. Write your note manually for now."
-                    case .networkError:
+                    case .serverError(504, _), .serverError(502, _), .serverError(503, _):
+                        // 504 = the server was still thinking when CloudFront
+                        // gave up; 502/503 = the AI provider refused. All three
+                        // are "try again", never "you're offline".
+                        errorMessage = "AI Assist is taking longer than usual and didn't finish. Try again, or write your note manually."
+                        canRetry = true
+                    case .networkError where apiErr.isTimeout:
+                        // Build 111 — the bug Nick hit 2026-10-05: a slow draft
+                        // was reported as "no internet" on a connected phone.
+                        errorMessage = "This is taking longer than usual — the draft didn't come back in time. Your connection is fine; tap Try again."
+                        canRetry = true
+                    case .networkError where offline:
                         errorMessage = "No internet connection. AI Assist requires connectivity."
+                    case .networkError:
+                        // Connected, not a timeout: say what actually happened
+                        // rather than inventing an offline state.
+                        errorMessage = "Couldn't reach AI Assist just now. Tap Try again, or write your note manually."
+                        canRetry = true
                     default:
                         errorMessage = apiErr.localizedDescription
                     }
