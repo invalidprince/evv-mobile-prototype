@@ -120,6 +120,18 @@ struct ServerUnscheduledContent: View {
     // whenever the service or individual changes so a stale pick can never
     // ride onto another service. The server re-checks the ratio (400).
     @State private var twoToOneSecondStaffId: String?
+    // Build 111 (Nick, card 6hg2M7gRhVMr5WRH, 2026-10-06): "Service not
+    // listed" — type the service name instead of picking from the list.
+    // Shown whenever an individual is selected (or Unlisted Individual is
+    // on), NOT only when the list is empty: a missing service is usually an
+    // authorization data gap a manager fixes later. The typed name is
+    // written into `selectedServiceName` / `unlistedServiceName` (trimmed)
+    // so every downstream rule (consult prompt, never-punch, 2:1, submit)
+    // sees it exactly like a picked service; a name the server does not
+    // know is stored as-is and raises its "Unauthorized service" exception
+    // for the manager (visit-core v0.4.320) — it never refuses the punch.
+    @State private var serviceNotListed = false
+    @State private var customServiceName = ""
     // Location state (GPS-unavailable address fallback)
     @ObservedObject private var locationManager = LocationManager.shared
     @State private var fallbackAddress = ""
@@ -349,6 +361,9 @@ struct ServerUnscheduledContent: View {
                                 unlistedName = ""
                                 unlistedServiceName = ""
                             }
+                            // Build 111 — a typed service follows the switch
+                            // between listed / unlisted individual.
+                            if serviceNotListed { syncCustomServiceName() }
                         }
                     }) {
                         HStack {
@@ -445,8 +460,52 @@ struct ServerUnscheduledContent: View {
                     }
                 }
 
-                Section(header: Text("Service"), footer: noCommonServicesMessage.map { Text($0).foregroundColor(Theme.danger) }) {
-                    if isUnlisted {
+                Section(header: Text("Service"), footer: serviceSectionFooter) {
+                    // Build 111 — "Service not listed" toggle + free-text
+                    // field. Available as soon as there is someone to serve.
+                    if isUnlisted || !selectedIndividualIds.isEmpty {
+                        Button(action: {
+                            withAnimation {
+                                serviceNotListed.toggle()
+                                if serviceNotListed {
+                                    syncCustomServiceName()
+                                } else {
+                                    customServiceName = ""
+                                    if isUnlisted {
+                                        unlistedServiceName = ""
+                                    } else {
+                                        selectedServiceName = authorizedServices.first ?? ""
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "questionmark.square.dashed")
+                                    .foregroundColor(serviceNotListed ? .white : Theme.primary)
+                                Text("Service not listed")
+                                    .fontWeight(.medium)
+                                    .foregroundColor(serviceNotListed ? .white : .primary)
+                                Spacer()
+                                if serviceNotListed {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, serviceNotListed ? 10 : 0)
+                            .background(serviceNotListed ? Theme.primary : Color.clear)
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("serviceNotListedToggle")
+                    }
+
+                    if serviceNotListed && (isUnlisted || !selectedIndividualIds.isEmpty) {
+                        TextField("Type the service name", text: $customServiceName)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("customServiceNameField")
+                    } else if isUnlisted {
                         // F2: Show all available services for unlisted individual
                         if allAvailableServices.isEmpty && !appState.effectivelyOnline {
                             VStack(spacing: 6) {
@@ -704,6 +763,7 @@ struct ServerUnscheduledContent: View {
             // Build 80 — a stale answer must never ride onto another service:
             // any change to what is being started clears the choice.
             .onChange(of: selectedServiceName) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
+            .onChange(of: customServiceName) { _ in if serviceNotListed { syncCustomServiceName() } }
             .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
             .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
@@ -765,8 +825,35 @@ struct ServerUnscheduledContent: View {
             selectedIndividualIds.insert(individual.id)
         }
         // Auto-select first authorized service if current selection isn't in the list
-        if !authorizedServices.isEmpty && !authorizedServices.contains(selectedServiceName) {
+        // (Build 111: never clobber a typed "Service not listed" name).
+        if !serviceNotListed && !authorizedServices.isEmpty && !authorizedServices.contains(selectedServiceName) {
             selectedServiceName = authorizedServices[0]
+        }
+    }
+
+    /// Build 111 — copy the trimmed typed service into whichever name the
+    /// active path submits. Whitespace-only stays "" so the start buttons
+    /// stay disabled.
+    private func syncCustomServiceName() {
+        let t = customServiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isUnlisted {
+            unlistedServiceName = t
+        } else {
+            selectedServiceName = t
+        }
+    }
+
+    /// Service section footer: the "no common services" warning, plus the
+    /// typed-service explanation while "Service not listed" is on.
+    @ViewBuilder
+    private var serviceSectionFooter: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let msg = noCommonServicesMessage {
+                Text(msg).foregroundColor(Theme.danger)
+            }
+            if serviceNotListed && (isUnlisted || !selectedIndividualIds.isEmpty) {
+                Text("Not on the list? Type the service name. The visit is flagged for a manager to fix the authorization later.")
+            }
         }
     }
 
