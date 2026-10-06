@@ -463,44 +463,11 @@ struct ServerUnscheduledContent: View {
                 Section(header: Text("Service"), footer: serviceSectionFooter) {
                     // Build 111 — "Service not listed" toggle + free-text
                     // field. Available as soon as there is someone to serve.
-                    if isUnlisted || !selectedIndividualIds.isEmpty {
-                        Button(action: {
-                            withAnimation {
-                                serviceNotListed.toggle()
-                                if serviceNotListed {
-                                    syncCustomServiceName()
-                                } else {
-                                    customServiceName = ""
-                                    if isUnlisted {
-                                        unlistedServiceName = ""
-                                    } else {
-                                        selectedServiceName = authorizedServices.first ?? ""
-                                    }
-                                }
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "questionmark.square.dashed")
-                                    .foregroundColor(serviceNotListed ? .white : Theme.primary)
-                                Text("Service not listed")
-                                    .fontWeight(.medium)
-                                    .foregroundColor(serviceNotListed ? .white : .primary)
-                                Spacer()
-                                if serviceNotListed {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.white)
-                                }
-                            }
-                            .padding(.vertical, 6)
-                            .padding(.horizontal, serviceNotListed ? 10 : 0)
-                            .background(serviceNotListed ? Theme.primary : Color.clear)
-                            .cornerRadius(8)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("serviceNotListedToggle")
+                    if canTypeService {
+                        serviceNotListedRow
                     }
 
-                    if serviceNotListed && (isUnlisted || !selectedIndividualIds.isEmpty) {
+                    if serviceNotListed && canTypeService {
                         TextField("Type the service name", text: $customServiceName)
                             .textInputAutocapitalization(.words)
                             .autocorrectionDisabled()
@@ -848,17 +815,74 @@ struct ServerUnscheduledContent: View {
         // If the typed text is a known service up to case/spacing, send the
         // canonical name so the never-punch / 2:1 rules and the server's
         // authorization match see the real service, not a near-duplicate.
-        let needle = t.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        if !needle.isEmpty,
-           let canonical = (authorizedServices + allAvailableServices).first(where: {
-               $0.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") == needle
-           }) {
-            t = canonical
+        let needle = serviceMatchKey(t)
+        if !needle.isEmpty {
+            let known: [String] = authorizedServices + allAvailableServices
+            for name in known where serviceMatchKey(name) == needle {
+                t = name
+                break
+            }
         }
         if isUnlisted {
             unlistedServiceName = t
         } else {
             selectedServiceName = t
+        }
+    }
+
+    /// Lower-cased, whitespace-collapsed key for loose service-name matching.
+    private func serviceMatchKey(_ s: String) -> String {
+        let parts: [Substring] = s.lowercased().split(whereSeparator: { $0.isWhitespace })
+        return parts.joined(separator: " ")
+    }
+
+    /// Someone to serve → the typed-service option is offered.
+    private var canTypeService: Bool {
+        isUnlisted || !selectedIndividualIds.isEmpty
+    }
+
+    /// Build 111 — the "Service not listed" toggle row (own subview so the
+    /// Form body stays within the type-checker's budget).
+    private var serviceNotListedRow: some View {
+        let on: Bool = serviceNotListed
+        let fg: Color = on ? Color.white : Color.primary
+        let icon: Color = on ? Color.white : Theme.primary
+        let bg: Color = on ? Theme.primary : Color.clear
+        return Button(action: toggleServiceNotListed) {
+            HStack {
+                Image(systemName: "questionmark.square.dashed")
+                    .foregroundColor(icon)
+                Text("Service not listed")
+                    .fontWeight(.medium)
+                    .foregroundColor(fg)
+                Spacer()
+                if on {
+                    Image(systemName: "checkmark")
+                        .foregroundColor(Color.white)
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, on ? 10 : 0)
+            .background(bg)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("serviceNotListedToggle")
+    }
+
+    private func toggleServiceNotListed() {
+        withAnimation {
+            serviceNotListed.toggle()
+            if serviceNotListed {
+                syncCustomServiceName()
+            } else {
+                customServiceName = ""
+                if isUnlisted {
+                    unlistedServiceName = ""
+                } else {
+                    selectedServiceName = authorizedServices.first ?? ""
+                }
+            }
         }
     }
 
@@ -870,7 +894,7 @@ struct ServerUnscheduledContent: View {
             if let msg = noCommonServicesMessage, !serviceNotListed {
                 Text(msg).foregroundColor(Theme.danger)
             }
-            if serviceNotListed && (isUnlisted || !selectedIndividualIds.isEmpty) {
+            if serviceNotListed && canTypeService {
                 Text("Not on the list? Type the service name. The visit is flagged for a manager to fix the authorization later.")
             }
         }
