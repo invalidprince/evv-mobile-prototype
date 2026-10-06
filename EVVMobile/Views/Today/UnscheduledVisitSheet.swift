@@ -461,74 +461,7 @@ struct ServerUnscheduledContent: View {
                 }
 
                 Section(header: Text("Service"), footer: serviceSectionFooter) {
-                    // Build 111 — "Service not listed" toggle + free-text
-                    // field. Available as soon as there is someone to serve.
-                    if canTypeService {
-                        serviceNotListedRow
-                    }
-
-                    if serviceNotListed && canTypeService {
-                        TextField("Type the service name", text: $customServiceName)
-                            .textInputAutocapitalization(.words)
-                            .autocorrectionDisabled()
-                            .accessibilityIdentifier("customServiceNameField")
-                    } else if isUnlisted {
-                        // F2: Show all available services for unlisted individual
-                        if allAvailableServices.isEmpty && !appState.effectivelyOnline {
-                            VStack(spacing: 6) {
-                                Image(systemName: "wifi.slash")
-                                    .font(.title3)
-                                    .foregroundColor(.secondary)
-                                Text("Connect to the internet once to load services")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                            .padding(.vertical, 4)
-                        } else if allAvailableServices.isEmpty {
-                            Text("No services available")
-                                .foregroundColor(.secondary)
-                                .font(.subheadline)
-                        } else {
-                            Picker("Service", selection: $unlistedServiceName) {
-                                ForEach(allAvailableServices, id: \.self) { svcName in
-                                    Text(svcName).tag(svcName)
-                                }
-                            }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
-                        }
-                    } else if noCommonServicesMessage != nil {
-                        Text("No common authorized services")
-                            .foregroundColor(.secondary)
-                    } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty && !appState.effectivelyOnline {
-                        VStack(spacing: 6) {
-                            Image(systemName: "wifi.slash")
-                                .font(.title3)
-                                .foregroundColor(.secondary)
-                            Text("Connect to the internet once to load services")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.vertical, 4)
-                    } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
-                        Text("No authorized services")
-                            .foregroundColor(.secondary)
-                            .font(.subheadline)
-                    } else if selectedIndividualIds.isEmpty {
-                        Text("Select an individual first")
-                            .foregroundColor(.secondary)
-                            .font(.subheadline)
-                    } else {
-                        Picker("Service", selection: $selectedServiceName) {
-                            ForEach(authorizedServices, id: \.self) { svcName in
-                                Text(svcName).tag(svcName)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                    }
+                    serviceSectionContent
                 }
 
                 // Build 80 — the In person / Consult question, only for a
@@ -731,15 +664,7 @@ struct ServerUnscheduledContent: View {
             // any change to what is being started clears the choice.
             .onChange(of: selectedServiceName) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: customServiceName) { _ in if serviceNotListed { syncCustomServiceName() } }
-            .onChange(of: selectedIndividualIds) { ids in
-                // Nobody left to serve (and Unlisted off): drop the typed
-                // service so it cannot come back silently on the next pick.
-                if ids.isEmpty && !isUnlisted && serviceNotListed {
-                    serviceNotListed = false
-                    customServiceName = ""
-                    selectedServiceName = ""
-                }
-            }
+            .onChange(of: selectedIndividualIds) { ids in clearTypedServiceIfNobody(ids) }
             .onChange(of: unlistedServiceName) { _ in deliveryChoice = nil }
             .onChange(of: selectedIndividualIds) { _ in deliveryChoice = nil; twoToOneSecondStaffId = nil }
             .onChange(of: isUnlisted) { _ in deliveryChoice = nil }
@@ -868,6 +793,89 @@ struct ServerUnscheduledContent: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("serviceNotListedToggle")
+    }
+
+    /// Nobody left to serve (and Unlisted off): drop the typed service so
+    /// it cannot come back silently on the next pick.
+    private func clearTypedServiceIfNobody(_ ids: Set<String>) {
+        guard ids.isEmpty, !isUnlisted, serviceNotListed else { return }
+        serviceNotListed = false
+        customServiceName = ""
+        selectedServiceName = ""
+    }
+
+    /// Build 111 — Service section body, pulled out of `body` so the Form
+    /// stays within the type-checker's budget.
+    @ViewBuilder
+    private var serviceSectionContent: some View {
+            // Build 111 — "Service not listed" toggle + free-text
+            // field. Available as soon as there is someone to serve.
+            if canTypeService {
+                serviceNotListedRow
+            }
+
+            if serviceNotListed && canTypeService {
+                TextField("Type the service name", text: $customServiceName)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("customServiceNameField")
+            } else if isUnlisted {
+                // F2: Show all available services for unlisted individual
+                if allAvailableServices.isEmpty && !appState.effectivelyOnline {
+                    VStack(spacing: 6) {
+                        Image(systemName: "wifi.slash")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                        Text("Connect to the internet once to load services")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.vertical, 4)
+                } else if allAvailableServices.isEmpty {
+                    Text("No services available")
+                        .foregroundColor(.secondary)
+                        .font(.subheadline)
+                } else {
+                    Picker("Service", selection: $unlistedServiceName) {
+                        ForEach(allAvailableServices, id: \.self) { svcName in
+                            Text(svcName).tag(svcName)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+            } else if noCommonServicesMessage != nil {
+                Text("No common authorized services")
+                    .foregroundColor(.secondary)
+            } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty && !appState.effectivelyOnline {
+                VStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                    Text("Connect to the internet once to load services")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.vertical, 4)
+            } else if !selectedIndividualIds.isEmpty && authorizedServices.isEmpty {
+                Text("No authorized services")
+                    .foregroundColor(.secondary)
+                    .font(.subheadline)
+            } else if selectedIndividualIds.isEmpty {
+                Text("Select an individual first")
+                    .foregroundColor(.secondary)
+                    .font(.subheadline)
+            } else {
+                Picker("Service", selection: $selectedServiceName) {
+                    ForEach(authorizedServices, id: \.self) { svcName in
+                        Text(svcName).tag(svcName)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
     }
 
     private func toggleServiceNotListed() {
