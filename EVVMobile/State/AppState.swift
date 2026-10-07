@@ -556,7 +556,7 @@ final class AppState: ObservableObject {
             if mode == .server {
                 Task { await self.refreshForgottenShift() }
                 if forgottenShift != nil {
-                    return .rejected(punchBlockedMessage + "\n\nClose this and tap \u{201C}Clock me out\u{201D} on your Today screen \u{2014} I\u{2019}ll suggest the time.")
+                    return .rejected(punchBlockedMessage + "\n\nClose this and tap \u{201C}Clock Out\u{201D} on that visit\u{2019}s card on your Today screen.")
                 }
             }
             return .rejected(punchBlockedMessage)

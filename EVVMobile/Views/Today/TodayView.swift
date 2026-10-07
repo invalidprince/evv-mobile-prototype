@@ -39,22 +39,13 @@ struct TodayView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    // v0.4.662 — "Clock out of your last shift?" for a FORGOTTEN
-                    // open visit (server-decided). Above the active-visit card:
-                    // it is the thing blocking every clock-in.
-                    if appState.mode == .server, let offer = appState.forgottenShift {
-                        ForgottenShiftCard(offer: offer, isOffline: !appState.effectivelyOnline) {
-                            assistTarget = offer
-                        }
-                    }
-
-                    // Build 83 — a visit still running from a PRIOR day is a
-                    // problem that blocks every clock-in; say so at the top of
-                    // Today until it is closed. Nick's Sep 3 Erik Hoover punch
-                    // sat open for 18 days with nothing on the phone saying so.
-                    ForEach(appState.staleOpenVisits, id: \.id) { visit in
-                        StaleOpenVisitBanner(visit: visit)
-                    }
+                    // Build 113 (Todoist 6hhV73x6wwQR5jHq) — Nick: ONE prompt for
+                    // an open visit from an earlier day. The yellow "Clock out of
+                    // your last shift?" card (v0.4.662) and the red "You're still
+                    // clocked in on … from yesterday" banner (build 83) are gone;
+                    // the STILL CLOCKED IN visit card below is the only one left.
+                    // `refreshForgottenShift()` still runs so the server's
+                    // suggested time feeds the late warning in ClockOutFlow.
 
                     // Build 87 — "verify you're here" (server v0.4.615): a
                     // partner clocked in on a 2:1 and named ME. Above the
@@ -430,71 +421,9 @@ struct IncompleteNoteCard: View {
     }
 }
 
-// MARK: - Stale open visit banner (build 83)
-
-/// "You're still clocked in on Erik Hoover from Sep 3 — clock out." A visit
-/// that is running from a PRIOR day blocks every clock-in (server one-active-
-/// visit rule) and, before build 83 / server v0.4.604, was visible nowhere on
-/// the phone. Persistent on Today until the visit is closed. Same red accent
-/// as a LATE note: this is a problem, not a state. Lives in TodayView.swift
-/// on purpose — no new file, so no hand-edited pbxproj (the v0.4.430 trap).
-struct StaleOpenVisitBanner: View {
-    @EnvironmentObject var appState: AppState
-    let visit: Visit
-    @State private var showClockOut = false
-
-    private var whenText: String {
-        guard let start = visit.actualStart else { return "another day" }
-        let f = DateFormatter()
-        f.dateFormat = Calendar.current.isDateInYesterday(start) ? "'yesterday,' h:mm a" : "EEE, MMM d 'at' h:mm a"
-        return f.string(from: start)
-    }
-
-    /// The Today copy of this visit (what `clockOut()` acts on); this row
-    /// itself when Today has not caught up yet.
-    private var target: Visit {
-        appState.todayVisits.first(where: { $0.serverVisitId == visit.serverVisitId && $0.status == .inProgress }) ?? visit
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.octagon.fill")
-                    .foregroundColor(Theme.danger)
-                Text("You're still clocked in on \(visit.clients.map { $0.name }.joined(separator: " & ")) from \(whenText)")
-                    .font(.subheadline.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-            }
-            Text("You can't clock in anywhere else until this visit is clocked out.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Button {
-                showClockOut = true
-            } label: {
-                Label("Clock Out of That Visit", systemImage: "stop.circle.fill")
-            }
-            .buttonStyle(PrimaryButtonStyle(color: Theme.danger))
-            .accessibilityIdentifier("today.staleOpenClockOut")
-        }
-        .padding(14)
-        .background(Theme.danger.opacity(0.12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Theme.danger.opacity(0.5), lineWidth: 1)
-        )
-        .cornerRadius(14)
-        .accessibilityIdentifier("today.staleOpenBanner")
-        .fullScreenCover(isPresented: $showClockOut, onDismiss: {
-            Task {
-                await appState.refreshServerShifts()
-                await appState.refreshHistory()
-            }
-        }) {
-            ClockOutFlow(visit: target)
-        }
-    }
-}
+// Build 113 — StaleOpenVisitBanner (build 83) and ForgottenShiftCard (v0.4.662)
+// removed: Nick wants ONE prompt for a forgotten visit (the STILL CLOCKED IN
+// card). The late warning now lives in ClockOutFlow.
 
 
 // MARK: - 2:1 second-staff verification (build 87, server v0.4.615)
@@ -742,9 +671,10 @@ struct ForgottenShiftOffer: Identifiable, Equatable {
     let clockIn: String?
     let proposed: ProposedClockOut
 
-    /// The proposed time as a Date (only hour + minute matter; the server
-    /// applies it on the visit's own date — earlier than clock-in = after
-    /// midnight).
+    /// The proposed time as a Date. Build 113: built on `proposed.date`
+    /// (YYYY-MM-DD, agency time) when the server sends one — before, it was
+    /// stamped on TODAY, so a visit from yesterday compared wrong. Falls back
+    /// to today's date when the server sends only a time.
     var proposedDate: Date {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -754,45 +684,18 @@ struct ForgottenShiftOffer: Identifiable, Equatable {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "America/New_York") ?? .current
         let hm = cal.dateComponents([.hour, .minute], from: t)
-        return cal.date(bySettingHour: hm.hour ?? 0, minute: hm.minute ?? 0, second: 0, of: Date()) ?? Date()
-    }
-}
-
-struct ForgottenShiftCard: View {
-    let offer: ForgottenShiftOffer
-    var isOffline: Bool = false
-    let onClockOut: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundColor(Theme.warning)
-                Text("Clock out of your last shift?")
-                    .font(.headline)
-            }
-            Text(offer.prompt)
-                .font(.subheadline)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: onClockOut) {
-                Text("Clock me out")
-                    .font(.subheadline.bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isOffline)
-            if isOffline {
-                Text("You\u{2019}re offline \u{2014} connect to fix this shift.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+        var day = Date()
+        if let iso = proposed.date {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone(identifier: "America/New_York")
+            df.dateFormat = "yyyy-MM-dd"
+            if let d = df.date(from: iso) { day = d }
         }
-        .padding(14)
-        .background(Theme.warning.opacity(0.12))
-        .cornerRadius(12)
+        return cal.date(bySettingHour: hm.hour ?? 0, minute: hm.minute ?? 0, second: 0, of: day) ?? Date()
     }
 }
+
 
 struct AssistedClockOutSheet: View {
     @EnvironmentObject var appState: AppState

@@ -177,6 +177,32 @@ struct ClockOutFlow: View {
                         .foregroundColor(.secondary)
                 }
 
+                // Build 113 (Todoist 6hhV73x6wwQR5jHq) — forgotten shift being
+                // closed past its recommended time: warn, don't block. Replaces
+                // the removed "Clock me out" card as the only guard against a
+                // 20-hour visit. Nick: only for shifts nobody clocked out of
+                // (another day / server-flagged), never for same-day overruns.
+                if let recommended = lateRecommendedTime {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(Theme.warning)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("You clocked out past the recommended time (\(recommended)).")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Please verify your clock-out time and request a change if necessary.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(12)
+                    .background(Theme.warning.opacity(0.12))
+                    .cornerRadius(12)
+                    .padding(.horizontal)
+                    .accessibilityIdentifier("clockOut.lateWarning")
+                }
+
                 Spacer(minLength: 12)
 
                 VStack(spacing: 12) {
@@ -199,6 +225,28 @@ struct ClockOutFlow: View {
             }
         }
         .background(Theme.screenBackground.ignoresSafeArea())
+    }
+
+    // MARK: - Late clock-out warning (build 113)
+
+    /// "4:17 PM on Oct 6" when NOW is past the recommended clock-out of a
+    /// forgotten shift; nil = no warning. Recommended time = the server's
+    /// proposal for this visit (scheduled end, else a typical shift length),
+    /// else the visit's own scheduled end. Only a visit left open from an
+    /// earlier day, or one the server already flagged as forgotten, qualifies.
+    private var lateRecommendedTime: String? {
+        let offer = appState.forgottenShift
+        let flagged = visit.serverVisitId != nil && offer?.id == visit.serverVisitId
+        guard visit.isStaleOpen || flagged else { return nil }
+        var recommended: Date?
+        if flagged, let offer = offer { recommended = offer.proposedDate }
+        if recommended == nil, visit.scheduledEnd > visit.scheduledStart { recommended = visit.scheduledEnd }
+        guard let rec = recommended, Date() > rec else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = Calendar.current.isDateInToday(rec) ? "h:mm a" : "h:mm a 'on' MMM d"
+        return f.string(from: rec)
     }
 
     // MARK: - Summary row helper
