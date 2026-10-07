@@ -675,6 +675,11 @@ struct ForgottenShiftOffer: Identifiable, Equatable {
     /// (YYYY-MM-DD, agency time) when the server sends one — before, it was
     /// stamped on TODAY, so a visit from yesterday compared wrong. Falls back
     /// to today's date when the server sends only a time.
+    /// The server (`long-shift.js` proposeClockOut) already rolls the date
+    /// past midnight (`addDaysIso(visit.date, floor(minutes / 1440))`), so
+    /// `proposed.date` IS the clock-out day — no after-midnight fix-up here.
+    /// Only other caller is AssistedClockOutSheet, which sends hour+minute
+    /// only (`serverTimeLabel`), so the date is harmless there.
     var proposedDate: Date {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
