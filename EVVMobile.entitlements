@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Build 115 (Todoist 6hjxG9X3F2846Q3q) — APNs push. Kept OUTSIDE the
+	     EVVMobile/ folder on purpose: the staging target folder-syncs that
+	     folder, and an entitlements file must not become a bundle resource.
+	     "development" is rewritten to "production" by Xcode on distribution
+	     export (TestFlight/App Store), which is the gateway the server uses. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

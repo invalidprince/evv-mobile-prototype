@@ -23,6 +23,7 @@
 		378142AA76AFC784A581B9F9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7AD610B309F6BDACED066F6B /* PrivacyInfo.xcprivacy */; };
 		37826622B822F5A4B6567920 /* ClockInConfirmSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DC5F0D5661B4B523FCCFD64 /* ClockInConfirmSheet.swift */; };
 		39FC467AD6772FA6EB3FDCB9 /* NoteReminderCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */; };
+		7A1C0E55B2D94F11A0C3B116 /* PushRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C0E55B2D94F11A0C3B115 /* PushRegistration.swift */; };
 		09C9F8A6C2C8506265EA2B69 /* PunchReminderCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CA54E4B0B8F793BF003B821 /* PunchReminderCenter.swift */; };
 		3C8C9431A7BD6996B890EB40 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D3E24BD9E02EC479B9857CB /* HistoryView.swift */; };
 		409DD7ED833080BFB320BB0C /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB38EF84FCABD2F0387E43A /* MoreView.swift */; };
@@ -115,6 +116,7 @@
 		8AD595B3CA807FD5007EE21A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		8BCE1E01E6B620AA8EA9DC45 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteReminderCenter.swift; sourceTree = "<group>"; };
+		7A1C0E55B2D94F11A0C3B115 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
 		9CA54E4B0B8F793BF003B821 /* PunchReminderCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PunchReminderCenter.swift; sourceTree = "<group>"; };
 		998C2DED284D6434E76D7284 /* GoogleAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthService.swift; sourceTree = "<group>"; };
 		A1396676CFA865CD5106BA3C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -239,6 +241,7 @@
 				396E0ABD8D7B9E36B78889C6 /* LocationManager.swift */,
 				8CDB3A600534BD2D8B7C185A /* NoteReminderCenter.swift */,
 				9CA54E4B0B8F793BF003B821 /* PunchReminderCenter.swift */,
+				7A1C0E55B2D94F11A0C3B115 /* PushRegistration.swift */,
 				A3C86CD2A918321B8E58E5D8 /* SpeechRecognizer.swift */,
 			);
 			path = Services;
@@ -533,6 +536,7 @@
 				615EA70CC51666385E28D72B /* NonBillableSheet.swift in Sources */,
 				39FC467AD6772FA6EB3FDCB9 /* NoteReminderCenter.swift in Sources */,
 				09C9F8A6C2C8506265EA2B69 /* PunchReminderCenter.swift in Sources */,
+				7A1C0E55B2D94F11A0C3B116 /* PushRegistration.swift in Sources */,
 				467435D004963F49496C6552 /* OutcomeEntryView.swift in Sources */,
 				03C9325CFE630FE48739DE85 /* RootView.swift in Sources */,
 				CC0AC163EF01DAAC3898CAC7 /* ScheduleView.swift in Sources */,
@@ -576,6 +580,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = EVVMobile.entitlements;
 				INFOPLIST_FILE = EVVMobile/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -659,6 +664,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = EVVMobile.entitlements;
 				INFOPLIST_FILE = EVVMobile/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -773,6 +779,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconStaging;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = EVVMobile.entitlements;
 				INFOPLIST_FILE = EVVMobile/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -792,6 +799,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconStaging;
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = EVVMobile.entitlements;
 				INFOPLIST_FILE = EVVMobile/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

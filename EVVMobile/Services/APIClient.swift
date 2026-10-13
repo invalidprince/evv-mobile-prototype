@@ -3248,6 +3248,47 @@ actor APIClient {
         }
     }
 
+    // MARK: - Push notifications (build 115, evv-poc v0.4.702)
+
+    /// Register this phone's APNs token for the signed-in staff member.
+    func registerPushToken(_ deviceToken: String, environment: String, bundleId: String) async throws {
+        let url = URL(string: "\(baseURL)/me/push-token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "token": deviceToken, "environment": environment, "bundleId": bundleId,
+        ])
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not register for notifications."
+            throw APIError.serverError(statusCode, errBody)
+        }
+    }
+
+    /// Sign-out: remove this phone's token using the OUTGOING session's bearer.
+    /// Deliberately bypasses performRequest — a 401 here (session already
+    /// expired) must not trigger a refresh or a second "session ended" signal.
+    /// Best effort; never throws.
+    func removePushToken(_ deviceToken: String, bearer: String) async {
+        guard let url = URL(string: "\(baseURL)/me/push-token/remove"),
+              let body = try? JSONSerialization.data(withJSONObject: ["token": deviceToken]) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Prefer the client's live token (it may have been refreshed since
+        // AppState captured its copy); fall back to the captured bearer when
+        // sign-out already cleared it.
+        request.setValue("Bearer \(token ?? bearer)", forHTTPHeaderField: "Authorization")
+        request.httpBody = body
+        request.timeoutInterval = 10
+        _ = try? await sendStamped(request)
+    }
+
     // MARK: - Helpers
 
     // MARK: - Staff Documents (compliance vault — live only, never queued)

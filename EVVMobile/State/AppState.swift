@@ -1491,6 +1491,11 @@ final class AppState: ObservableObject {
         // pre-build-45 that destroyed every queued punch.
         let preservedPunches = offlineQueue.filter { $0.isPunch }
         let queueOwner = serverStaff?.id
+        // Build 115 — unregister this phone's push token with the OUTGOING
+        // session's bearer (captured before it is cleared below), so the next
+        // person to sign in here never gets the previous user's alerts.
+        let outgoingBearer = serverToken
+        Task { @MainActor in PushRegistration.shared.didSignOut(bearer: outgoingBearer) }
 
         isLoggedIn = false
         isDemoMode = false
@@ -1580,6 +1585,8 @@ final class AppState: ObservableObject {
         // Then try a live refresh (updates cache if online)
         await refreshIndividuals()
         LocationManager.shared.requestPermission()
+        // Build 115 — iOS push mirror of every server text (evv-poc v0.4.702).
+        await MainActor.run { PushRegistration.shared.didSignIn() }
     }
 
     func loginWithServer(email: String, password: String) async throws {
@@ -1611,6 +1618,8 @@ final class AppState: ObservableObject {
         // Then try a live refresh (updates cache if online)
         await refreshIndividuals()
         LocationManager.shared.requestPermission()
+        // Build 115 — iOS push mirror of every server text (evv-poc v0.4.702).
+        await MainActor.run { PushRegistration.shared.didSignIn() }
     }
 
     /// Restore any offline actions persisted for THIS staff member (queued
