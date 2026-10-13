@@ -7,6 +7,12 @@ struct ActiveVisitCard: View {
     @State private var clockOutAndNext = false
     /// Build 87 — "Request second staff" / "Request again" (server v0.4.615).
     @State private var showTwoToOneRequest = false
+    /// Build 114 — TEMPORARY 2:1 tester bypass (Todoist 6hjxG9cPhQgcH87q):
+    /// a hidden 3-second long-press on the 2:1 row, only for users the server
+    /// allows (System Admin / IT). Nothing on screen hints at it.
+    @State private var bypassRequest: ServerTwoToOneRequest?
+    @State private var bypassError: String?
+    @State private var bypassing = false
     /// Build 102 — "delete a current clock in" (Nick, 2026-09-23). Opens the
     /// SAME DeleteRequestSheet History uses; that sheet swaps its copy for a
     /// running visit and the SERVER decides immediate-delete vs request
@@ -242,6 +248,40 @@ struct ActiveVisitCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.warning.opacity(0.10))
         .cornerRadius(8)
+        .contentShape(Rectangle())
+        // Build 114 — hidden tester bypass: hold the row 3 s. Only armed when
+        // the server says this user may (canTestBypass) AND there is a request
+        // still waiting or timed out — otherwise the gesture does nothing.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 3).onEnded { _ in
+                guard appState.twoToOneCanTestBypass, appState.effectivelyOnline, !bypassing,
+                      let st = state, st.isPending || st.status == "expired" else { return }
+                bypassRequest = st
+            }
+        )
+        .confirmationDialog(
+            "Tester bypass",
+            isPresented: Binding(get: { bypassRequest != nil }, set: { if !$0 { bypassRequest = nil } }),
+            titleVisibility: .visible,
+            presenting: bypassRequest
+        ) { req in
+            Button("Record \(req.secondStaff.name) without their verification") {
+                Task { @MainActor in
+                    bypassing = true
+                    bypassError = await appState.testBypassTwoToOne(req)
+                    bypassing = false
+                }
+            }
+            .accessibilityIdentifier("twoToOne.testBypass")
+            Button("Cancel", role: .cancel) {}
+        } message: { req in
+            Text("Testing only: \(req.secondStaff.name) is clocked in at your clock-in time and location without using their phone. Their visit is marked \"2:1 TEST BYPASS\".")
+        }
+        .alert("Bypass failed", isPresented: Binding(get: { bypassError != nil }, set: { if !$0 { bypassError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(bypassError ?? "")
+        }
     }
 
     /// "Wed, Sep 3 at 10:46 AM" for a prior-day clock-in.

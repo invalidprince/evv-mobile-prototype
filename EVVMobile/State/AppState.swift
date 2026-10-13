@@ -79,6 +79,9 @@ final class AppState: ObservableObject {
     @Published var twoToOneMine: [ServerTwoToOneRequest] = []
     /// Settings → Punch Alerts → "2:1 verification window" (seconds).
     @Published var twoToOneWindowSec: Int = 120
+    /// Build 114 — TEMPORARY 2:1 tester bypass (Todoist 6hjxG9cPhQgcH87q):
+    /// the server says whether this user may use the hidden long-press.
+    @Published var twoToOneCanTestBypass: Bool = false
     private var twoToOnePollTask: Task<Void, Never>?
     /// v0.4.569 — missed DAYS (📅) shown in History (Todoist 6hWwwJ8Jr64937GH).
     /// Same online-only, memory-only discipline as `missedShifts`: never
@@ -1830,6 +1833,7 @@ final class AppState: ObservableObject {
         twoToOnePending = p?.pending ?? []
         twoToOneMine = p?.mine ?? []
         if let w = p?.windowSec, w > 0 { twoToOneWindowSec = w }
+        twoToOneCanTestBypass = p?.canTestBypass ?? false
         // Build 87 — a NEW prompt addressed to me is the whole point: make
         // the phone say so (the app already auto-syncs on foreground and
         // every ~2 s after an action, so the banner appears on its own).
@@ -1848,6 +1852,7 @@ final class AppState: ObservableObject {
                                 self.twoToOnePending = fresh.pending
                                 self.twoToOneMine = fresh.mine
                                 if let w = fresh.windowSec, w > 0 { self.twoToOneWindowSec = w }
+                                self.twoToOneCanTestBypass = fresh.canTestBypass ?? false
                             }
                             if before != after {
                                 // Something resolved (confirmed → partner's visit
@@ -1920,6 +1925,35 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Build 114 — TEMPORARY tester bypass (Todoist 6hjxG9cPhQgcH87q): I'm the
+    /// REQUESTER and my partner isn't on NorthStar yet, so record them as
+    /// verified without their phone. Server-gated (System Admin / IT) and
+    /// stamped "2:1 TEST BYPASS" on both timelines. Returns an error or nil.
+    @MainActor
+    func testBypassTwoToOne(_ req: ServerTwoToOneRequest) async -> String? {
+        guard mode == .server else { return "Not available in demo mode." }
+        guard effectivelyOnline else { return "You're offline. Try again when you're back online." }
+        do {
+            let r = try await APIClient.shared.testBypassTwoToOne(requestId: req.requestId)
+            DiagnosticLogger.shared.logAPI("2:1 TEST BYPASS #\(req.requestId) → partner visit \(r.visit.id) clock-in \(r.visit.clockIn)")
+            haptic(.success)
+            await refreshServerShifts()
+            refreshHistoryInBackground()
+            return nil
+        } catch let error as APIError {
+            haptic(.error)
+            DiagnosticLogger.shared.logAPI("2:1 TEST BYPASS #\(req.requestId) FAILED: \(error.localizedDescription)")
+            if case .responseUnreadable = error {
+                await refreshServerShifts()
+                return nil
+            }
+            Task { await self.refreshServerShifts() }
+            return error.errorDescription ?? error.localizedDescription
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     /// "I'm not here" — nothing recorded for me; the requester is told.
     @MainActor
     func declineTwoToOne(_ req: ServerTwoToOneRequest) async -> String? {
@@ -1944,7 +1978,7 @@ final class AppState: ObservableObject {
             DiagnosticLogger.shared.logAPI("2:1 verification requested from \(r.secondStaff.name) on \(serverVisitId) → #\(r.requestId), \(r.secondsLeft ?? 0)s")
             twoToOneMine.removeAll { $0.visitId == serverVisitId }
             twoToOneMine.insert(r, at: 0)
-            applyTwoToOne(TwoToOneVerifyPayload(pending: twoToOnePending, mine: twoToOneMine, windowSec: twoToOneWindowSec))
+            applyTwoToOne(TwoToOneVerifyPayload(pending: twoToOnePending, mine: twoToOneMine, windowSec: twoToOneWindowSec, canTestBypass: twoToOneCanTestBypass))
             haptic(.success)
             return nil
         } catch {

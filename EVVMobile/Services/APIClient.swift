@@ -276,6 +276,9 @@ struct TwoToOneVerifyPayload: Decodable {
     let pending: [ServerTwoToOneRequest]
     let mine: [ServerTwoToOneRequest]
     let windowSec: Int?
+    /// Build 114 / server v0.4.701 — TEMPORARY tester bypass (Todoist
+    /// 6hjxG9cPhQgcH87q). True only for System Admin / IT; older servers omit it.
+    var canTestBypass: Bool? = nil
 }
 
 /// GET /api/two-to-one/candidates — who may be named as the second staff.
@@ -3079,6 +3082,34 @@ actor APIClient {
         }
         do { return try JSONDecoder().decode(TwoToOneConfirmResponse.self, from: data) }
         catch { throw APIError.responseUnreadable(error) }   // 200 reached: the visit EXISTS
+    }
+
+    /// Build 114 — TEMPORARY tester bypass (server v0.4.701, Todoist
+    /// 6hjxG9cPhQgcH87q): the REQUESTER records the named partner as verified
+    /// when the partner is not on NorthStar yet. Server gates it to System
+    /// Admin / IT and marks both timelines "2:1 TEST BYPASS". ONLINE-ONLY.
+    func testBypassTwoToOne(requestId: Int) async throws -> TwoToOneConfirmResponse {
+        let url = URL(string: "\(baseURL)/two-to-one/\(requestId)/test-bypass")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = "{}".data(using: .utf8)
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 {
+            throw APIError.clockInConflict(data, fallback: "This verification can no longer be bypassed.")
+        }
+        if statusCode == 403 {
+            throw APIError.forbidden((try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Test bypass is not available for your role.")
+        }
+        guard statusCode == 200 else {
+            throw APIError.serverError(statusCode, (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not bypass.")
+        }
+        do { return try JSONDecoder().decode(TwoToOneConfirmResponse.self, from: data) }
+        catch { throw APIError.responseUnreadable(error) }   // 200 reached: the partner's visit EXISTS
     }
 
     /// "I'm not here" — nothing is recorded for me; the requester is told.
