@@ -70,7 +70,8 @@ struct DocumentationView: View {
                     goal: so.goal ?? "",
                     dataOnly: so.dataOnly,
                     sourceService: so.sourceService,
-                    sourceServiceName: so.sourceServiceName
+                    sourceServiceName: so.sourceServiceName,
+                    instructions: so.instructions
                 )
             }
         } else {
@@ -590,7 +591,8 @@ struct DocumentationView: View {
                         status: so.status,
                         dataOnly: so.isDataOnly,
                         sourceService: so.group == "shared" ? so.sourceService : nil,
-                        sourceServiceName: so.group == "shared" ? (so.sourceServiceName ?? so.sourceService) : nil
+                        sourceServiceName: so.group == "shared" ? (so.sourceServiceName ?? so.sourceService) : nil,
+                        instructions: so.instructions
                     )
                 }
 
@@ -1161,6 +1163,8 @@ struct ServerDocOutcome {
     var dataOnly: Bool = false
     var sourceService: String? = nil
     var sourceServiceName: String? = nil
+    /// build 116 / server v0.4.703 — per-outcome instructions (see ServerOutcome).
+    var instructions: String? = nil
 
     /// Create a stable, deterministic UUID from a server outcome ID.
     /// This ensures draft outcome entries (keyed by localId) persist

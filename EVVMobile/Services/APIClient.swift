@@ -674,6 +674,10 @@ struct ServerOutcome: Decodable, Identifiable {
     let summaryMode: String?
     let sourceService: String?
     let sourceServiceName: String?
+    /// build 116 / server v0.4.703 — per-outcome "how to fill out the
+    /// summary" guidance. Visual only (never sent back, never printed).
+    /// Optional + `try?`: an older server omits it → nil → no box.
+    let instructions: String?
     var isDataOnly: Bool { summaryMode == "data_only" }
 
     enum CodingKeys: String, CodingKey {
@@ -681,6 +685,7 @@ struct ServerOutcome: Decodable, Identifiable {
         case text          // some endpoints emit the outcome text as "text"
         case description   // dashboard stores the goal detail as "description"
         case group, summaryMode, sourceService, sourceServiceName
+        case instructions
     }
 
     init(from decoder: Decoder) throws {
@@ -704,6 +709,9 @@ struct ServerOutcome: Decodable, Identifiable {
         summaryMode = (try? c.decodeIfPresent(String.self, forKey: .summaryMode)) ?? nil
         sourceService = (try? c.decodeIfPresent(String.self, forKey: .sourceService)) ?? nil
         sourceServiceName = (try? c.decodeIfPresent(String.self, forKey: .sourceServiceName)) ?? nil
+        let instr = ((try? c.decodeIfPresent(String.self, forKey: .instructions)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        instructions = (instr?.isEmpty ?? true) ? nil : instr
     }
 }
 

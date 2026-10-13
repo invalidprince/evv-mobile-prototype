@@ -93,6 +93,26 @@ struct OutcomeEntryView: View {
                     Text(outcome.goal)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    // build 116 / server v0.4.703 — "how to fill out the
+                    // summary" for this outcome. Visual guidance only; the
+                    // AI tools read the same text server-side.
+                    if let instr = outcome.instructions, !instr.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("How to fill out this summary", systemImage: "info.circle")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundColor(Theme.primary)
+                            Text(instr)
+                                .font(.caption)
+                                .foregroundColor(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.primary.opacity(0.08))
+                        .cornerRadius(8)
+                        .padding(.top, 4)
+                        .accessibilityElement(children: .combine)
+                    }
                 }
                 Spacer()
                 Image(systemName: entry.isComplete(dataOnly: outcome.dataOnly) ? "checkmark.circle.fill" : "circle.dashed")

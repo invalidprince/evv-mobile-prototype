@@ -339,6 +339,10 @@ struct Outcome: Identifiable {
     var dataOnly: Bool = false
     var sourceService: String? = nil
     var sourceServiceName: String? = nil
+    /// build 116 / server v0.4.703 — "how to fill out the summary" for this
+    /// outcome (Outcomes & Goals → Instructions). Shown under the outcome as
+    /// guidance only; nil = no box.
+    var instructions: String? = nil
     var isShared: Bool { sourceServiceName != nil || (sourceService != nil && dataOnly) }
 }
 
