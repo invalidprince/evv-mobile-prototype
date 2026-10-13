@@ -472,6 +472,8 @@ final class AppState: ObservableObject {
         // so refresh whenever the app comes back to the foreground in use.
         if mode == .server, isLoggedIn {
             Task { await APIClient.shared.refreshToken() }
+            // Build 115 — retry a push-token upload that failed offline.
+            Task { @MainActor in PushRegistration.shared.sceneBecameActive() }
         }
         guard effectivelyOnline, !isSyncing else { return }
         guard pendingSyncCount > 0 || mode == .server else { return }

@@ -3280,10 +3280,9 @@ actor APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Prefer the client's live token (it may have been refreshed since
-        // AppState captured its copy); fall back to the captured bearer when
-        // sign-out already cleared it.
-        request.setValue("Bearer \(token ?? bearer)", forHTTPHeaderField: "Authorization")
+        // ALWAYS the captured outgoing bearer — never the live token, which
+        // may already belong to the NEXT user if they signed in quickly.
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.httpBody = body
         request.timeoutInterval = 10
         _ = try? await sendStamped(request)

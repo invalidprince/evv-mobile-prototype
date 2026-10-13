@@ -57,10 +57,20 @@ final class PushRegistration {
     func didSignIn() {
         signedIn = true
         uploadedFor = nil
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            guard granted else { return }
+        // APNs registration does not need alert permission, so register either
+        // way: a user who later turns notifications on in Settings is covered
+        // without signing in again.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
             DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
         }
+        uploadIfReady()
+    }
+
+    /// App came to the foreground: retry a failed upload (offline at sign-in)
+    /// and refresh the token (APNs can rotate it). No-op when signed out.
+    func sceneBecameActive() {
+        guard signedIn else { return }
+        UIApplication.shared.registerForRemoteNotifications()
         uploadIfReady()
     }
 
