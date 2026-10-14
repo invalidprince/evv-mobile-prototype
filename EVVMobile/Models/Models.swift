@@ -273,14 +273,13 @@ struct Visit: Identifiable {
         Calendar.current.date(byAdding: .day, value: 1, to: noteDueDay) ?? noteDueDay
     }
 
-    /// "YYYY-MM-DD" (agency-local, America/New_York — the server's TZ) → start of that day.
+    /// "YYYY-MM-DD" → start of that calendar day in the device calendar. Built
+    /// from components (not a TZ-pinned formatter) so the day never slips on a
+    /// phone set west of Eastern time.
     static func parseAgencyDay(_ s: String) -> Date? {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "America/New_York")
-        f.dateFormat = "yyyy-MM-dd"
-        guard let d = f.date(from: s) else { return nil }
-        return Calendar.current.startOfDay(for: d)
+        let parts = s.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3, (1...12).contains(parts[1]), (1...31).contains(parts[2]) else { return nil }
+        return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
     /// True while the note is still incomplete and the service day has passed.
