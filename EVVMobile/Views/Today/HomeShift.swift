@@ -28,11 +28,18 @@ final class HomeShiftStore: ObservableObject {
     @Published var isLoading = false
     @Published var loadedOnce = false
     @Published var isBusy = false
+    /// True once any load proved this staff has a home (homes / open / recent).
+    /// Errors only earn a card for staff we KNOW have a home; everyone else
+    /// keeps the normal Today screen (no red card for a 500 or being offline).
+    @Published private(set) var knownHome = false
 
     private let api = APIClient.shared
+    /// Refresh generation: a mutation bumps it so a slower, older GET /homes
+    /// that lands afterwards can't resurrect a closed punch or an old role.
+    private var generation = 0
 
     /// Does this staff have anything home-related to show at all?
-    var hasHomeContent: Bool { !homes.isEmpty || open != nil || error != nil || !recent.isEmpty }
+    var hasHomeContent: Bool { !homes.isEmpty || open != nil || !recent.isEmpty || (error != nil && knownHome) }
 
     /// Closed shifts still worth showing: note still editable, or has a note.
     var recentForDocs: [HomePunch] {
@@ -40,16 +47,21 @@ final class HomeShiftStore: ObservableObject {
     }
 
     func refresh() async {
+        generation += 1
+        let gen = generation
         isLoading = true
         defer { isLoading = false; loadedOnce = true }
         do {
             let resp = try await api.fetchHomes()
+            guard gen == generation else { return }   // superseded by a newer refresh/mutation
             homes = resp.homes
             roles = resp.roles ?? HomeShiftStore.defaultRoles
             open = resp.open
             recent = resp.recent ?? []
+            if !homes.isEmpty || open != nil || !recent.isEmpty { knownHome = true }
             error = nil
         } catch {
+            guard gen == generation else { return }
             // Keep the last good state visible; surface the error on the card.
             self.error = HomeShiftStore.describe(error, fallback: "Couldn't load your group home.")
         }
@@ -61,7 +73,9 @@ final class HomeShiftStore: ObservableObject {
         let gps = LocationManager.shared.currentCoordinates   // captured, never required
         let punch = try await api.homeClockIn(homeId: homeId, role: role, clientId: clientId,
                                               lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy)
+        generation += 1   // invalidate any GET /homes still in flight
         open = punch
+        knownHome = true
         error = nil
         await refresh()   // pull roster + staffing for the new punch
     }
@@ -70,7 +84,9 @@ final class HomeShiftStore: ObservableObject {
         guard let punchId = open?.id else { return }
         isBusy = true
         defer { isBusy = false }
-        _ = try await api.homeSwitchRole(punchId: punchId, role: role, clientId: clientId, swap: swap)
+        let punch = try await api.homeSwitchRole(punchId: punchId, role: role, clientId: clientId, swap: swap)
+        generation += 1
+        open = punch
         await refresh()
     }
 
@@ -80,6 +96,7 @@ final class HomeShiftStore: ObservableObject {
         defer { isBusy = false }
         let gps = LocationManager.shared.currentCoordinates
         _ = try await api.homeClockOut(punchId: punchId, lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy)
+        generation += 1
         open = nil
         await refresh()
     }
@@ -87,6 +104,7 @@ final class HomeShiftStore: ObservableObject {
     static let defaultRoles: [String] = ["main", "assist", "floater"]
 
     static func describe(_ error: Error, fallback: String) -> String {
+        if case HomePunchConflict.mainTaken(let message, _) = error { return message }
         if let api = error as? APIError {
             switch api {
             case .conflict(let msg): return msg
@@ -135,6 +153,7 @@ struct HomeShiftCard: View {
                         }
                         Spacer()
                         Button {
+                            actionError = nil
                             showClockIn = home
                         } label: {
                             Label("Clock in", systemImage: "clock.badge.checkmark")
@@ -222,12 +241,11 @@ struct HomeShiftCard: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            if let s = store.open?.staffing, let on = s.onClock, let req = s.required, on - 1 < req {
-                Text("Heads up: the home will be below its minimum staffing after you leave. Your manager will be notified. You are never blocked from clocking out.")
-            } else {
-                Text("Your shift documentation stays editable until the late-note deadline.")
-            }
+            // No client-side staffing math: card 3 decides shortfalls server-side
+            // and alerts the manager. We just remind that clock-out is never blocked.
+            Text("If the home drops below its minimum staffing, your manager is notified — you are never blocked from clocking out. Your shift documentation stays editable until the late-note deadline.")
         }
+        .onChange(of: store.open?.id) { _ in actionError = nil }
     }
 
     // MARK: open shift
@@ -295,6 +313,7 @@ struct HomeShiftCard: View {
 
         HStack(spacing: 10) {
             Button {
+                actionError = nil
                 showSwitchRole = true
             } label: {
                 Label("Switch role", systemImage: "arrow.triangle.2.circlepath")
@@ -345,28 +364,48 @@ struct HomeShiftCard: View {
         return HomeInfo(id: open.homeId, name: open.homeName ?? open.homeId, label: nil, residents: open.residents ?? [])
     }
 
-    private func noteTargets(_ open: HomePunch) -> [HomeNoteTarget] {
-        let notes = open.notes ?? []
+    /// Documentation targets for a punch = every role leg worked on it
+    /// (Main/Assisting legs → that resident's note, Floater leg → home note)
+    /// ∪ the current role ∪ any note already written. So a note started as
+    /// Main for A stays reachable after switching to B or Floater — the
+    /// server enforces the same leg rule on save.
+    private func noteTargets(_ p: HomePunch) -> [HomeNoteTarget] {
+        let notes = p.notes ?? []
         func body(for clientId: String?) -> String {
             notes.first(where: { ($0.clientId ?? "") == (clientId ?? "") })?.body ?? ""
         }
-        if open.role == "floater" {
-            return [HomeNoteTarget(punchId: open.id, clientId: nil, title: "Home / shift note", existingBody: body(for: nil))]
+        func residentName(_ cid: String) -> String {
+            (p.legs ?? []).first(where: { $0.clientId == cid })?.clientName
+                ?? (p.residents ?? []).first(where: { $0.id == cid })?.name
+                ?? notes.first(where: { $0.clientId == cid })?.clientName
+                ?? (p.clientId == cid ? p.clientName : nil) ?? cid
         }
-        if let cid = open.clientId {
-            let name = open.clientName ?? (open.residents ?? []).first(where: { $0.id == cid })?.name ?? cid
-            return [HomeNoteTarget(punchId: open.id, clientId: cid, title: "\(name) — resident note", existingBody: body(for: cid))]
+        var residentIds: [String] = []
+        var wantsHome = false
+        for leg in (p.legs ?? []) {
+            if leg.role == "floater" { wantsHome = true }
+            else if let cid = leg.clientId, !residentIds.contains(cid) { residentIds.append(cid) }
         }
-        // Role without an assigned resident shouldn't happen; fall back to the home note.
-        return [HomeNoteTarget(punchId: open.id, clientId: nil, title: "Home / shift note", existingBody: body(for: nil))]
+        if p.role == "floater" { wantsHome = true }
+        else if let cid = p.clientId, !residentIds.contains(cid) { residentIds.append(cid) }
+        for n in notes {
+            if let cid = n.clientId { if !residentIds.contains(cid) { residentIds.append(cid) } }
+            else { wantsHome = true }
+        }
+        var out = residentIds.map { cid in
+            HomeNoteTarget(punchId: p.id, clientId: cid, title: "\(residentName(cid)) — resident note", existingBody: body(for: cid))
+        }
+        if wantsHome || out.isEmpty {
+            out.append(HomeNoteTarget(punchId: p.id, clientId: nil, title: "Home / shift note", existingBody: body(for: nil)))
+        }
+        return out
     }
 }
 
 struct StaffingBadge: View {
     let staffing: HomeStaffing
     var body: some View {
-        if let required = staffing.required, let onClock = staffing.onClock, staffing.error == nil {
-            let ok = staffing.ok ?? (onClock >= required)
+        if let required = staffing.required, let onClock = staffing.onClock, let ok = staffing.ok, staffing.error == nil {
             Label("\(onClock)/\(required) staff", systemImage: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.caption.weight(.bold))
                 .foregroundColor(ok ? Theme.success : Theme.danger)
@@ -427,9 +466,9 @@ struct HomeRoleSheet: View {
 
             Section(header: Text("Role")) {
                 Picker("Role", selection: $role) {
-                    Text("Main").tag("main")
-                    Text("Assisting").tag("assist")
-                    Text("Floater").tag("floater")
+                    ForEach(store.roles.isEmpty ? HomeShiftStore.defaultRoles : store.roles, id: \.self) { r in
+                        Text(HomeRoleSheet.label(for: r)).tag(r)
+                    }
                 }
                 .pickerStyle(.segmented)
                 Text(roleHelp).font(.caption).foregroundColor(.secondary)
@@ -500,6 +539,15 @@ struct HomeRoleSheet: View {
         }
     }
 
+    static func label(for role: String) -> String {
+        switch role {
+        case "main": return "Main"
+        case "assist": return "Assisting"
+        case "floater": return "Floater"
+        default: return role.capitalized
+        }
+    }
+
     private var roleHelp: String {
         switch role {
         case "main": return "You are the primary staff for one resident. Only one Main per resident at a time."
@@ -525,11 +573,16 @@ struct HomeRoleSheet: View {
                 dismiss()
                 onDone?()
             } catch {
-                let msg = HomeShiftStore.describe(error, fallback: isSwitch ? "Couldn't switch role." : "Couldn't clock in.")
-                errorText = msg
-                // Server's main_taken sentence mentions the other staff member;
-                // offer the swap on a role switch (card-2 supports swap:true).
-                offerSwap = role == "main" && msg.lowercased().contains("already")
+                if case HomePunchConflict.mainTaken(let message, _) = error {
+                    errorText = message
+                    // Server code main_taken: on a role switch card-2 supports swap:true
+                    // (the other staff becomes Assisting). On clock-in, the server's
+                    // own advice applies: clock in as Assisting, then swap.
+                    offerSwap = isSwitch
+                } else {
+                    errorText = HomeShiftStore.describe(error, fallback: isSwitch ? "Couldn't switch role." : "Couldn't clock in.")
+                    offerSwap = false
+                }
             }
         }
     }

@@ -372,7 +372,11 @@ struct ServerUnscheduledContent: View {
                                     Image(systemName: "chevron.right").font(.caption).foregroundColor(.secondary)
                                 }
                             }
-                            .disabled(homeStore.open != nil)
+                            .disabled(homeStore.open != nil || appState.hasActiveVisit)
+                        }
+                        if appState.hasActiveVisit {
+                            Text("Finish your current visit before clocking in to the home.")
+                                .font(.caption).foregroundColor(.secondary)
                         }
                         if homeStore.open != nil {
                             Text("You're already clocked in to a home — see the Today screen.")

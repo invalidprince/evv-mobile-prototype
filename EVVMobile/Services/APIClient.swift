@@ -1421,6 +1421,17 @@ struct HomePunchNote: Decodable, Identifiable, Hashable {
     let updatedAt: String?
 }
 
+/// One role segment of a punch (clock-in role, each switch, manager fixes).
+struct HomePunchLeg: Decodable, Identifiable, Hashable {
+    let id: Int
+    let role: String
+    let clientId: String?
+    let clientName: String?
+    let label: String?
+    let startedLabel: String?
+    let endedLabel: String?
+}
+
 struct HomePunch: Decodable, Identifiable, Hashable {
     let id: Int
     let homeId: String
@@ -1434,6 +1445,7 @@ struct HomePunch: Decodable, Identifiable, Hashable {
     let clientId: String?
     let clientName: String?
     let residents: [HomeResident]?
+    let legs: [HomePunchLeg]?
     let roster: [HomeRosterEntry]?
     let staffing: HomeStaffing?
     let notes: [HomePunchNote]?
@@ -1489,6 +1501,22 @@ struct HomeRoleRequest: Encodable {
 struct HomeNoteRequest: Encodable {
     let clientId: String?
     let body: String
+}
+
+/// Server 4xx for home punches: { reason, error, mainStaffId?, mainStaffName? }.
+struct HomePunchErrorResponse: Decodable {
+    let reason: String?
+    let error: String?
+    let mainStaffName: String?
+}
+
+/// Typed conflict so the role sheet can offer the swap on the server's
+/// main_taken code instead of sniffing the sentence.
+enum HomePunchConflict: LocalizedError {
+    case mainTaken(message: String, staffName: String?)
+    var errorDescription: String? {
+        switch self { case .mainTaken(let m, _): return m }
+    }
 }
 
 /// ✨ AI Review wire shapes (server v0.4.458).
@@ -3016,7 +3044,7 @@ actor APIClient {
 
     /// GET /api/homes
     func fetchHomes() async throws -> HomesResponse {
-        let url = URL(string: "(baseURL)/homes")!
+        let url = URL(string: "\(baseURL)/homes")!
         var request = URLRequest(url: url)
         addAuth(&request)
         request.timeoutInterval = 15
@@ -3034,7 +3062,7 @@ actor APIClient {
     /// GET /api/homes/:id/roster — who is on the clock right now (+ staffing
     /// summary when the server has it; nil → roster shows without green/red).
     func fetchHomeRoster(homeId: String) async throws -> HomeRosterResponse {
-        let url = URL(string: "(baseURL)/homes/(homeId)/roster")!
+        let url = URL(string: "\(baseURL)/homes/\(homeId)/roster")!
         var request = URLRequest(url: url)
         addAuth(&request)
         request.timeoutInterval = 15
@@ -3053,7 +3081,7 @@ actor APIClient {
     /// (home_punch_in_progress / visit_in_progress / main_taken) surface as
     /// APIError.conflict with the server's sentence.
     func homeClockIn(homeId: String, role: String, clientId: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> HomePunch {
-        let url = URL(string: "(baseURL)/homes/(homeId)/clock-in")!
+        let url = URL(string: "\(baseURL)/homes/\(homeId)/clock-in")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -3067,7 +3095,7 @@ actor APIClient {
 
     /// POST /api/home-punches/:id/role → 200 { punch, swappedWith }.
     func homeSwitchRole(punchId: Int, role: String, clientId: String?, swap: Bool = false) async throws -> HomePunch {
-        let url = URL(string: "(baseURL)/home-punches/(punchId)/role")!
+        let url = URL(string: "\(baseURL)/home-punches/\(punchId)/role")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -3082,7 +3110,7 @@ actor APIClient {
     /// POST /api/home-punches/:id/clock-out → 200 { punch }. Never blocked
     /// by staffing (card 3 alerts the manager instead).
     func homeClockOut(punchId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> HomePunch {
-        let url = URL(string: "(baseURL)/home-punches/(punchId)/clock-out")!
+        let url = URL(string: "\(baseURL)/home-punches/\(punchId)/clock-out")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -3096,7 +3124,7 @@ actor APIClient {
 
     /// GET /api/home-punches/:id/notes — this punch's shift documentation.
     func fetchHomePunchNotes(punchId: Int) async throws -> HomePunchNotesResponse {
-        let url = URL(string: "(baseURL)/home-punches/(punchId)/notes")!
+        let url = URL(string: "\(baseURL)/home-punches/\(punchId)/notes")!
         var request = URLRequest(url: url)
         addAuth(&request)
         request.timeoutInterval = 15
@@ -3116,7 +3144,7 @@ actor APIClient {
     /// resident's note (Main / Assisting). 403 note_locked when the late-note
     /// window after clock-out has passed.
     func saveHomePunchNote(punchId: Int, clientId: String?, body: String) async throws -> HomePunchNoteSaveResponse {
-        let url = URL(string: "(baseURL)/home-punches/(punchId)/notes")!
+        let url = URL(string: "\(baseURL)/home-punches/\(punchId)/notes")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -3141,8 +3169,11 @@ actor APIClient {
     private func decodeHomePunch(_ data: Data, _ response: URLResponse, fallback: String) throws -> HomePunch {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         if statusCode == 409 || statusCode == 403 || statusCode == 400 {
-            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? fallback
-            throw APIError.conflict(errBody)
+            let parsed = try? JSONDecoder().decode(HomePunchErrorResponse.self, from: data)
+            if parsed?.reason == "main_taken" {
+                throw HomePunchConflict.mainTaken(message: parsed?.error ?? fallback, staffName: parsed?.mainStaffName)
+            }
+            throw APIError.conflict(parsed?.error ?? fallback)
         }
         guard statusCode == 200 || statusCode == 201 else {
             let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? fallback
