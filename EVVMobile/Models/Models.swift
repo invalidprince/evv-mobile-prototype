@@ -138,6 +138,13 @@ struct Visit: Identifiable {
     var serverShiftId: Int?
     /// Server visit ID (used for clock-out API call).
     var serverVisitId: String?
+    /// Build 118 / server v0.4.718 (6hj9Pchcr3vhVGgH) — the calendar day the
+    /// note is due, "YYYY-MM-DD" agency-local, from `myVisit.noteDueDate`. It
+    /// is the day the visit CLOCKED OUT (a stored later-day clock-out date
+    /// wins), so an overnight shift is not "late" the morning it ends. nil on
+    /// older servers / while clocked in → `noteDeadline` falls back to the
+    /// local clock-out day.
+    var serverNoteDueDate: String?
     /// Build 87 — the server INDIVIDUAL id (e.g. "C673069"), so the 2:1
     /// second-staff picker can ask the server who is eligible for THIS person.
     var serverIndividualId: String?
@@ -246,10 +253,34 @@ struct Visit: Identifiable {
         Calendar.current.startOfDay(for: actualStart ?? scheduledStart)
     }
 
-    /// Notes are due the same day as the visit; the deadline is midnight
-    /// (start of the following day, agency-local).
+    /// Build 118 (6hj9Pchcr3vhVGgH) — the agency-local day the note is DUE:
+    /// the day the visit clocked out, not the day it started (Nick 2026-08-06:
+    /// "the note is due at midnight of the day the shift ended"). Server
+    /// `noteDueDate` wins when present (it knows the stored clock-out date for
+    /// long shifts that end at a later clock time on a later day); otherwise
+    /// the local `actualEnd` day (already rolled forward for wrapped
+    /// clock-outs), then `serviceDay` while still clocked in / scheduled.
+    var noteDueDay: Date {
+        let cal = Calendar.current
+        if let s = serverNoteDueDate, let d = Visit.parseAgencyDay(s), d >= serviceDay { return d }
+        if let end = actualEnd { return cal.startOfDay(for: end) }
+        return serviceDay
+    }
+
+    /// Notes are due by midnight of the clock-out day; the deadline is the
+    /// start of the following day, agency-local.
     var noteDeadline: Date {
-        Calendar.current.date(byAdding: .day, value: 1, to: serviceDay) ?? serviceDay
+        Calendar.current.date(byAdding: .day, value: 1, to: noteDueDay) ?? noteDueDay
+    }
+
+    /// "YYYY-MM-DD" (agency-local, America/New_York — the server's TZ) → start of that day.
+    static func parseAgencyDay(_ s: String) -> Date? {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "America/New_York")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: s) else { return nil }
+        return Calendar.current.startOfDay(for: d)
     }
 
     /// True while the note is still incomplete and the service day has passed.

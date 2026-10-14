@@ -72,6 +72,11 @@ struct ServerVisitInfo: Decodable {
     /// Server v0.4.662 — an assisted clock-out is waiting for a manager: the
     /// visit has no clock-out yet but is NOT running. Older servers omit it.
     let assistedClockOutPending: Bool?
+    /// Server v0.4.718 (6hj9Pchcr3vhVGgH) — "YYYY-MM-DD" the visit clocked
+    /// out on, and the note deadline day (= clock-out day). Older servers omit
+    /// both; null while clocked in.
+    let clockOutDate: String?
+    let noteDueDate: String?
 }
 
 // MARK: - Assisted clock-out (server v0.4.662)

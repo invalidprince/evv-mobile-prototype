@@ -2117,6 +2117,8 @@ final class AppState: ObservableObject {
         )
         visit.serverShiftId = s.id
         visit.serverVisitId = serverVisitId
+        // Build 118 / server v0.4.718 — note deadline follows the clock-out day.
+        visit.serverNoteDueDate = s.myVisit?.noteDueDate
         visit.ratio = s.ratio
         visit.partners = partners
         visit.serverIndividualId = s.individual.id

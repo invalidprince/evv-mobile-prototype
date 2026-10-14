@@ -53,8 +53,11 @@ final class NoteReminderCenter: NSObject, UNUserNotificationCenterDelegate {
         let cal = Calendar.current
         let now = Date()
 
-        // 1. Nearing-end-of-day nudge (default 7:00 PM on the service day).
-        if let nudgeTime = cal.date(bySettingHour: endOfDayReminderHour, minute: 0, second: 0, of: visit.serviceDay),
+        // 1. Nearing-end-of-day nudge (default 7:00 PM on the day the note is
+        //    due — the clock-out day, build 118 / 6hj9Pchcr3vhVGgH — so an
+        //    overnight shift gets nudged the evening it ended, not the evening
+        //    it started).
+        if let nudgeTime = cal.date(bySettingHour: endOfDayReminderHour, minute: 0, second: 0, of: visit.noteDueDay),
            nudgeTime > now {
             let content = UNMutableNotificationContent()
             content.title = "Visit note still open"
