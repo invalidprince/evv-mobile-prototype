@@ -1376,6 +1376,121 @@ struct APIErrorResponse: Decodable {
     let error: String
 }
 
+// MARK: - Group home wire shapes (server v0.4.708, epic 6hhHw5PWcCV3pM9q)
+
+struct HomeResident: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let away: Bool?
+}
+
+struct HomeInfo: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let label: String?
+    let residents: [HomeResident]
+}
+
+/// One staff member on the home's clock right now.
+struct HomeRosterEntry: Decodable, Identifiable, Hashable {
+    let id: Int            // punch id
+    let staffId: String
+    let staffName: String
+    let clockIn: String?
+    let clockInLabel: String?
+    let role: String
+    let roleLabel: String?
+    let clientId: String?
+    let clientName: String?
+}
+
+/// Card 3's green/red summary. Absent (nil) until that lane ships → roster
+/// renders without a staffing badge rather than guessing.
+struct HomeStaffing: Decodable, Hashable {
+    let required: Int?
+    let onClock: Int?
+    let ok: Bool?
+    let error: String?     // "staffing_unavailable" → show grey, never a guessed green
+}
+
+struct HomePunchNote: Decodable, Identifiable, Hashable {
+    let id: Int
+    let clientId: String?
+    let clientName: String?
+    let body: String
+    let updatedAt: String?
+}
+
+struct HomePunch: Decodable, Identifiable, Hashable {
+    let id: Int
+    let homeId: String
+    let homeName: String?
+    let clockIn: String?
+    let clockOut: String?
+    let clockInLabel: String?
+    let clockOutLabel: String?
+    let role: String
+    let roleLabel: String?
+    let clientId: String?
+    let clientName: String?
+    let residents: [HomeResident]?
+    let roster: [HomeRosterEntry]?
+    let staffing: HomeStaffing?
+    let notes: [HomePunchNote]?
+    // Closed punches only (myState.recent): late-note window state.
+    let editable: Bool?
+    let lockedReason: String?
+    let lastDay: String?
+}
+
+struct HomesResponse: Decodable {
+    let homes: [HomeInfo]
+    let open: HomePunch?
+    let recent: [HomePunch]?   // closed shifts, last 14 days (late notes)
+    let roles: [String]?     // ["main","assist","floater"]
+}
+
+struct HomeRosterResponse: Decodable {
+    let homeId: String
+    let homeName: String?
+    let roster: [HomeRosterEntry]
+    let staffing: HomeStaffing?
+}
+
+struct HomePunchEnvelope: Decodable { let punch: HomePunch }
+
+struct HomePunchNotesResponse: Decodable {
+    let punchId: Int
+    let notes: [HomePunchNote]
+    let editable: Bool?
+    let lockedReason: String?
+    let lastDay: String?
+}
+
+struct HomePunchNoteSaveResponse: Decodable {
+    let note: HomePunchNote
+    let notes: [HomePunchNote]?
+}
+
+struct HomeClockInRequest: Encodable {
+    let role: String?
+    let clientId: String?
+    let lat: Double?
+    let lng: Double?
+    let accuracy: Double?
+}
+
+struct HomeRoleRequest: Encodable {
+    let role: String
+    let clientId: String?
+    let swap: Bool?
+}
+
+struct HomeNoteRequest: Encodable {
+    let clientId: String?
+    let body: String
+}
+
 /// ✨ AI Review wire shapes (server v0.4.458).
 struct AIReviewTextResponse: Decodable {
     let rewritten: String
@@ -2890,6 +3005,151 @@ actor APIClient {
             // this as a failed write — see APIError.responseUnreadable.
             throw APIError.responseUnreadable(error)
         }
+    }
+
+    // MARK: - Group home shifts (card 4 of epic 6hhHw5PWcCV3pM9q, server v0.4.708)
+    //
+    // All data comes from the card-2 endpoints: GET /api/homes (my homes +
+    // open punch + roster), POST /homes/:id/clock-in, POST /home-punches/:id/role,
+    // POST /home-punches/:id/clock-out, plus the card-4 notes endpoints.
+    // ONLINE-ONLY: a home punch needs the server's main-taken / overlap checks.
+
+    /// GET /api/homes
+    func fetchHomes() async throws -> HomesResponse {
+        let url = URL(string: "(baseURL)/homes")!
+        var request = URLRequest(url: url)
+        addAuth(&request)
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to load group homes"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(HomesResponse.self, from: data) }
+        catch { throw APIError.decodingError(error) }
+    }
+
+    /// GET /api/homes/:id/roster — who is on the clock right now (+ staffing
+    /// summary when the server has it; nil → roster shows without green/red).
+    func fetchHomeRoster(homeId: String) async throws -> HomeRosterResponse {
+        let url = URL(string: "(baseURL)/homes/(homeId)/roster")!
+        var request = URLRequest(url: url)
+        addAuth(&request)
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to load roster"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(HomeRosterResponse.self, from: data) }
+        catch { throw APIError.decodingError(error) }
+    }
+
+    /// POST /api/homes/:id/clock-in → 201 { punch }. 409 reasons
+    /// (home_punch_in_progress / visit_in_progress / main_taken) surface as
+    /// APIError.conflict with the server's sentence.
+    func homeClockIn(homeId: String, role: String, clientId: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> HomePunch {
+        let url = URL(string: "(baseURL)/homes/(homeId)/clock-in")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(HomeClockInRequest(role: role, clientId: clientId, lat: lat, lng: lng, accuracy: accuracy))
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        return try decodeHomePunch(data, response, fallback: "Failed to clock in to the home")
+    }
+
+    /// POST /api/home-punches/:id/role → 200 { punch, swappedWith }.
+    func homeSwitchRole(punchId: Int, role: String, clientId: String?, swap: Bool = false) async throws -> HomePunch {
+        let url = URL(string: "(baseURL)/home-punches/(punchId)/role")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(HomeRoleRequest(role: role, clientId: clientId, swap: swap ? true : nil))
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        return try decodeHomePunch(data, response, fallback: "Failed to switch role")
+    }
+
+    /// POST /api/home-punches/:id/clock-out → 200 { punch }. Never blocked
+    /// by staffing (card 3 alerts the manager instead).
+    func homeClockOut(punchId: Int, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> HomePunch {
+        let url = URL(string: "(baseURL)/home-punches/(punchId)/clock-out")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(HomeClockInRequest(role: nil, clientId: nil, lat: lat, lng: lng, accuracy: accuracy))
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        return try decodeHomePunch(data, response, fallback: "Failed to clock out of the home")
+    }
+
+    /// GET /api/home-punches/:id/notes — this punch's shift documentation.
+    func fetchHomePunchNotes(punchId: Int) async throws -> HomePunchNotesResponse {
+        let url = URL(string: "(baseURL)/home-punches/(punchId)/notes")!
+        var request = URLRequest(url: url)
+        addAuth(&request)
+        request.timeoutInterval = 15
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Failed to load shift notes"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(HomePunchNotesResponse.self, from: data) }
+        catch { throw APIError.decodingError(error) }
+    }
+
+    /// POST /api/home-punches/:id/notes { clientId | null, body } → { note, notes }.
+    /// clientId nil = the home/shift note (floaters); a resident id = that
+    /// resident's note (Main / Assisting). 403 note_locked when the late-note
+    /// window after clock-out has passed.
+    func saveHomePunchNote(punchId: Int, clientId: String?, body: String) async throws -> HomePunchNoteSaveResponse {
+        let url = URL(string: "(baseURL)/home-punches/(punchId)/notes")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(HomeNoteRequest(clientId: clientId, body: body))
+        request.timeoutInterval = 20
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 403 || statusCode == 409 || statusCode == 400 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not save the note"
+            throw APIError.conflict(errBody)
+        }
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not save the note"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(HomePunchNoteSaveResponse.self, from: data) }
+        catch { throw APIError.responseUnreadable(error) }
+    }
+
+    private func decodeHomePunch(_ data: Data, _ response: URLResponse, fallback: String) throws -> HomePunch {
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if statusCode == 409 || statusCode == 403 || statusCode == 400 {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? fallback
+            throw APIError.conflict(errBody)
+        }
+        guard statusCode == 200 || statusCode == 201 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? fallback
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(HomePunchEnvelope.self, from: data).punch }
+        catch { throw APIError.responseUnreadable(error) }
     }
 
     // MARK: - Shift request (staff-requested shift, server v0.4.348)

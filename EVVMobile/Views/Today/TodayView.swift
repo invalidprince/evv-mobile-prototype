@@ -2,6 +2,8 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject var appState: AppState
+    /// Group home shift state (card 4) — refreshed alongside shifts.
+    @ObservedObject private var homeStore = HomeShiftStore.shared
     @State private var clockInTarget: Visit?
     @State private var showUnscheduled = false
     @State private var showNonBillable = false
@@ -144,7 +146,14 @@ struct TodayView: View {
                         }
                     }
 
-                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty && appState.missedShifts.isEmpty {
+                    // Group home shift (epic 6hhHw5PWcCV3pM9q card 4): the
+                    // open home punch, or the home + Clock in, or the error.
+                    // Never silently blank when the staff has a home.
+                    if appState.mode == .server && homeStore.hasHomeContent {
+                        HomeShiftCard()
+                    }
+
+                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty && appState.missedShifts.isEmpty && !homeStore.hasHomeContent {
                         VStack(spacing: 10) {
                             Image(systemName: "calendar.badge.checkmark")
                                 .font(.largeTitle)
@@ -164,6 +173,7 @@ struct TodayView: View {
             .refreshable {
                 if appState.mode == .server {
                     await appState.refreshServerShifts()
+                    await homeStore.refresh()
                     // Build 70 — the incomplete-documentation cards for
                     // PREVIOUS dates come from historyVisits
                     // (GET /api/me/visits); /api/me/shifts is today-forward
@@ -195,6 +205,7 @@ struct TodayView: View {
                 if appState.mode == .server {
                     Task { await appState.refreshHistoryIfStale() }
                     Task { await appState.refreshForgottenShift() }
+                    Task { await homeStore.refresh() }
                 }
             }
             .sheet(item: $clockInTarget) { visit in

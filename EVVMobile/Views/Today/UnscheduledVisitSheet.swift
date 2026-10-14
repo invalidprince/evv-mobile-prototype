@@ -55,6 +55,9 @@ struct ServerUnscheduledContent: View {
     @EnvironmentObject var appState: AppState
     @Binding var showSuccess: Bool
     let onDismiss: () -> Void
+    /// Card 4 — group home entry inside the clock-in picker.
+    @ObservedObject private var homeStore = HomeShiftStore.shared
+    @State private var homeClockInTarget: HomeInfo?
     @State private var selectedIndividualIds: Set<String> = []
     @State private var selectedServiceName: String = ""
     @State private var searchText = ""
@@ -348,6 +351,36 @@ struct ServerUnscheduledContent: View {
                 // hard-clipped to 224pt, with no scroll indicator and no count,
                 // so the list read as complete at row 4. A caregiver who can
                 // see "6" will look for the 6th.
+                // Card 4 (epic 6hhHw5PWcCV3pM9q): staff whose department
+                // includes a group home can clock in to the HOME instead of
+                // a resident. Offered here, inside the clock-in picker, so
+                // the home is one tap from the same place as every client.
+                if !homeStore.homes.isEmpty {
+                    Section(header: Text("Group home")) {
+                        ForEach(homeStore.homes) { home in
+                            Button {
+                                homeClockInTarget = home
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "house.fill").foregroundColor(Theme.primary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(home.name).foregroundColor(.primary)
+                                        Text("Clock in to the home — pick Main / Assisting / Floater next")
+                                            .font(.caption).foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption).foregroundColor(.secondary)
+                                }
+                            }
+                            .disabled(homeStore.open != nil)
+                        }
+                        if homeStore.open != nil {
+                            Text("You're already clocked in to a home — see the Today screen.")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+
                 Section(header: Text(individualsSectionTitle), footer: cachedFooter) {
 
                     // F2: Unlisted Individual toggle
@@ -681,9 +714,15 @@ struct ServerUnscheduledContent: View {
             } message: { msg in
                 Text(msg)
             }
+            .sheet(item: $homeClockInTarget) { home in
+                NavigationView {
+                    HomeRoleSheet(home: home, mode: .clockIn, onDone: { onDismiss() })
+                }
+            }
             .onAppear {
                 // Always attempt a refresh; refreshIndividuals handles offline fallback
                 Task { await appState.refreshIndividuals() }
+                Task { await homeStore.refresh() }
                 // Warm up a GPS fix so the punch (and any offline queue
                 // snapshot) carries coordinates captured at punch time.
                 Task { _ = await LocationManager.shared.acquireLocation() }
