@@ -2142,6 +2142,7 @@ final class AppState: ObservableObject {
         // Set documentation status from server data (Bug 2+3 fix)
         if let myVisit = s.myVisit {
             visit.hasNote = myVisit.hasNote ?? false
+            visit.medRecords = myVisit.medRecords ?? 0   // Build 119 — eMAR doses on the punch
             if myVisit.docStatus?.lowercased() == "complete" {
                 visit.docComplete = true
             }
@@ -2835,6 +2836,7 @@ final class AppState: ObservableObject {
         visit.timeFixStatus = tfStatus
         visit.deleteRequestStatus = drStatus
         visit.hasNote = sv.hasNote ?? false
+        visit.medRecords = sv.medRecords ?? 0   // Build 119 — eMAR doses on the punch
         visit.serverDocStatus = sv.docStatus
         visit.approvalStatus = sv.approvalStatus
         // Build 90 (server v0.4.625) — keep an APPROVED shift request

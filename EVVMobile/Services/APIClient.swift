@@ -69,6 +69,9 @@ struct ServerVisitInfo: Decodable {
     let minutes: Int?
     let docStatus: String?
     let hasNote: Bool?
+    /// Build 119 / server v0.4.720 (Todoist 6hj3VCJQfgRFFW4q) — count of
+    /// RECORDED eMAR doses documented on this visit. Older servers omit it.
+    let medRecords: Int?
     /// Server v0.4.662 — an assisted clock-out is waiting for a manager: the
     /// visit has no clock-out yet but is NOT running. Older servers omit it.
     let assistedClockOutPending: Bool?
@@ -119,6 +122,9 @@ struct ServerShiftVisitInfo: Decodable {
     let status: String?
     let docStatus: String?
     let hasNote: Bool?
+    /// Build 119 / server v0.4.720 (Todoist 6hj3VCJQfgRFFW4q) — count of
+    /// RECORDED eMAR doses documented on this visit. Older servers omit it.
+    let medRecords: Int?
 }
 
 struct ServerShift: Decodable {
@@ -429,6 +435,9 @@ struct ServerHistoryVisit: Decodable, Identifiable {
     let duration: Int?
     let docStatus: String?
     let hasNote: Bool?
+    /// Build 119 / server v0.4.720 (Todoist 6hj3VCJQfgRFFW4q) — count of
+    /// RECORDED eMAR doses documented on this visit. Older servers omit it.
+    let medRecords: Int?
     /// v0.4.348 — "pending" on a staff-requested shift awaiting manager
     /// approval; absent/nil on every normal visit.
     let approvalStatus: String?

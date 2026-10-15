@@ -83,6 +83,28 @@ struct DeleteRequestSheet: View {
                     }
                 }
 
+                // Build 119 / server v0.4.720 (Todoist 6hj3VCJQfgRFFW4q) — recorded
+                // eMAR doses ride on this visit. The delete still goes through;
+                // the doses are NOT changed and the residential department's
+                // manager gets an "eMAR on deleted visit" review item.
+                if visit.medRecords > 0 {
+                    Section {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "pills.fill")
+                                .foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(visit.medRecords == 1
+                                     ? "1 medication record is documented on this visit"
+                                     : "\(visit.medRecords) medication records are documented on this visit")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("The doses will not be changed or removed. They stay on the MAR exactly as recorded, and the residential manager gets a review item to confirm or correct them.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+
                 Section(header: Text("Reason for deletion")) {
                     Picker("Reason", selection: $reason) {
                         ForEach(reasons, id: \.self) { r in

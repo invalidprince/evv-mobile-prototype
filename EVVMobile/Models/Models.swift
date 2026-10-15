@@ -130,6 +130,12 @@ struct Visit: Identifiable {
 
     /// Whether the visit has a note attached (server mode).
     var hasNote: Bool = false
+    /// Build 119 / server v0.4.720 (Todoist 6hj3VCJQfgRFFW4q) — how many eMAR
+    /// doses were RECORDED on this visit. Deleting is still allowed; the sheet
+    /// warns that the doses stay exactly as documented and the residential
+    /// department's manager gets an "eMAR on deleted visit" review item.
+    /// 0 in mock mode / on older servers.
+    var medRecords: Int = 0
     /// Documentation status string from server (e.g. "complete", "pending").
     var serverDocStatus: String?
 
