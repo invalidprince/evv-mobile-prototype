@@ -18,6 +18,14 @@ final class AppState: ObservableObject {
     // loads/toggles only — ONLINE-ONLY data, never cached or queued offline.
     @Published var workOpenCount = 0
     @Published var serverStaff: ServerStaff?  // populated after server login
+    /// Build 120 (Todoist 6hmMhF54WxwQfq3H) — CLA-only staff: every
+    /// department is a flagged group home. Server-driven (login payload and
+    /// every /me/shifts), persisted so a cold launch renders the residential
+    /// Today before the first poll answers. Hides visit surfaces only —
+    /// visit DATA still loads, so a legacy open visit can still be clocked out.
+    @Published var residentialOnly: Bool = UserDefaults.standard.bool(forKey: "residentialOnly") {
+        didSet { UserDefaults.standard.set(residentialOnly, forKey: "residentialOnly") }
+    }
     @Published var serverToken: String?
 
     // MARK: - Server loading / errors
@@ -1504,6 +1512,7 @@ final class AppState: ObservableObject {
         mode = .mock
         serverStaff = nil
         serverToken = nil
+        residentialOnly = false  // build 120: next login re-derives the CLA-only flag
         offlineQueue.removeAll()
         Task { await APIClient.shared.setToken(nil) }
         currentStaff = MockData.currentStaff
@@ -1559,6 +1568,7 @@ final class AppState: ObservableObject {
         let response = try await APIClient.shared.loginWithGoogle(idToken: idToken)
         await MainActor.run {
             self.serverStaff = response.staff
+            self.residentialOnly = response.staff.residentialOnly ?? false  // build 120 CLA-only
             self.serverToken = response.token
             self.mode = .server
             self.currentStaff = Staff(
@@ -1595,6 +1605,7 @@ final class AppState: ObservableObject {
         let response = try await APIClient.shared.login(email: email, password: password)
         await MainActor.run {
             self.serverStaff = response.staff
+            self.residentialOnly = response.staff.residentialOnly ?? false  // build 120 CLA-only
             self.serverToken = response.token
             self.mode = .server
             self.currentStaff = Staff(
@@ -1752,6 +1763,7 @@ final class AppState: ObservableObject {
             mergeStaleOpenVisitsIntoToday()
             serverOpenShifts = response.openShifts ?? []
             serverOpenRules = response.openRules ?? []
+            if let flag = response.residentialOnly { residentialOnly = flag }  // build 120 CLA-only
             lastSync = Date()
             backgroundRefreshFailedAt = nil
             startTimerIfNeeded()

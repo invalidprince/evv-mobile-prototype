@@ -135,7 +135,13 @@ struct TodayView: View {
                         .padding(.vertical, 20)
                     }
 
-                    if !upcoming.isEmpty {
+                    // Build 120 (Todoist 6hmMhF54WxwQfq3H) — CLA-only staff
+                    // (server says residentialOnly): no visit surfaces. Up Next,
+                    // the visits empty state and Start Unscheduled Visit are
+                    // hidden; the home shift card leads. Cards that only exist
+                    // when a visit ALREADY exists (still clocked in, incomplete
+                    // note, missed shift) stay so legacy work can be closed out.
+                    if !appState.residentialOnly && !upcoming.isEmpty {
                         Text("Up Next")
                             .font(.title3.bold())
                             .padding(.top, 4)
@@ -153,7 +159,20 @@ struct TodayView: View {
                         HomeShiftCard()
                     }
 
-                    if appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty && appState.missedShifts.isEmpty && !homeStore.hasHomeContent {
+                    if appState.residentialOnly && appState.mode == .server && !appState.isLoadingShifts && !homeStore.hasHomeContent {
+                        VStack(spacing: 10) {
+                            Image(systemName: "house")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("No home shift found yet \u{2014} pull to refresh, or ask your supervisor to check your home assignment.")
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    }
+
+                    if !appState.residentialOnly && appState.mode == .server && !appState.isLoadingShifts && appState.activeVisit == nil && upcoming.isEmpty && appState.incompleteNoteVisits.isEmpty && appState.missedShifts.isEmpty && !homeStore.hasHomeContent {
                         VStack(spacing: 10) {
                             Image(systemName: "calendar.badge.checkmark")
                                 .font(.largeTitle)
@@ -304,17 +323,20 @@ struct TodayView: View {
         VStack(spacing: 12) {
             // One active visit at a time: block starting an unscheduled visit
             // while any visit is running (scheduled or unscheduled).
-            Button(action: { showUnscheduled = true }) {
-                Label("Start Unscheduled Visit", systemImage: "plus.circle.fill")
-            }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(appState.hasActiveVisit)
-            .opacity(appState.hasActiveVisit ? 0.5 : 1)
+            // Build 120: hidden entirely for CLA-only (residentialOnly) staff.
+            if !appState.residentialOnly {
+                Button(action: { showUnscheduled = true }) {
+                    Label("Start Unscheduled Visit", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(appState.hasActiveVisit)
+                .opacity(appState.hasActiveVisit ? 0.5 : 1)
 
-            if appState.hasActiveVisit {
-                Text("Clock out of your current visit first.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                if appState.hasActiveVisit {
+                    Text("Clock out of your current visit first.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Button(action: { showNonBillable = true }) {

@@ -55,8 +55,14 @@ struct MainTabView: View {
                     .tabItem { Label("Today", systemImage: "sun.max.fill") }
                 ScheduleView()
                     .tabItem { Label("Schedule", systemImage: "calendar") }
-                HistoryView()
-                    .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                // Build 120 (Todoist 6hmMhF54WxwQfq3H): CLA-only staff
+                // (server-driven appState.residentialOnly) have no visit
+                // history to browse — the Visits/History tab is hidden for
+                // them. Schedule stays (home shifts + open shifts live there).
+                if !appState.residentialOnly {
+                    HistoryView()
+                        .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                }
                 // Work (build 29, Nick 2026-08-26): to-dos + forms +
                 // acknowledgements + documents in one place, mirroring the web
                 // dashboard's To-Do card. Schedule and History deliberately

@@ -26,6 +26,12 @@ struct ServerStaff: Decodable {
     let email: String
     let department: String
     let departmentName: String
+    /// Build 120 (Todoist 6hmMhF54WxwQfq3H) — server v0.4.725 says TRUE when
+    /// every department this staff belongs to is a flagged group home
+    /// (CLA-only). The app then hides its visit surfaces and leads with the
+    /// home shift. Server-driven — never inferred from department names.
+    /// Older servers omit the key → nil → unchanged behaviour.
+    let residentialOnly: Bool?
 }
 
 struct ServerIndividual: Decodable {
@@ -238,6 +244,10 @@ struct ShiftsResponse: Decodable {
     /// Confirm), `mine` = the latest request on each of MY running visits
     /// (waiting / expired / declined / confirmed). Older servers omit it.
     let twoToOneVerify: TwoToOneVerifyPayload?
+    /// Build 120 — CLA-only staff flag (same meaning as ServerStaff
+    /// .residentialOnly), refreshed on every shifts poll so a department
+    /// change on the web takes effect without signing out. Optional.
+    let residentialOnly: Bool?
 }
 
 // MARK: - 2:1 second-staff verification (server v0.4.615, build 87)
