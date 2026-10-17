@@ -651,7 +651,7 @@ struct HomeNoteSheet: View {
             }
             if !questions.isEmpty {
                 Section(header: Text("Visit questions"),
-                        footer: unansweredRequired.isEmpty ? nil : Text("Answer the required questions to save.").foregroundColor(Theme.danger)) {
+                        footer: (editable && !unansweredRequired.isEmpty) ? Text("Answer the required questions to save.").foregroundColor(Theme.danger) : nil) {
                     ForEach(questions) { q in
                         VisitQuestionCard(question: q, answer: answerBinding(for: q.id))
                             .disabled(!editable || isSaving)
@@ -703,12 +703,18 @@ struct HomeNoteSheet: View {
         isLoading = true // Retry is disabled while a load is in flight
         questionsUnavailable = false
         errorText = nil
-        if !didSeedText { text = target.existingBody }
+        // Seed exactly once, before any network call, so a Retry after a
+        // failed load never throws away what the DSP typed meanwhile.
+        if !didSeedText {
+            text = target.existingBody
+            didSeedText = true
+        }
         do {
             let resp = try await APIClient.shared.fetchHomePunchNotes(punchId: target.punchId)
             let existing = resp.notes.first(where: { ($0.clientId ?? "") == (target.clientId ?? "") })
-            if let n = existing, !didSeedText { text = n.body }
-            didSeedText = true
+            // Apply the server body only while the editor still holds the
+            // untouched seed; an edited draft always wins.
+            if let n = existing, text == target.existingBody { text = n.body }
             if let cid = target.clientId, let qs = resp.questions[cid] {
                 questions = qs
                 var a: [Int: String] = [:]
