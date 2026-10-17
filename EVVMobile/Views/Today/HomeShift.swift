@@ -616,6 +616,9 @@ struct HomeNoteSheet: View {
     /// v0.4.736+; empty for the home/shift note and on older servers).
     @State private var questions: [ServerDocQuestion] = []
     @State private var answers: [Int: String] = [:]
+    /// Resident note whose question list could not be loaded: Save stays off
+    /// so required questions can't be skipped by going offline.
+    @State private var questionsUnavailable = false
 
     var body: some View {
         Form {
@@ -633,6 +636,13 @@ struct HomeNoteSheet: View {
                 if !editable {
                     Label(lockedReason ?? "This note is locked — the late-note deadline has passed.", systemImage: "lock.fill")
                         .font(.caption.weight(.semibold)).foregroundColor(Theme.warning)
+                }
+            }
+            if questionsUnavailable {
+                Section {
+                    Label("Couldn't load this resident's visit questions. Check your connection and try again.", systemImage: "wifi.exclamationmark")
+                        .font(.caption.weight(.semibold)).foregroundColor(Theme.warning)
+                    Button("Retry") { Task { await load() } }
                 }
             }
             if !questions.isEmpty {
@@ -654,7 +664,7 @@ struct HomeNoteSheet: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button(isSaving ? "Saving…" : "Save") { save() }
-                    .disabled(!editable || isSaving || isLoading || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !unansweredRequired.isEmpty)
+                    .disabled(!editable || isSaving || isLoading || questionsUnavailable || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !unansweredRequired.isEmpty)
             }
         }
         .task { await load() }
@@ -686,6 +696,8 @@ struct HomeNoteSheet: View {
     }
 
     private func load() async {
+        isLoading = true
+        questionsUnavailable = false
         text = target.existingBody
         do {
             let resp = try await APIClient.shared.fetchHomePunchNotes(punchId: target.punchId)
@@ -695,9 +707,12 @@ struct HomeNoteSheet: View {
                 questions = qs
                 var a: [Int: String] = [:]
                 for qa in existing?.questionAnswers ?? [] { a[qa.questionId] = qa.answer }
-                // Unanswered questions start on their configured default (like visits).
-                for q in qs where a[q.id] == nil {
-                    if let dv = q.defaultValue, !dv.isEmpty { a[q.id] = dv }
+                // A brand-new note starts on the configured defaults (like visits).
+                // An existing note never gets defaults stamped on by a body edit.
+                if existing == nil {
+                    for q in qs where a[q.id] == nil {
+                        if let dv = q.defaultValue, !dv.isEmpty { a[q.id] = dv }
+                    }
                 }
                 answers = a
             }
@@ -707,6 +722,9 @@ struct HomeNoteSheet: View {
         } catch {
             // Keep what the card already had; show why the refresh failed.
             errorText = HomeShiftStore.describe(error, fallback: "Couldn't load the note.")
+            // Resident notes may carry required visit questions we never saw —
+            // don't let an offline save skip them.
+            if target.clientId != nil { questionsUnavailable = true }
         }
         isLoading = false
     }

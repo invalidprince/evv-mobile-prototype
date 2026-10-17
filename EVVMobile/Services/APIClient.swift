@@ -1462,9 +1462,11 @@ struct HomePunchNote: Decodable, Identifiable, Hashable {
     }
 }
 
-/// One stored visit-question answer on a home shift note ({ questionId, answer }
-/// plus the snapshotted question text/type). Wire answer is a plain string
-/// (checkbox answers are JSON-encoded array strings — same as visits).
+/// One stored visit-question answer on a home shift note. Only questionId and
+/// answer are decoded (the snapshotted question text/type is ignored here).
+/// The answer is normally a string (checkbox answers are JSON-encoded array
+/// strings — same as visits); a non-string value is re-encoded to its JSON
+/// text rather than silently blanked.
 struct HomeNoteAnswer: Decodable, Hashable {
     let questionId: Int
     let answer: String
@@ -1480,7 +1482,18 @@ struct HomeNoteAnswer: Decodable, Hashable {
         } else {
             throw DecodingError.dataCorruptedError(forKey: .questionId, in: c, debugDescription: "questionId missing or not an integer")
         }
-        answer = ((try? c.decodeIfPresent(String.self, forKey: .answer)) ?? nil) ?? ""
+        if let s = try? c.decodeIfPresent(String.self, forKey: .answer) {
+            answer = s ?? ""
+        } else if let arr = try? c.decode([String].self, forKey: .answer),
+                  let data = try? JSONEncoder().encode(arr), let s = String(data: data, encoding: .utf8) {
+            answer = s
+        } else if let b = try? c.decode(Bool.self, forKey: .answer) {
+            answer = b ? "true" : "false"
+        } else if let d = try? c.decode(Double.self, forKey: .answer) {
+            answer = d == d.rounded() ? String(Int(d)) : String(d)
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .answer, in: c, debugDescription: "answer is not a string, array, bool or number")
+        }
     }
 }
 
