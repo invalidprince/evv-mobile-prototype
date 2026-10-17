@@ -619,6 +619,9 @@ struct HomeNoteSheet: View {
     /// Resident note whose question list could not be loaded: Save stays off
     /// so required questions can't be skipped by going offline.
     @State private var questionsUnavailable = false
+    /// First load seeds the editor from the server; Retry must not clobber
+    /// text the DSP typed while offline.
+    @State private var didSeedText = false
 
     var body: some View {
         Form {
@@ -643,6 +646,7 @@ struct HomeNoteSheet: View {
                     Label("Couldn't load this resident's visit questions. Check your connection and try again.", systemImage: "wifi.exclamationmark")
                         .font(.caption.weight(.semibold)).foregroundColor(Theme.warning)
                     Button("Retry") { Task { await load() } }
+                        .disabled(isLoading)
                 }
             }
             if !questions.isEmpty {
@@ -696,13 +700,15 @@ struct HomeNoteSheet: View {
     }
 
     private func load() async {
-        isLoading = true
+        isLoading = true // Retry is disabled while a load is in flight
         questionsUnavailable = false
-        text = target.existingBody
+        errorText = nil
+        if !didSeedText { text = target.existingBody }
         do {
             let resp = try await APIClient.shared.fetchHomePunchNotes(punchId: target.punchId)
             let existing = resp.notes.first(where: { ($0.clientId ?? "") == (target.clientId ?? "") })
-            if let n = existing { text = n.body }
+            if let n = existing, !didSeedText { text = n.body }
+            didSeedText = true
             if let cid = target.clientId, let qs = resp.questions[cid] {
                 questions = qs
                 var a: [Int: String] = [:]

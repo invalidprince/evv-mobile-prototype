@@ -1482,15 +1482,17 @@ struct HomeNoteAnswer: Decodable, Hashable {
         } else {
             throw DecodingError.dataCorruptedError(forKey: .questionId, in: c, debugDescription: "questionId missing or not an integer")
         }
-        if let s = try? c.decodeIfPresent(String.self, forKey: .answer) {
-            answer = s ?? ""
+        if !c.contains(.answer) || (try? c.decodeNil(forKey: .answer)) == true {
+            answer = ""
+        } else if let s = try? c.decode(String.self, forKey: .answer) {
+            answer = s
         } else if let arr = try? c.decode([String].self, forKey: .answer),
                   let data = try? JSONEncoder().encode(arr), let s = String(data: data, encoding: .utf8) {
             answer = s
         } else if let b = try? c.decode(Bool.self, forKey: .answer) {
             answer = b ? "true" : "false"
         } else if let d = try? c.decode(Double.self, forKey: .answer) {
-            answer = d == d.rounded() ? String(Int(d)) : String(d)
+            answer = (d == d.rounded() && abs(d) < 1e15) ? String(Int(d)) : String(d)
         } else {
             throw DecodingError.dataCorruptedError(forKey: .answer, in: c, debugDescription: "answer is not a string, array, bool or number")
         }
