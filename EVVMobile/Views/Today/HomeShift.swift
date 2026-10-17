@@ -612,6 +612,10 @@ struct HomeNoteSheet: View {
     @State private var errorText: String?
     @State private var isSaving = false
     @State private var isLoading = true
+    /// Build 121 — visit questions that apply to this resident's note (server
+    /// v0.4.736+; empty for the home/shift note and on older servers).
+    @State private var questions: [ServerDocQuestion] = []
+    @State private var answers: [Int: String] = [:]
 
     var body: some View {
         Form {
@@ -631,6 +635,15 @@ struct HomeNoteSheet: View {
                         .font(.caption.weight(.semibold)).foregroundColor(Theme.warning)
                 }
             }
+            if !questions.isEmpty {
+                Section(header: Text("Visit questions"),
+                        footer: unansweredRequired.isEmpty ? nil : Text("Answer the required questions to save.").foregroundColor(Theme.danger)) {
+                    ForEach(questions) { q in
+                        VisitQuestionCard(question: q, answer: answerBinding(for: q.id))
+                            .disabled(!editable || isSaving)
+                    }
+                }
+            }
             if let errorText {
                 Section { Text(errorText).foregroundColor(Theme.danger).font(.subheadline) }
             }
@@ -641,17 +654,53 @@ struct HomeNoteSheet: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button(isSaving ? "Saving…" : "Save") { save() }
-                    .disabled(!editable || isSaving || isLoading || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!editable || isSaving || isLoading || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !unansweredRequired.isEmpty)
             }
         }
         .task { await load() }
+    }
+
+    private func answerBinding(for id: Int) -> Binding<String?> {
+        Binding(get: { answers[id] }, set: { answers[id] = $0 })
+    }
+
+    /// Same rule as DocumentationView: text needs non-empty trimmed, checkbox
+    /// needs at least one selection, radio needs an option.
+    private func isAnswered(_ q: ServerDocQuestion) -> Bool {
+        guard let raw = answers[q.id] else { return false }
+        if q.type == "checkbox" {
+            return !VisitQuestionCard.decodeCheckboxSelections(raw).isEmpty
+        }
+        return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var unansweredRequired: [ServerDocQuestion] {
+        questions.filter { $0.required && !isAnswered($0) }
+    }
+
+    /// Only resident notes carry questions; the home note sends nil so the
+    /// server leaves stored answers untouched.
+    private var answerPayload: [HomeNoteAnswerPayload]? {
+        guard !questions.isEmpty else { return nil }
+        return questions.map { HomeNoteAnswerPayload(questionId: $0.id, answer: answers[$0.id] ?? "") }
     }
 
     private func load() async {
         text = target.existingBody
         do {
             let resp = try await APIClient.shared.fetchHomePunchNotes(punchId: target.punchId)
-            if let n = resp.notes.first(where: { ($0.clientId ?? "") == (target.clientId ?? "") }) { text = n.body }
+            let existing = resp.notes.first(where: { ($0.clientId ?? "") == (target.clientId ?? "") })
+            if let n = existing { text = n.body }
+            if let cid = target.clientId, let qs = resp.questions[cid] {
+                questions = qs
+                var a: [Int: String] = [:]
+                for qa in existing?.questionAnswers ?? [] { a[qa.questionId] = qa.answer }
+                // Unanswered questions start on their configured default (like visits).
+                for q in qs where a[q.id] == nil {
+                    if let dv = q.defaultValue, !dv.isEmpty { a[q.id] = dv }
+                }
+                answers = a
+            }
             editable = resp.editable ?? true
             lockedReason = resp.lockedReason
             lastDay = resp.lastDay
@@ -668,7 +717,7 @@ struct HomeNoteSheet: View {
         Task {
             defer { isSaving = false }
             do {
-                _ = try await APIClient.shared.saveHomePunchNote(punchId: target.punchId, clientId: target.clientId, body: text)
+                _ = try await APIClient.shared.saveHomePunchNote(punchId: target.punchId, clientId: target.clientId, body: text, questionAnswers: answerPayload)
                 await store.refresh()
                 dismiss()
             } catch {

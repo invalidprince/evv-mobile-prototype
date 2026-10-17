@@ -1443,6 +1443,51 @@ struct HomePunchNote: Decodable, Identifiable, Hashable {
     let clientName: String?
     let body: String
     let updatedAt: String?
+    /// Build 121 — visit-question answers snapshotted with the note (server
+    /// v0.4.736+, same shape as visits.questionAnswers). Older servers omit
+    /// the key; malformed elements are dropped, never fatal.
+    let questionAnswers: [HomeNoteAnswer]
+
+    enum CodingKeys: String, CodingKey { case id, clientId, clientName, body, updatedAt, questionAnswers }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        clientId = try c.decodeIfPresent(String.self, forKey: .clientId)
+        clientName = try c.decodeIfPresent(String.self, forKey: .clientName)
+        body = (try c.decodeIfPresent(String.self, forKey: .body)) ?? ""
+        updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+        let wrapped = (try? c.decodeIfPresent([FailableDecodable<HomeNoteAnswer>].self, forKey: .questionAnswers)) ?? nil
+        questionAnswers = (wrapped ?? []).compactMap { $0.value }
+    }
+}
+
+/// One stored visit-question answer on a home shift note ({ questionId, answer }
+/// plus the snapshotted question text/type). Wire answer is a plain string
+/// (checkbox answers are JSON-encoded array strings — same as visits).
+struct HomeNoteAnswer: Decodable, Hashable {
+    let questionId: Int
+    let answer: String
+
+    enum CodingKeys: String, CodingKey { case questionId, answer }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let i = try? c.decode(Int.self, forKey: .questionId) {
+            questionId = i
+        } else if let s = try? c.decode(String.self, forKey: .questionId), let i = Int(s) {
+            questionId = i
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .questionId, in: c, debugDescription: "questionId missing or not an integer")
+        }
+        answer = ((try? c.decodeIfPresent(String.self, forKey: .answer)) ?? nil) ?? ""
+    }
+}
+
+/// Outgoing { questionId, answer } for POST /home-punches/:id/notes.
+struct HomeNoteAnswerPayload: Encodable {
+    let questionId: Int
+    let answer: String
 }
 
 /// One role segment of a punch (clock-in role, each switch, manager fixes).
@@ -1501,6 +1546,27 @@ struct HomePunchNotesResponse: Decodable {
     let editable: Bool?
     let lockedReason: String?
     let lastDay: String?
+    /// Build 121 — the visit questions that apply to each resident's note on
+    /// this shift, keyed by clientId (server v0.4.736+). Missing on older
+    /// servers → empty; a bad question is dropped, not fatal.
+    let questions: [String: [ServerDocQuestion]]
+
+    enum CodingKeys: String, CodingKey { case punchId, notes, editable, lockedReason, lastDay, questions }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        punchId = try c.decode(Int.self, forKey: .punchId)
+        notes = try c.decode([HomePunchNote].self, forKey: .notes)
+        editable = try c.decodeIfPresent(Bool.self, forKey: .editable)
+        lockedReason = try c.decodeIfPresent(String.self, forKey: .lockedReason)
+        lastDay = try c.decodeIfPresent(String.self, forKey: .lastDay)
+        let raw = (try? c.decodeIfPresent([String: [FailableDecodable<ServerDocQuestion>]].self, forKey: .questions)) ?? nil
+        var out: [String: [ServerDocQuestion]] = [:]
+        for (cid, list) in raw ?? [:] {
+            out[cid] = list.compactMap { $0.value }.sorted { $0.sortOrder < $1.sortOrder }
+        }
+        questions = out
+    }
 }
 
 struct HomePunchNoteSaveResponse: Decodable {
@@ -1525,6 +1591,9 @@ struct HomeRoleRequest: Encodable {
 struct HomeNoteRequest: Encodable {
     let clientId: String?
     let body: String
+    /// nil = leave stored answers untouched (server only replaces answers when
+    /// an array is sent); [] = clear them.
+    let questionAnswers: [HomeNoteAnswerPayload]?
 }
 
 /// Server 4xx for home punches: { reason, error, mainStaffId?, mainStaffName? }.
@@ -3167,13 +3236,15 @@ actor APIClient {
     /// clientId nil = the home/shift note (floaters); a resident id = that
     /// resident's note (Main / Assisting). 403 note_locked when the late-note
     /// window after clock-out has passed.
-    func saveHomePunchNote(punchId: Int, clientId: String?, body: String) async throws -> HomePunchNoteSaveResponse {
+    /// questionAnswers (build 121): the resident's visit-question answers;
+    /// pass nil to leave stored answers alone (home/shift notes have none).
+    func saveHomePunchNote(punchId: Int, clientId: String?, body: String, questionAnswers: [HomeNoteAnswerPayload]? = nil) async throws -> HomePunchNoteSaveResponse {
         let url = URL(string: "\(baseURL)/home-punches/\(punchId)/notes")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(HomeNoteRequest(clientId: clientId, body: body))
+        request.httpBody = try JSONEncoder().encode(HomeNoteRequest(clientId: clientId, body: body, questionAnswers: questionAnswers))
         request.timeoutInterval = 20
         let (data, response) = try await performRequest(request)
         try checkAuth(response, data: data)
