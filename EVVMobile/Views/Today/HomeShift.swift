@@ -24,6 +24,9 @@ final class HomeShiftStore: ObservableObject {
     @Published var roles: [String] = []
     @Published var open: HomePunch?
     @Published var recent: [HomePunch] = []
+    /// v0.4.807: my scheduled home shifts (today → +7d). The server already
+    /// department-gates this — non-CLA staff get [] and never see the section.
+    @Published var shifts: [HomeScheduledShift] = []
     @Published var error: String?
     @Published var isLoading = false
     @Published var loadedOnce = false
@@ -39,7 +42,18 @@ final class HomeShiftStore: ObservableObject {
     private var generation = 0
 
     /// Does this staff have anything home-related to show at all?
-    var hasHomeContent: Bool { !homes.isEmpty || open != nil || !recent.isEmpty || (error != nil && knownHome) }
+    var hasHomeContent: Bool { !homes.isEmpty || open != nil || !recent.isEmpty || !shifts.isEmpty || (error != nil && knownHome) }
+
+    /// Scheduled shifts worth listing: not done, soonest first.
+    var upcomingShifts: [HomeScheduledShift] {
+        shifts.filter { !$0.isDone }.sorted { ($0.startAt ?? "") < ($1.startAt ?? "") }
+    }
+
+    /// Roles a given home allows (v0.4.807 per-home list; legacy global fallback).
+    func roles(for home: HomeInfo?) -> [String] {
+        if let r = home?.roles, !r.isEmpty { return r }
+        return roles
+    }
 
     /// Closed shifts still worth showing: note still editable, or has a note.
     var recentForDocs: [HomePunch] {
@@ -58,7 +72,8 @@ final class HomeShiftStore: ObservableObject {
             roles = resp.roles ?? HomeShiftStore.defaultRoles
             open = resp.open
             recent = resp.recent ?? []
-            if !homes.isEmpty || open != nil || !recent.isEmpty { knownHome = true }
+            shifts = resp.shifts ?? []
+            if !homes.isEmpty || open != nil || !recent.isEmpty || !shifts.isEmpty { knownHome = true }
             error = nil
         } catch {
             guard gen == generation else { return }
@@ -68,10 +83,20 @@ final class HomeShiftStore: ObservableObject {
     }
 
     func clockIn(homeId: String, role: String, clientId: String?) async throws {
+        try await clockIn(homeId: homeId, role: role, clientId: clientId, shiftId: nil)
+    }
+
+    /// One-tap clock in from a scheduled shift: the server takes role + resident
+    /// from the shift and records shift_id on the punch.
+    func clockIn(shift: HomeScheduledShift) async throws {
+        try await clockIn(homeId: shift.homeId, role: nil, clientId: nil, shiftId: shift.id)
+    }
+
+    private func clockIn(homeId: String, role: String?, clientId: String?, shiftId: Int?) async throws {
         isBusy = true
         defer { isBusy = false }
         let gps = LocationManager.shared.currentCoordinates   // captured, never required
-        let punch = try await api.homeClockIn(homeId: homeId, role: role, clientId: clientId,
+        let punch = try await api.homeClockIn(homeId: homeId, role: role, clientId: clientId, shiftId: shiftId,
                                               lat: gps?.lat, lng: gps?.lng, accuracy: gps?.accuracy)
         generation += 1   // invalidate any GET /homes still in flight
         open = punch
@@ -140,6 +165,10 @@ struct HomeShiftCard: View {
                     .foregroundColor(Theme.primary)
                 Spacer()
                 if store.isLoading { ProgressView().scaleEffect(0.8) }
+            }
+
+            if !store.upcomingShifts.isEmpty {
+                myShifts
             }
 
             if let open = store.open {
@@ -248,6 +277,69 @@ struct HomeShiftCard: View {
         .onChange(of: store.open?.id) { _ in actionError = nil }
     }
 
+    // MARK: my scheduled shifts (v0.4.807)
+
+    /// "My home shifts" — only rendered when the server returned shifts, which
+    /// it does only for staff whose department can work the home (CLA). The app
+    /// does NO department logic; an empty list simply hides this block.
+    @ViewBuilder
+    private var myShifts: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("MY HOME SHIFTS").font(.caption2.weight(.bold)).foregroundColor(.secondary)
+            ForEach(store.upcomingShifts) { shift in
+                shiftRow(shift)
+            }
+        }
+    }
+
+    private func shiftRow(_ shift: HomeScheduledShift) -> some View {
+        let isOpenHere = store.open != nil
+        let canStart = shift.isScheduled && !isOpenHere && !store.isBusy
+        return HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(shift.dayLabel ?? shift.shiftDate ?? "").font(.subheadline.weight(.semibold))
+                    Text(shift.timeLabel ?? "\(shift.startHm ?? "") – \(shift.endHm ?? "")")
+                        .font(.subheadline).foregroundColor(.secondary)
+                }
+                Text(shift.homeName ?? shift.homeId).font(.caption).foregroundColor(.primary)
+                HStack(spacing: 4) {
+                    Text(shift.roleText).font(.caption).foregroundColor(.secondary)
+                    if let c = shift.clientName, !c.isEmpty {
+                        Text("· for \(c)").font(.caption).foregroundColor(.secondary)
+                    }
+                }
+            }
+            Spacer()
+            if shift.isInProgress {
+                Text("On the clock").font(.caption.weight(.bold)).foregroundColor(Theme.success)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Theme.success.opacity(0.12)).cornerRadius(8)
+            } else if canStart {
+                Button {
+                    Task {
+                        actionError = nil
+                        do { try await store.clockIn(shift: shift) }
+                        catch { actionError = HomeShiftStore.describe(error, fallback: "Couldn't clock in to that shift.") }
+                    }
+                } label: {
+                    Text(shift.isToday ? "Clock in" : "Scheduled")
+                        .font(.caption.weight(.bold))
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(shift.isToday ? Theme.primary : Color.secondary.opacity(0.25))
+                        .foregroundColor(shift.isToday ? .white : .primary)
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("Scheduled").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+            }
+        }
+        .padding(10)
+        .background(Theme.screenBackground)
+        .cornerRadius(10)
+    }
+
     // MARK: open shift
 
     @ViewBuilder
@@ -261,6 +353,15 @@ struct HomeShiftCard: View {
             Spacer()
             if let s = open.staffing {
                 StaffingBadge(staffing: s)
+            }
+        }
+        // v0.4.807: plain-English "why short" from the server (e.g. "Alex needs a Main").
+        if let s = open.staffing, s.ok == false, let reasons = s.reasons, !reasons.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(reasons, id: \.self) { r in
+                    Text("• \(r)").font(.caption).foregroundColor(Theme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
 
@@ -361,7 +462,7 @@ struct HomeShiftCard: View {
         if let h = store.homes.first(where: { $0.id == open.homeId }) { return h }
         // Server always sends residents on the open punch; synthesize a HomeInfo
         // so Switch role still works when /homes raced an error.
-        return HomeInfo(id: open.homeId, name: open.homeName ?? open.homeId, label: nil, residents: open.residents ?? [])
+        return HomeInfo(id: open.homeId, name: open.homeName ?? open.homeId, label: nil, residents: open.residents ?? [], roles: nil)
     }
 
     /// Documentation targets for a punch = every role leg worked on it
@@ -445,6 +546,13 @@ struct HomeRoleSheet: View {
     @State private var isSubmitting = false
 
     private var isSwitch: Bool { if case .switchRole = mode { return true } else { return false } }
+    /// v0.4.807: only the roles THIS home allows (no Floater unless the home
+    /// uses it). Falls back to the legacy global list on older servers.
+    private var allowedRoles: [String] {
+        let r = store.roles(for: home)
+        return r.isEmpty ? HomeShiftStore.defaultRoles : r
+    }
+    private var allowsFloater: Bool { allowedRoles.contains("floater") }
     private var residentsHere: [HomeResident] { home.residents.filter { $0.away != true } }
     private var needsResident: Bool { role == "main" || role == "assist" }
     private var canSubmit: Bool { !isSubmitting && (!needsResident || clientId != nil) }
@@ -466,7 +574,7 @@ struct HomeRoleSheet: View {
 
             Section(header: Text("Role")) {
                 Picker("Role", selection: $role) {
-                    ForEach(store.roles.isEmpty ? HomeShiftStore.defaultRoles : store.roles, id: \.self) { r in
+                    ForEach(allowedRoles, id: \.self) { r in
                         Text(HomeRoleSheet.label(for: r)).tag(r)
                     }
                 }
@@ -477,7 +585,7 @@ struct HomeRoleSheet: View {
             if needsResident {
                 Section(header: Text(role == "main" ? "Main for" : "Assisting")) {
                     if residentsHere.isEmpty {
-                        Text("No residents are home right now — choose Floater.").foregroundColor(.secondary)
+                        Text(allowsFloater ? "No residents are home right now — choose Floater." : "No residents are home right now.").foregroundColor(.secondary)
                     }
                     ForEach(residentsHere) { r in
                         Button {

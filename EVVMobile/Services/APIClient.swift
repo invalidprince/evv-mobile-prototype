@@ -1410,6 +1410,41 @@ struct HomeInfo: Decodable, Identifiable, Hashable {
     let name: String
     let label: String?
     let residents: [HomeResident]
+    /// v0.4.807: roles this home allows at clock-in (`["main","assist"]` or
+    /// `["main","assist","floater"]`). nil on older servers → fall back to the
+    /// global `HomesResponse.roles`.
+    let roles: [String]?
+}
+
+/// One of MY scheduled home shifts (today → +7 days). The server only returns
+/// these for staff whose department may clock in to the home (CLA) — non-CLA
+/// staff get an empty list, so the app never does department logic itself.
+struct HomeScheduledShift: Decodable, Identifiable, Hashable {
+    let id: Int
+    let homeId: String
+    let homeName: String?
+    let shiftDate: String?     // "YYYY-MM-DD"
+    let startAt: String?       // ISO
+    let endAt: String?         // ISO
+    let startHm: String?       // "HH:mm"
+    let endHm: String?
+    let dayLabel: String?      // "Today", "Tomorrow", "Thu 11/13"
+    let timeLabel: String?     // "7:00 AM – 3:00 PM"
+    let role: String?
+    let roleLabel: String?
+    let clientId: String?
+    let clientName: String?
+    let state: String?         // scheduled | in_progress | done
+
+    var isScheduled: Bool { (state ?? "scheduled") == "scheduled" }
+    var isInProgress: Bool { state == "in_progress" }
+    var isDone: Bool { state == "done" }
+    var isToday: Bool {
+        guard let d = shiftDate else { return false }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = .current
+        return f.string(from: Date()) == d
+    }
+    var roleText: String { roleLabel ?? (role?.capitalized ?? "") }
 }
 
 /// One staff member on the home's clock right now.
@@ -1431,6 +1466,8 @@ struct HomeStaffing: Decodable, Hashable {
     let required: Int?
     let onClock: Int?
     let ok: Bool?
+    let short: Int?
+    let reasons: [String]?  // v0.4.807: plain-English "why short" (e.g. "Alex needs a Main")
     let error: String?     // "staffing_unavailable" → show grey, never a guessed green
 }
 
@@ -1540,7 +1577,8 @@ struct HomesResponse: Decodable {
     let homes: [HomeInfo]
     let open: HomePunch?
     let recent: [HomePunch]?   // closed shifts, last 14 days (late notes)
-    let roles: [String]?     // ["main","assist","floater"]
+    let shifts: [HomeScheduledShift]?  // v0.4.807: my scheduled home shifts, today → +7d (empty for non-CLA)
+    let roles: [String]?     // legacy global list — prefer homes[].roles
 }
 
 struct HomeRosterResponse: Decodable {
@@ -1589,6 +1627,7 @@ struct HomePunchNoteSaveResponse: Decodable {
 struct HomeClockInRequest: Encodable {
     let role: String?
     let clientId: String?
+    let shiftId: Int?       // v0.4.807: clock in from a scheduled shift (role/clientId come from it)
     let lat: Double?
     let lng: Double?
     let accuracy: Double?
@@ -3185,13 +3224,13 @@ actor APIClient {
     /// POST /api/homes/:id/clock-in → 201 { punch }. 409 reasons
     /// (home_punch_in_progress / visit_in_progress / main_taken) surface as
     /// APIError.conflict with the server's sentence.
-    func homeClockIn(homeId: String, role: String, clientId: String?, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> HomePunch {
+    func homeClockIn(homeId: String, role: String?, clientId: String?, shiftId: Int? = nil, lat: Double? = nil, lng: Double? = nil, accuracy: Double? = nil) async throws -> HomePunch {
         let url = URL(string: "\(baseURL)/homes/\(homeId)/clock-in")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(HomeClockInRequest(role: role, clientId: clientId, lat: lat, lng: lng, accuracy: accuracy))
+        request.httpBody = try JSONEncoder().encode(HomeClockInRequest(role: role, clientId: clientId, shiftId: shiftId, lat: lat, lng: lng, accuracy: accuracy))
         request.timeoutInterval = 15
         let (data, response) = try await performRequest(request)
         try checkAuth(response, data: data)
@@ -3220,7 +3259,7 @@ actor APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         addAuth(&request)
-        request.httpBody = try JSONEncoder().encode(HomeClockInRequest(role: nil, clientId: nil, lat: lat, lng: lng, accuracy: accuracy))
+        request.httpBody = try JSONEncoder().encode(HomeClockInRequest(role: nil, clientId: nil, shiftId: nil, lat: lat, lng: lng, accuracy: accuracy))
         request.timeoutInterval = 15
         let (data, response) = try await performRequest(request)
         try checkAuth(response, data: data)
@@ -3273,12 +3312,31 @@ actor APIClient {
         catch { throw APIError.responseUnreadable(error) }
     }
 
+    /// Human text for the scheduled-shift clock-in error codes (server v0.4.807).
+    static func homeShiftErrorMessage(_ reason: String) -> String? {
+        switch reason {
+        case "shift_not_found", "shift_not_yours": return "That scheduled shift isn't on your schedule anymore. Pull to refresh."
+        case "shift_already_started": return "That shift was already started — if that was you, you're already on the clock."
+        case "shift_not_yet": return "Too early — you can clock in up to 2 hours before the shift starts."
+        case "shift_ended": return "That shift has already ended. Use the regular Clock in on the home instead."
+        case "shift_wrong_home": return "That shift is at a different home."
+        case "floater_not_allowed": return "This home doesn't use the Floater role. Pick Main or Assisting."
+        case "shifts_unavailable": return "Scheduled home shifts aren't available right now. Use the regular Clock in."
+        default: return nil
+        }
+    }
+
     private func decodeHomePunch(_ data: Data, _ response: URLResponse, fallback: String) throws -> HomePunch {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if statusCode == 409 || statusCode == 403 || statusCode == 400 {
+        if statusCode == 409 || statusCode == 403 || statusCode == 400 || statusCode == 404 {
             let parsed = try? JSONDecoder().decode(HomePunchErrorResponse.self, from: data)
             if parsed?.reason == "main_taken" {
                 throw HomePunchConflict.mainTaken(message: parsed?.error ?? fallback, staffName: parsed?.mainStaffName)
+            }
+            // v0.4.807 scheduled-shift codes get a client-side sentence so the
+            // tap-to-clock-in path reads well even if the server text changes.
+            if let reason = parsed?.reason, let msg = Self.homeShiftErrorMessage(reason) {
+                throw APIError.conflict(msg)
             }
             throw APIError.conflict(parsed?.error ?? fallback)
         }
