@@ -3312,6 +3312,84 @@ actor APIClient {
         catch { throw APIError.responseUnreadable(error) }
     }
 
+    // MARK: - CLA daily record (build 124, server v0.4.821)
+    //
+    // The web dashboard's per-resident daily record for a group home
+    // (/homes/:id/residents/:cid/days/:date). Same tables, same core ops as the
+    // web, so a record written from the phone shows on the dashboard identically.
+    // Sections: visit questions, ISP outcomes (per goal), community activities,
+    // absences, nurse notes (only when the resident needs a nurse AND the
+    // caller's role may write them — `canWriteNurseNotes` on the day view).
+
+    /// GET /api/homes/:homeId/residents/:clientId/days/:date ("today" allowed).
+    func homeDailyRecord(homeId: String, clientId: String, date: String = "today") async throws -> HomeDailyRecord {
+        let url = URL(string: "\(baseURL)/homes/\(homeId)/residents/\(clientId)/days/\(date)")!
+        var request = URLRequest(url: url)
+        addAuth(&request)
+        request.timeoutInterval = 20
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard statusCode == 200 else {
+            let errBody = (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error ?? "Could not load the daily record"
+            throw APIError.serverError(statusCode, errBody)
+        }
+        do { return try JSONDecoder().decode(HomeDailyRecord.self, from: data) }
+        catch { throw APIError.decodingError(error) }
+    }
+
+    /// Shared POST for the daily-record sections. 400/403/409 carry the
+    /// server's human text (and `missing` question texts for answers_required).
+    private func postHomeDailyRecord<Body: Encodable>(path: String, body: Body, okStatuses: Set<Int> = [200, 201], fallback: String) async throws -> Data {
+        let url = URL(string: "\(baseURL)/homes/\(path)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addAuth(&request)
+        request.httpBody = try JSONEncoder().encode(body)
+        request.timeoutInterval = 20
+        let (data, response) = try await performRequest(request)
+        try checkAuth(response, data: data)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if okStatuses.contains(statusCode) { return data }
+        let err = try? JSONDecoder().decode(HomeDailyRecordError.self, from: data)
+        var msg = err?.error ?? fallback
+        if let missing = err?.missing, !missing.isEmpty { msg += "\n• " + missing.joined(separator: "\n• ") }
+        if statusCode == 403 { throw APIError.forbidden(msg) }
+        if statusCode == 400 || statusCode == 409 { throw APIError.conflict(msg) }
+        throw APIError.serverError(statusCode, msg)
+    }
+
+    /// POST .../days/:date/questions { questionAnswers:[{questionId, answer}] }
+    func saveHomeDailyAnswers(homeId: String, clientId: String, date: String, answers: [HomeNoteAnswerPayload]) async throws {
+        struct Req: Encodable { let questionAnswers: [HomeNoteAnswerPayload] }
+        _ = try await postHomeDailyRecord(path: "\(homeId)/residents/\(clientId)/days/\(date)/questions", body: Req(questionAnswers: answers), fallback: "Could not save the answers")
+    }
+
+    /// POST .../days/:date/outcomes { goalId, provided, note | why }
+    func addHomeDailyOutcome(homeId: String, clientId: String, date: String, goalId: Int, provided: Bool, note: String, why: String) async throws {
+        struct Req: Encodable { let goalId: Int; let provided: Bool; let note: String; let why: String }
+        _ = try await postHomeDailyRecord(path: "\(homeId)/residents/\(clientId)/days/\(date)/outcomes", body: Req(goalId: goalId, provided: provided, note: note, why: why), fallback: "Could not save the outcome")
+    }
+
+    /// POST .../days/:date/activities { description }
+    func addHomeDailyActivity(homeId: String, clientId: String, date: String, description: String) async throws {
+        struct Req: Encodable { let description: String }
+        _ = try await postHomeDailyRecord(path: "\(homeId)/residents/\(clientId)/days/\(date)/activities", body: Req(description: description), fallback: "Could not save the activity")
+    }
+
+    /// POST .../days/:date/absences { kind, startTime, endTime, reason } (same day).
+    func addHomeDailyAbsence(homeId: String, clientId: String, date: String, kind: String, startTime: String, endTime: String, reason: String) async throws {
+        struct Req: Encodable { let kind: String; let startDate: String; let endDate: String; let startTime: String; let endTime: String; let reason: String }
+        _ = try await postHomeDailyRecord(path: "\(homeId)/residents/\(clientId)/days/\(date)/absences", body: Req(kind: kind, startDate: date, endDate: date, startTime: startTime, endTime: endTime, reason: reason), fallback: "Could not save the absence")
+    }
+
+    /// POST .../days/:date/nurse-notes { body, noteTime }
+    func addHomeDailyNurseNote(homeId: String, clientId: String, date: String, body: String, noteTime: String) async throws {
+        struct Req: Encodable { let body: String; let noteTime: String }
+        _ = try await postHomeDailyRecord(path: "\(homeId)/residents/\(clientId)/days/\(date)/nurse-notes", body: Req(body: body, noteTime: noteTime), fallback: "Could not save the nurse note")
+    }
+
     /// Human text for the scheduled-shift clock-in error codes (server v0.4.807).
     static func homeShiftErrorMessage(_ reason: String) -> String? {
         switch reason {

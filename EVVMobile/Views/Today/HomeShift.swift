@@ -154,6 +154,8 @@ struct HomeShiftCard: View {
     @State private var showClockIn: HomeInfo?
     @State private var showSwitchRole = false
     @State private var noteTarget: HomeNoteTarget?
+    /// Build 124 — the resident's full CLA daily record (same sections as the web).
+    @State private var dailyTarget: HomeDailyRecordTarget?
     @State private var confirmClockOut = false
     @State private var actionError: String?
 
@@ -259,6 +261,9 @@ struct HomeShiftCard: View {
             NavigationView {
                 HomeNoteSheet(target: target)
             }
+        }
+        .sheet(item: $dailyTarget) { target in
+            HomeDailyRecordSheet(target: target)
         }
         .confirmationDialog("Clock out of \(store.open?.homeName ?? "the home")?", isPresented: $confirmClockOut, titleVisibility: .visible) {
             Button("Clock out", role: .destructive) {
@@ -410,6 +415,28 @@ struct HomeShiftCard: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // Build 124 — the real CLA daily record per resident (visit
+            // questions, ISP outcomes, activities, time away, nurse notes),
+            // the same record the dashboard shows. The note above is just the
+            // shift narrative; this is where the day actually gets documented.
+            Text("DAILY RECORD").font(.caption2.weight(.bold)).foregroundColor(.secondary).padding(.top, 4)
+            ForEach(dailyTargets(open)) { target in
+                Button {
+                    dailyTarget = target
+                } label: {
+                    HStack {
+                        Image(systemName: "list.clipboard")
+                            .foregroundColor(Theme.primary)
+                        Text(target.clientName).font(.subheadline)
+                        Spacer()
+                        Text("Document")
+                            .font(.caption.weight(.semibold)).foregroundColor(Theme.primary)
+                        Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
 
         HStack(spacing: 10) {
@@ -470,6 +497,20 @@ struct HomeShiftCard: View {
     /// ∪ the current role ∪ any note already written. So a note started as
     /// Main for A stays reachable after switching to B or Floater — the
     /// server enforces the same leg rule on save.
+    /// Every resident at the home for the open shift — the resident(s) on the
+    /// caller's leg first, then the rest of the house (any staff on shift may
+    /// document any resident, same as the web). Residents marked away are skipped.
+    private func dailyTargets(_ p: HomePunch) -> [HomeDailyRecordTarget] {
+        let homeName = p.homeName ?? homeFor(p)?.name ?? "Home"
+        var ordered: [(String, String)] = []
+        func add(_ id: String, _ name: String) { if !ordered.contains(where: { $0.0 == id }) { ordered.append((id, name)) } }
+        for leg in (p.legs ?? []) { if let cid = leg.clientId { add(cid, leg.clientName ?? cid) } }
+        if let cid = p.clientId { add(cid, p.clientName ?? cid) }
+        let roster = (p.residents ?? []).isEmpty ? (homeFor(p)?.residents ?? []) : (p.residents ?? [])
+        for r in roster where r.away != true { add(r.id, r.name) }
+        return ordered.map { HomeDailyRecordTarget(homeId: p.homeId, homeName: homeName, clientId: $0.0, clientName: $0.1, date: "today") }
+    }
+
     private func noteTargets(_ p: HomePunch) -> [HomeNoteTarget] {
         let notes = p.notes ?? []
         func body(for clientId: String?) -> String {
