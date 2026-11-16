@@ -26,6 +26,17 @@ final class AppState: ObservableObject {
     @Published var residentialOnly: Bool = UserDefaults.standard.bool(forKey: "residentialOnly") {
         didSet { UserDefaults.standard.set(residentialOnly, forKey: "residentialOnly") }
     }
+    /// Build 124 (Todoist 6j298WCg3rRRQWPH, server v0.4.822) — HOME-ONLY
+    /// SCOPE: the staff's whole visible scope is group homes (CLA-only Nurse
+    /// or Program Manager — not DSP-tier, so residentialOnly is false). Same
+    /// rule as web My Day v0.4.811: unscheduled individual visits are for
+    /// visit-based services only, so Start Unscheduled Visit is hidden.
+    /// Server-driven + persisted like residentialOnly. Older servers omit it.
+    @Published var homeOnlyScope: Bool = UserDefaults.standard.bool(forKey: "homeOnlyScope") {
+        didSet { UserDefaults.standard.set(homeOnlyScope, forKey: "homeOnlyScope") }
+    }
+    /// Start Unscheduled Visit is offered only to staff who can do visit-based work.
+    var canStartUnscheduledVisit: Bool { !residentialOnly && !homeOnlyScope }
     @Published var serverToken: String?
 
     // MARK: - Server loading / errors
@@ -1510,6 +1521,7 @@ final class AppState: ObservableObject {
         serverStaff = nil
         serverToken = nil
         residentialOnly = false  // build 120: next login re-derives the CLA-only flag
+        homeOnlyScope = false    // build 124: same for the home-only-scope flag
         offlineQueue.removeAll()
         Task { await APIClient.shared.setToken(nil) }
         currentStaff = MockData.currentStaff
@@ -1566,6 +1578,7 @@ final class AppState: ObservableObject {
         await MainActor.run {
             self.serverStaff = response.staff
             self.residentialOnly = response.staff.residentialOnly ?? false  // build 120 CLA-only
+            self.homeOnlyScope = response.staff.homeOnlyScope ?? false  // build 124 home-only scope
             self.serverToken = response.token
             self.mode = .server
             self.currentStaff = Staff(
@@ -1603,6 +1616,7 @@ final class AppState: ObservableObject {
         await MainActor.run {
             self.serverStaff = response.staff
             self.residentialOnly = response.staff.residentialOnly ?? false  // build 120 CLA-only
+            self.homeOnlyScope = response.staff.homeOnlyScope ?? false  // build 124 home-only scope
             self.serverToken = response.token
             self.mode = .server
             self.currentStaff = Staff(
@@ -1761,6 +1775,7 @@ final class AppState: ObservableObject {
             serverOpenShifts = response.openShifts ?? []
             serverOpenRules = response.openRules ?? []
             if let flag = response.residentialOnly { residentialOnly = flag }  // build 120 CLA-only
+            if let flag = response.homeOnlyScope { homeOnlyScope = flag }  // build 124 home-only scope
             lastSync = Date()
             backgroundRefreshFailedAt = nil
             startTimerIfNeeded()

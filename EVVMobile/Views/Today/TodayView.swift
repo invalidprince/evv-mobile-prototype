@@ -324,7 +324,9 @@ struct TodayView: View {
             // One active visit at a time: block starting an unscheduled visit
             // while any visit is running (scheduled or unscheduled).
             // Build 120: hidden entirely for CLA-only (residentialOnly) staff.
-            if !appState.residentialOnly {
+            // Build 124 (Todoist 6j298WCg3rRRQWPH): also hidden for home-only
+            // scope (CLA-only Nurse / Program Manager) — web My Day parity.
+            if appState.canStartUnscheduledVisit {
                 Button(action: { showUnscheduled = true }) {
                     Label("Start Unscheduled Visit", systemImage: "plus.circle.fill")
                 }

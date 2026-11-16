@@ -32,6 +32,10 @@ struct ServerStaff: Decodable {
     /// home shift. Server-driven — never inferred from department names.
     /// Older servers omit the key → nil → unchanged behaviour.
     let residentialOnly: Bool?
+    /// Build 124 (Todoist 6j298WCg3rRRQWPH) — server v0.4.822: TRUE when the
+    /// staff's whole visible scope is group homes (CLA-only Nurse / PM).
+    /// Hides Start Unscheduled Visit. Optional; older servers omit it.
+    let homeOnlyScope: Bool?
 }
 
 struct ServerIndividual: Decodable {
@@ -248,6 +252,9 @@ struct ShiftsResponse: Decodable {
     /// .residentialOnly), refreshed on every shifts poll so a department
     /// change on the web takes effect without signing out. Optional.
     let residentialOnly: Bool?
+    /// Build 124 — home-only scope flag (same meaning as ServerStaff
+    /// .homeOnlyScope), refreshed on every shifts poll. Optional.
+    let homeOnlyScope: Bool?
 }
 
 // MARK: - 2:1 second-staff verification (server v0.4.615, build 87)
