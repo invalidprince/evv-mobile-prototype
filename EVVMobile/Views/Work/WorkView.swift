@@ -27,6 +27,13 @@ struct WorkView: View {
     /// Build 71 — missed scheduled shift being resolved natively
     /// (native == "missedshift", server v0.4.505).
     @State private var missedTarget: MissedShiftItem?
+    /// Build 126 — true when the server sent `groupedItems` (v0.4.833+);
+    /// `items` then holds those top-level rows (groups count as one).
+    @State private var grouped = false
+    /// groupKeys of the groups the user has expanded. Collapsed by default;
+    /// purely local view state (the server stores none) and kept across
+    /// refetches so a reload after documenting doesn't snap the list shut.
+    @State private var expandedGroups: Set<String> = []
 
     private var online: Bool { appState.effectivelyOnline }
     private var openTodos: [WorkItem] { items.filter { $0.isTodo && !$0.done } }
@@ -45,7 +52,12 @@ struct WorkView: View {
             .navigationTitle("Work")
         }
         .navigationViewStyle(.stack)
-        .sheet(item: $safariItem) { item in
+        .sheet(item: $safariItem, onDismiss: {
+            // Build 126: team documentation and sign-offs are finished on the
+            // web — those lines (and their groups) clear server-side, so
+            // refetch when the Safari sheet closes.
+            Task { await load() }
+        }) { item in
             SafariView(url: item.url)
         }
         .sheet(item: $docVisit, onDismiss: {
@@ -106,11 +118,20 @@ struct WorkView: View {
                         Text("Nothing on your list. 🎉")
                             .foregroundColor(.secondary)
                     }
-                    ForEach(openTodos) { item in
-                        todoRow(item)
-                    }
-                    ForEach(autoItems) { item in
-                        autoRow(item)
+                    if grouped {
+                        // Build 126: server order (overdue first, done last),
+                        // groups collapsed into one disclosure row each.
+                        ForEach(WorkListModel.visibleRows(items.filter { !($0.isTodo && $0.done) },
+                                                          expanded: expandedGroups)) { row in
+                            groupedRow(row)
+                        }
+                    } else {
+                        ForEach(openTodos) { item in
+                            todoRow(item)
+                        }
+                        ForEach(autoItems) { item in
+                            autoRow(item)
+                        }
                     }
                 }
 
@@ -240,6 +261,121 @@ struct WorkView: View {
         }
     }
 
+    // MARK: - Grouped rows (build 126 / server v0.4.833)
+
+    @ViewBuilder
+    private func groupedRow(_ row: WorkListRow) -> some View {
+        switch row {
+        case .item(let item):
+            if item.isTodo { todoRow(item) } else { autoRow(item) }
+        case .group(let group, let expanded):
+            groupHeaderRow(group, expanded: expanded)
+        case .child(let item, _):
+            // Children are ordinary lines, never checkable: same tap routing
+            // as any auto row (native first, then webPath).
+            autoRow(item)
+                .padding(.leading, 20)
+        case .footer(let footer, _):
+            groupFooterRow(footer)
+                .padding(.leading, 20)
+        }
+    }
+
+    /// One collapsed/expanded row per group — the same disclosure pattern as
+    /// the web dashboard's collapsible To-Do blocks. Tapping toggles in place;
+    /// it works offline too (it's purely local), only the children's links
+    /// need a connection.
+    private func groupHeaderRow(_ group: WorkItem, expanded: Bool) -> some View {
+        let gk = group.groupKey ?? group.key
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if expandedGroups.contains(gk) {
+                    expandedGroups.remove(gk)
+                } else {
+                    expandedGroups.insert(gk)
+                }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: groupIcon(group))
+                    .font(.body)
+                    .foregroundColor(group.overdue ? Theme.danger : .accentColor)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(group.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(group.overdue ? Theme.danger : .primary)
+                            .multilineTextAlignment(.leading)
+                        if group.team == true {
+                            chip("team", color: .secondary)
+                        }
+                    }
+                    if let detail = group.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundColor(group.overdue ? Theme.danger : .secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(group.title). \(group.detail ?? "")")
+        .accessibilityHint(expanded ? "Collapses the list" : "Expands the list")
+        .accessibilityIdentifier("work-group-\(gk)")
+    }
+
+    /// Last row of an expanded group: "open the full list on the web".
+    private func groupFooterRow(_ footer: WorkGroupFooter) -> some View {
+        Group {
+            if let path = footer.webPath, online {
+                Button {
+                    openWeb(path)
+                } label: {
+                    HStack {
+                        Text(footer.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.accentColor)
+                            .multilineTextAlignment(.leading)
+                        Spacer()
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(footer.title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private func groupIcon(_ group: WorkItem) -> String {
+        switch group.groupKey {
+        case "team-unfinished-notes": return "person.2.fill"
+        case "team-signoffs-owed": return "signature"
+        default: return iconFor(group.category)
+        }
+    }
+
+    private func chip(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .overlay(Capsule().stroke(color.opacity(0.6), lineWidth: 1))
+    }
+
     private func autoRowLabel(_ item: WorkItem) -> some View {
         HStack(spacing: 12) {
             Image(systemName: iconFor(item.category))
@@ -251,6 +387,11 @@ struct WorkView: View {
                     .font(.subheadline)
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.leading)
+                // Build 126 (server v0.4.833): "started" / "draft saved" on
+                // documentation lines. Older servers never send it.
+                if let badge = item.badge, !badge.isEmpty {
+                    chip(badge, color: Theme.warning)
+                }
                 if let detail = item.detail, !detail.isEmpty {
                     Text(detail)
                         .font(.caption)
@@ -381,6 +522,7 @@ struct WorkView: View {
         case "missed": return "calendar.badge.exclamationmark"
         case "ack": return "signature"
         case "doc": return "square.and.pencil"
+        case "teamdoc": return "square.and.pencil"
         case "staffdoc": return "doc.badge.ellipsis"
         case "form": return "doc.text"
         case "signature": return "signature"
@@ -415,15 +557,19 @@ struct WorkView: View {
         loadError = nil
         do {
             let response = try await APIClient.shared.fetchWorkTodos()
-            items = response.items
+            // Build 126: grouped rows when the server sends them (v0.4.833+),
+            // otherwise the legacy flat list exactly as before.
+            items = WorkListModel.topLevel(response)
+            grouped = WorkListModel.isGrouped(response)
             teamRollup = response.teamRollup
             docSummary = response.docSummary
-            appState.workOpenCount = response.openCount + (response.teamRollup != nil ? 1 : 0)
+            appState.workOpenCount = WorkListModel.badgeCount(response) + (response.teamRollup != nil ? 1 : 0)
+            let leaves = WorkListModel.leaves(items)
             // build 47: native documentation rows resolve their visit from the
             // app's fetched set. If any of them can't resolve yet (user came
             // straight to Work without opening History), pull history once so
             // the rows open natively instead of falling back to the web.
-            let needsHistory = response.items.contains {
+            let needsHistory = leaves.contains {
                 $0.native == "documentation" && resolveVisit($0.visitId) == nil
             }
             if needsHistory {
@@ -432,7 +578,7 @@ struct WorkView: View {
             // Build 71: same for missed-shift rows — they resolve against
             // appState.missedShifts, which Today keeps warm but a cold start
             // on the Work tab may not have loaded yet.
-            let needsMissed = response.items.contains {
+            let needsMissed = leaves.contains {
                 $0.native == "missedshift" && resolveMissedShift($0.shiftId) == nil
             }
             if needsMissed {
@@ -455,7 +601,7 @@ struct WorkView: View {
             if let idx = items.firstIndex(where: { $0.key == item.key }) {
                 items[idx].done = done
             }
-            appState.workOpenCount = items.filter { !$0.done }.count + (teamRollup != nil ? 1 : 0)
+            appState.workOpenCount = WorkListModel.openCount(items) + (teamRollup != nil ? 1 : 0)
         } catch {
             let apiErr = error as? APIError ?? .networkError(error)
             loadError = apiErr.errorDescription ?? "Could not update the to-do."

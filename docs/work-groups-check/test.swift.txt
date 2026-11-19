@@ -1,0 +1,82 @@
+
+
+// ---- test harness (docs/work-groups-check/test.swift.txt) ----
+var pass = 0, fail = 0
+func check(_ name: String, _ cond: Bool) {
+    if cond { pass += 1; print("  ✓ \(name)") } else { fail += 1; print("  ✗ \(name)") }
+}
+func load(_ path: String) -> WorkTodosResponse? {
+    guard let data = FileManager.default.contents(atPath: path) else { return nil }
+    do { return try JSONDecoder().decode(WorkTodosResponse.self, from: data) }
+    catch { print("  decode error \(path): \(error)"); return nil }
+}
+let dir = CommandLine.arguments[1]
+
+print("[A] grouped payload (v0.4.833 contract, de-identified)")
+if let r = load(dir + "/grouped.json") {
+    let top = WorkListModel.topLevel(r)
+    check("renders groupedItems, not items", WorkListModel.isGrouped(r) && top.count == 8 && r.items.count == 12)
+    check("server order preserved", top.map { $0.key } == ["teammisseddaily-C1|W1|2026-11-15", "group-team-signoffs-owed", "mealplan-1", "group-my-unfinished-documentation", "group-team-unfinished-notes", "ack-131", "todo-27", "todo-26"])
+    check("badge = groupedOpenCount (7), not openCount (11)", WorkListModel.badgeCount(r) == 7 && r.openCount == 11)
+    let groups = top.filter { $0.isGroup }
+    check("3 group rows decoded with kind == group", groups.count == 3)
+    if groups.count == 3 {
+        check("group fields: title/detail/count/team/footer", groups[2].title == "Team Unfinished Documentation — 3" && groups[2].detail?.hasPrefix("3 staff members") == true && groups[2].count == 3 && groups[2].team == true && groups[2].footer?.webPath == "/visits?tab=incomplete")
+        check("group overdue flag decoded", groups.allSatisfy { $0.overdue })
+        check("groups are never checkable / have no todoId", groups.allSatisfy { !$0.checkable && $0.todoId == nil && !$0.isTodo })
+        let kids = groups[1].children ?? []
+        check("children decode badge (draft saved) + native documentation", kids.first?.badge == "draft saved" && kids.first?.native == "documentation" && kids.first?.visitId == "V-801")
+        check("children carry groupKey and are not checkable", kids.count == 2 && kids.allSatisfy { $0.groupKey == "my-unfinished-documentation" && !$0.checkable })
+    }
+    let collapsed = WorkListModel.visibleRows(top, expanded: [])
+    check("collapsed by default: one row per top-level item", collapsed.count == 8)
+    let allCollapsed = collapsed.allSatisfy { row -> Bool in if case .group(_, let e) = row { return !e }; return true }
+    check("every group row reports expanded == false", allCollapsed && collapsed.contains { if case .group = $0 { return true }; return false })
+    let open = WorkListModel.visibleRows(top, expanded: ["team-unfinished-notes"])
+    check("expanding one group inserts its 3 children + footer (8 + 4)", open.count == 12)
+    if let gi = open.firstIndex(where: { $0.id == "group-team-unfinished-notes" }), gi + 4 < open.count + 1, open.count >= gi + 5 {
+        let tail = open[(gi + 1)...(gi + 4)].map { $0.id }
+        check("children follow the header, footer is LAST row of the expansion", tail == ["team-unfinished-notes/teamdoc-V-901", "team-unfinished-notes/teamdoc-V-902", "team-unfinished-notes/teamdoc-V-903", "team-unfinished-notes/footer"])
+        if case .group(_, let e) = open[gi] { check("expanded header reports expanded == true", e) } else { check("expanded header row kind", false) }
+    } else { check("expanded group header present with children", false) }
+    check("other groups stay collapsed", open.filter { $0.id.hasPrefix("team-signoffs-owed/") || $0.id.hasPrefix("my-unfinished-documentation/") }.isEmpty)
+    let full = WorkListModel.visibleRows(top, expanded: ["team-unfinished-notes", "team-signoffs-owed", "my-unfinished-documentation"])
+    check("fully expanded: 8 + (2+1) + (2+1) + (3+1) rows, ids unique", full.count == 18 && Set(full.map { $0.id }).count == 18)
+    let leaves = WorkListModel.leaves(top)
+    check("leaves flatten group members (native doc rows resolvable)", leaves.filter { $0.native == "documentation" }.count == 2 && leaves.count == 12)
+    var mutable = top
+    if let i = mutable.firstIndex(where: { $0.key == "todo-27" }) { mutable[i].done = true }
+    check("local toggle recount: groups still count as one", WorkListModel.openCount(mutable) == 6)
+} else { check("grouped.json decodes", false) }
+
+print("[B] legacy payload (older server, no groupedItems) — zero behaviour change")
+if let r = load(dir + "/legacy.json") {
+    check("falls back to flat items", !WorkListModel.isGrouped(r) && WorkListModel.topLevel(r).map { $0.key } == r.items.map { $0.key })
+    check("badge = openCount", WorkListModel.badgeCount(r) == r.openCount && r.openCount == 11)
+    check("no group rows, every row is .item", WorkListModel.visibleRows(r.items, expanded: []).allSatisfy { if case .item = $0 { return true }; return false })
+    check("new optional fields absent → nil", r.items.allSatisfy { $0.groupKey == nil && $0.badge == nil && $0.team == nil && $0.children == nil })
+} else { check("legacy.json decodes", false) }
+
+print("[C] malformed groupedItems can never cost the user the flat list")
+if let r = load(dir + "/malformed.json") {
+    check("bad groupedItems → nil → flat fallback", !WorkListModel.isGrouped(r) && WorkListModel.topLevel(r).count == 12)
+    check("bad groupedOpenCount ignored, badge = openCount", WorkListModel.badgeCount(r) == 11)
+} else { check("malformed.json still decodes (items intact)", false) }
+
+print("[D] REAL staging payload (optional: /tmp/s013_todos.json, never committed — PHI)")
+if FileManager.default.fileExists(atPath: "/tmp/s013_todos.json") {
+    if let r = load("/tmp/s013_todos.json") {
+        let top = WorkListModel.topLevel(r)
+        let groups = top.filter { $0.isGroup }
+        check("real payload decodes grouped (\(top.count) rows, \(groups.count) groups)", WorkListModel.isGrouped(r) && !groups.isEmpty)
+        check("badge = groupedOpenCount (\(r.groupedOpenCount ?? -1)) vs flat openCount (\(r.openCount))", r.groupedOpenCount != nil && WorkListModel.badgeCount(r) == r.groupedOpenCount)
+        check("every group has 2+ children and a footer", groups.allSatisfy { ($0.children?.count ?? 0) >= 2 && $0.footer != nil })
+        check("group titles end with — N == count", groups.allSatisfy { $0.title.hasSuffix("— \($0.count ?? -1)") })
+        let all = WorkListModel.visibleRows(top, expanded: Set(top.compactMap { $0.groupKey }))
+        check("fully expanded ids unique (\(all.count) rows)", Set(all.map { $0.id }).count == all.count)
+        for g in groups { print("     · \(g.title) | \(g.detail ?? "") | overdue=\(g.overdue) children=\(g.children?.count ?? 0)") }
+    } else { check("real payload decodes", false) }
+} else { print("  … skipped (capture it with a staging token to run)") }
+
+print("work-groups swift: \(pass) passed, \(fail) failed")
+exit(fail == 0 ? 0 : 1)

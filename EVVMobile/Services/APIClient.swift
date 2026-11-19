@@ -1751,8 +1751,28 @@ struct WorkItem: Decodable, Identifiable {
     /// Scheduled shift id for `native == "missedshift"` items (server
     /// v0.4.505, build 71) — resolves the in-app missed-shift sheet.
     let shiftId: Int?
+    /// Build 126 / server v0.4.833 (docs/MOBILE_TODO_GROUPS.md) — all optional,
+    /// absent on older servers. `groupKey` is set on a member of a formed
+    /// group (informational on flat items); `badge` is "draft saved" |
+    /// "started" | null on documentation lines; `team` marks team lines.
+    let groupKey: String?
+    let badge: String?
+    let team: Bool?
+    /// Group rows only (`kind == "group"`, which appears ONLY inside
+    /// `groupedItems`): the true total, the "open the full list" link shown as
+    /// the last row of the expansion, and the member lines (ordinary items,
+    /// never checkable).
+    let count: Int?
+    let footer: WorkGroupFooter?
+    let children: [WorkItem]?
     var id: String { key }
     var isTodo: Bool { kind == "todo" }
+    var isGroup: Bool { kind == "group" }
+}
+
+struct WorkGroupFooter: Decodable {
+    let title: String
+    let webPath: String?
 }
 
 struct WorkTeamRollup: Decodable {
@@ -1784,7 +1804,101 @@ struct WorkTodosResponse: Decodable {
     let teamRollup: WorkTeamRollup?
     let docSummary: WorkDocSummary?
     let openCount: Int
+    /// Build 126 / server v0.4.833 — the same rows as `items` with each formed
+    /// group (2+ members) collapsed into one `kind == "group"` row, already
+    /// sorted by the server. nil on older servers → render `items` exactly as
+    /// before. Decoded with `try?`: a malformed grouped list can never cost
+    /// the user the flat list.
+    let groupedItems: [WorkItem]?
+    /// Badge count for `groupedItems` (a group counts as ONE). `openCount`
+    /// still counts the flat list.
+    let groupedOpenCount: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case items, teamRollup, docSummary, openCount, groupedItems, groupedOpenCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        items = try c.decode([WorkItem].self, forKey: .items)
+        teamRollup = try c.decodeIfPresent(WorkTeamRollup.self, forKey: .teamRollup)
+        docSummary = try c.decodeIfPresent(WorkDocSummary.self, forKey: .docSummary)
+        openCount = try c.decode(Int.self, forKey: .openCount)
+        groupedItems = (try? c.decodeIfPresent([WorkItem].self, forKey: .groupedItems)) ?? nil
+        groupedOpenCount = (try? c.decodeIfPresent(Int.self, forKey: .groupedOpenCount)) ?? nil
+    }
 }
+
+// BEGIN work-groups-source
+/// Build 126 — pure Work-tab list logic for the grouped To-Do payload (server
+/// v0.4.833, docs/MOBILE_TODO_GROUPS.md). No SwiftUI: spliced out and executed
+/// by docs/work-groups-check/check.sh.
+enum WorkListRow: Identifiable {
+    case item(WorkItem)
+    case group(WorkItem, expanded: Bool)
+    case child(WorkItem, groupKey: String)
+    case footer(WorkGroupFooter, groupKey: String)
+
+    var id: String {
+        switch self {
+        case .item(let i): return i.key
+        case .group(let g, _): return g.key
+        case .child(let i, let gk): return "\(gk)/\(i.key)"
+        case .footer(_, let gk): return "\(gk)/footer"
+        }
+    }
+}
+
+enum WorkListModel {
+    /// The rows the tab renders, in server order: `groupedItems` when the
+    /// server sent it, otherwise the legacy flat `items`.
+    static func topLevel(_ r: WorkTodosResponse) -> [WorkItem] {
+        r.groupedItems ?? r.items
+    }
+
+    static func isGrouped(_ r: WorkTodosResponse) -> Bool {
+        r.groupedItems != nil
+    }
+
+    /// Tab badge (excluding the team roll-up row the view adds on top):
+    /// `groupedOpenCount` when grouped (a group counts as one), else the
+    /// legacy `openCount` — byte-for-byte the old behaviour.
+    static func badgeCount(_ r: WorkTodosResponse) -> Int {
+        if let grouped = r.groupedItems {
+            return r.groupedOpenCount ?? openCount(grouped)
+        }
+        return r.openCount
+    }
+
+    /// Open top-level rows (a group is one row). Used after a local toggle.
+    static func openCount(_ rows: [WorkItem]) -> Int {
+        rows.filter { !$0.done }.count
+    }
+
+    /// Every actionable line, with group members flattened in — what the
+    /// view scans for native destinations it still needs to resolve.
+    static func leaves(_ rows: [WorkItem]) -> [WorkItem] {
+        rows.flatMap { $0.isGroup ? ($0.children ?? []) : [$0] }
+    }
+
+    /// Flatten top-level rows into list rows. A group is collapsed unless its
+    /// key is in `expanded`; expanded, it is followed by its children, then
+    /// its footer link (last row of the expansion).
+    static func visibleRows(_ rows: [WorkItem], expanded: Set<String>) -> [WorkListRow] {
+        var out: [WorkListRow] = []
+        for row in rows {
+            guard row.isGroup else { out.append(.item(row)); continue }
+            let gk = row.groupKey ?? row.key
+            let open = expanded.contains(gk)
+            out.append(.group(row, expanded: open))
+            guard open else { continue }
+            for child in row.children ?? [] { out.append(.child(child, groupKey: gk)) }
+            if let footer = row.footer { out.append(.footer(footer, groupKey: gk)) }
+        }
+        return out
+    }
+}
+// END work-groups-source
 
 struct ToggleTodoResponse: Decodable {
     let ok: Bool
